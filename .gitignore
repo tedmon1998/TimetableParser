@@ -1,0 +1,45 @@
+# Папки с расписаниями
+schedules_pdf/
+schedules_json/
+schedules_parsed/
+
+# Node modules
+node_modules/
+**/node_modules/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Временные файлы
+*.log
+*.tmp
+*.temp
+
+# Файлы расписаний (на всякий случай)
+*.pdf
+!requirements.txt
+
+# JSON файлы расписаний (будут в папках выше)
+# Но оставляем abbreviations.json и другие конфиги
+# schedules_json/*.json
+# schedules_parsed/*.json
+

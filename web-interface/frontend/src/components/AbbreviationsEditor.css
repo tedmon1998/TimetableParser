@@ -1,0 +1,107 @@
+.abbreviations-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.editor-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+.message {
+  padding: 0.75rem;
+  border-radius: 6px;
+  margin-top: 1rem;
+}
+
+.message.success {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.message.error {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.category-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.abbreviations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.abbreviation-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.abbreviation-item.editing {
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.abbreviation-item.editing input {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+
+.abbreviation-content {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex: 1;
+}
+
+.abbreviation-pattern {
+  font-family: monospace;
+  background: #e8eaf6;
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.abbreviation-arrow {
+  color: #667eea;
+  font-size: 1.2rem;
+}
+
+.abbreviation-replacement {
+  color: #333;
+}
+
+.abbreviation-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 2rem;
+  color: #999;
+  font-style: italic;
+}
+
