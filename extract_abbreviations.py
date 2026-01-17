@@ -11,22 +11,41 @@ import glob
 from collections import defaultdict
 from typing import Dict, Set, List
 
-def load_existing_abbreviations(abbrev_file: str) -> Dict[str, str]:
-    """Загружает существующие сокращения из JSON файла"""
-    try:
-        with open(abbrev_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            # Объединяем все сокращения из разных категорий
-            abbreviations = {}
-            if 'abbreviations' in data:
-                for category in data['abbreviations'].values():
-                    abbreviations.update(category)
-            return abbreviations
-    except FileNotFoundError:
-        return {}
-    except json.JSONDecodeError:
-        print(f"Ошибка при чтении {abbrev_file}, создаю новый файл")
-        return {}
+def load_existing_abbreviations(abbrev_file: str = None) -> Dict[str, str]:
+    """
+    Загружает существующие сокращения из JSON файла или всех файлов abbreviations*.json
+    """
+    abbreviations = {}
+    
+    if abbrev_file:
+        # Загружаем конкретный файл
+        files_to_load = [abbrev_file]
+    else:
+        # Ищем все файлы abbreviations*.json
+        files_to_load = glob.glob('abbreviations*.json')
+    
+    for file_path in files_to_load:
+        try:
+            file_abbrev = {}
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                # Объединяем все сокращения из разных категорий
+                if 'abbreviations' in data:
+                    for category in data['abbreviations'].values():
+                        file_abbrev.update(category)
+            
+            # Объединяем с общим словарем
+            before_count = len(abbreviations)
+            abbreviations.update(file_abbrev)
+            added_count = len(abbreviations) - before_count
+            print(f"  Загружено из {file_path}: {added_count} сокращений (всего в файле: {len(file_abbrev)})")
+        except FileNotFoundError:
+            continue
+        except json.JSONDecodeError as e:
+            print(f"Ошибка при чтении {file_path}: {e}")
+            continue
+    
+    return abbreviations
 
 def extract_disciplines_from_json(json_file: str) -> Set[str]:
     """Извлекает все уникальные названия дисциплин из JSON файла"""
@@ -43,43 +62,131 @@ def extract_disciplines_from_json(json_file: str) -> Set[str]:
         print(f"Ошибка при чтении {json_file}: {e}")
         return set()
 
+def get_known_abbrev_patterns() -> Dict[str, str]:
+    """Возвращает словарь известных паттернов сокращений"""
+    return {
+        'медиц': 'медицинская',
+        'эмбр': 'эмбриология',
+        'цитол': 'цитология',
+        'цит': 'цитология',
+        'вирусол': 'вирусология',
+        'вирус': 'вирусология',
+        'анат': 'анатомия',
+        'физиол': 'физиология',
+        'пат': 'патологическая',
+        'нормальн': 'нормальная',
+        'возр': 'возрастная',
+        'опер': 'оперативная',
+        'адап': 'адаптационная',
+        'хир': 'хирургия',
+        'топ': 'топографическая',
+        'проф': 'профессиональной',
+        'ин': 'иностранный',
+        'гч': 'генетики человека',
+    }
+
+def add_known_patterns_to_existing(existing: Dict[str, str], add_all: bool = False) -> Dict[str, str]:
+    """
+    Добавляет известные паттерны сокращений в существующий словарь
+    Если add_all=True, добавляет все известные паттерны, даже если их нет в existing
+    """
+    known_patterns = get_known_abbrev_patterns()
+    added = {}
+    
+    for abbrev, full_form in known_patterns.items():
+        # Создаем паттерны для разных регистров
+        patterns = [
+            (f"\\b{abbrev.capitalize()}\\.", full_form.capitalize()),
+            (f"\\b{abbrev.lower()}\\.", full_form.lower()),
+        ]
+        
+        # Для аббревиатур без точки (ГЧ)
+        if len(abbrev) <= 4:
+            patterns.extend([
+                (f"\\b{abbrev.upper()}\\b", full_form),
+                (f"\\b{abbrev.lower()}\\b", full_form),
+            ])
+        
+        for pattern, replacement in patterns:
+            if pattern not in existing:
+                existing[pattern] = replacement
+                added[pattern] = replacement
+            elif add_all and existing[pattern] != replacement:
+                # Обновляем, если add_all=True
+                existing[pattern] = replacement
+                added[pattern] = replacement
+    
+    return added
+
 def find_abbreviations(disciplines: Set[str], existing: Dict[str, str]) -> Dict[str, str]:
     """
     Находит потенциальные сокращения в названиях дисциплин
+    Использует известные паттерны и анализирует текст
     """
-    # Паттерны для поиска сокращений
-    # Ищем слова, заканчивающиеся на точку (сокращения)
-    abbreviation_patterns = [
-        r'\b([А-ЯЁ][а-яё]{0,3})\.',  # Сокращения типа "Медиц.", "эмбр."
-        r'\b([А-ЯЁ]{1,4})\b',        # Аббревиатуры типа "ГЧ", "ПВБ"
-    ]
+    known_abbrev_patterns = get_known_abbrev_patterns()
     
     found_abbrev = {}
     potential_expansions = defaultdict(list)
     
-    for discipline in disciplines:
-        # Ищем сокращения
-        for pattern in abbreviation_patterns:
-            matches = re.finditer(pattern, discipline)
-            for match in matches:
-                abbrev = match.group(1)
-                context = discipline
-                
-                # Пропускаем уже известные сокращения
-                pattern_key = f"\\b{re.escape(abbrev)}\\."
-                if pattern_key in existing or abbrev in existing.values():
-                    continue
-                
-                # Собираем контекст для анализа
-                potential_expansions[abbrev].append(context)
+    # Паттерны для поиска сокращений в тексте
+    abbreviation_patterns = [
+        r'\b([А-ЯЁ][а-яё]{0,4})\.',  # Сокращения типа "Медиц.", "эмбр."
+        r'\b([А-ЯЁ]{1,4})\b',        # Аббревиатуры типа "ГЧ", "ПВБ" (без точки)
+    ]
     
-    # Анализируем найденные сокращения
+    for discipline in disciplines:
+        # Ищем сокращения с точкой
+        for match in re.finditer(r'\b([А-ЯЁ][а-яё]{0,4})\.', discipline):
+            abbrev = match.group(1)
+            abbrev_lower = abbrev.lower()
+            
+            # Проверяем, есть ли уже такое сокращение
+            pattern_key = f"\\b{re.escape(abbrev)}\\."
+            if pattern_key in existing:
+                continue
+            
+            # Используем известные паттерны
+            if abbrev_lower in known_abbrev_patterns:
+                full_form = known_abbrev_patterns[abbrev_lower]
+                # Определяем регистр первой буквы
+                if abbrev[0].isupper():
+                    full_form = full_form.capitalize()
+                found_abbrev[pattern_key] = full_form
+                continue
+            
+            # Собираем контекст для анализа
+            potential_expansions[abbrev].append(discipline)
+        
+        # Ищем аббревиатуры без точки (типа "ГЧ")
+        for match in re.finditer(r'\b([А-ЯЁ]{2,4})\b', discipline):
+            abbrev = match.group(1)
+            abbrev_lower = abbrev.lower()
+            
+            # Пропускаем слишком короткие или длинные
+            if len(abbrev) < 2 or len(abbrev) > 4:
+                continue
+            
+            # Проверяем известные аббревиатуры
+            pattern_key = f"\\b{re.escape(abbrev)}\\b"
+            if pattern_key in existing:
+                continue
+            
+            if abbrev_lower in known_abbrev_patterns:
+                full_form = known_abbrev_patterns[abbrev_lower]
+                found_abbrev[pattern_key] = full_form
+                continue
+    
+    # Анализируем найденные сокращения, для которых не нашли известный паттерн
     for abbrev, contexts in potential_expansions.items():
+        if abbrev.lower() in known_abbrev_patterns:
+            continue  # Уже обработали
+        
         if len(contexts) >= 2:  # Если встречается минимум 2 раза
             # Пытаемся найти полную форму в других дисциплинах
             full_form = find_full_form(abbrev, disciplines)
             if full_form:
-                found_abbrev[f"\\b{re.escape(abbrev)}\\."] = full_form
+                pattern_key = f"\\b{re.escape(abbrev)}\\."
+                found_abbrev[pattern_key] = full_form
     
     return found_abbrev
 
@@ -211,9 +318,18 @@ def main():
     
     print(f"Найдено файлов расписаний: {len(json_files)}")
     
-    # Загружаем существующие сокращения
-    existing_abbrev = load_existing_abbreviations(abbrev_file)
-    print(f"Загружено существующих сокращений: {len(existing_abbrev)}")
+    # Загружаем существующие сокращения из всех файлов abbreviations*.json
+    print("\nЗагрузка существующих сокращений...")
+    existing_abbrev = load_existing_abbreviations()
+    print(f"Всего загружено существующих сокращений: {len(existing_abbrev)}")
+    
+    # Добавляем известные паттерны, которых еще нет
+    print("\nДобавление известных паттернов...")
+    added_patterns = add_known_patterns_to_existing(existing_abbrev, add_all=False)
+    if added_patterns:
+        print(f"Добавлено известных паттернов: {len(added_patterns)}")
+    else:
+        print("Все известные паттерны уже присутствуют")
     
     # Собираем все дисциплины из всех файлов
     all_disciplines = set()
@@ -237,9 +353,16 @@ def main():
     
     # Объединяем и сохраняем
     merged_abbrev = merge_abbreviations(existing_abbrev, new_abbrev)
+    
+    print(f"\nСтатистика:")
+    print(f"  Существующих: {len(existing_abbrev)}")
+    print(f"  Найдено новых: {len(new_abbrev)}")
+    print(f"  Всего будет сохранено: {len(merged_abbrev)}")
+    
+    # Спрашиваем, сохранять ли (или можно добавить флаг --force)
     save_abbreviations(merged_abbrev, abbrev_file)
     
-    print(f"\nВсего сокращений: {len(merged_abbrev)}")
+    print(f"\nВсего сокращений сохранено: {len(merged_abbrev)}")
 
 if __name__ == '__main__':
     main()
