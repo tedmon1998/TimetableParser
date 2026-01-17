@@ -1,6 +1,21 @@
 import axios from 'axios';
 
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+// Используем полный URL
+// Можно также использовать переменную окружения REACT_APP_API_URL
+// Порт 5001, так как 5000 часто занят AirPlay Receiver на macOS
+const API_BASE = process.env.REACT_APP_API_URL || 'http://127.0.0.1:5001/api';
+
+// Перехватчик только для ошибок (не логируем успешные запросы)
+axios.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  (error) => {
+    // Логируем только ошибки
+    console.error('API Error:', error.response?.status, error.config?.url, error.message);
+    return Promise.reject(error);
+  }
+);
 
 export interface FileInfo {
   name: string;
@@ -60,6 +75,9 @@ export const api = {
   startDownload: () => axios.post(`${API_BASE}/tasks/download`),
   startParse: () => axios.post(`${API_BASE}/tasks/parse`),
   startNormalize: () => axios.post(`${API_BASE}/tasks/normalize`),
+  
+  stopTask: (taskName: string) =>
+    axios.post(`${API_BASE}/tasks/${taskName}/stop`),
   
   getTaskStatus: (taskName: string) =>
     axios.get<TaskStatus>(`${API_BASE}/tasks/${taskName}/status`),

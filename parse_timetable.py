@@ -389,8 +389,83 @@ def parse_pdf(pdf_path: str) -> List[Dict]:
     return results
 
 def main():
-    pdf_path = 'Lechebnoe delo-13-01-26.pdf'
-    output_path = 'timetable.json'
+    import sys
+    import os
+    from pathlib import Path
+    
+    # Определяем пути к папкам
+    pdfs_dir = 'schedules_pdf'
+    jsons_dir = 'schedules_json'
+    
+    # Создаем папку для JSON, если её нет
+    Path(jsons_dir).mkdir(exist_ok=True)
+    
+    # Если указан файл как аргумент
+    if len(sys.argv) > 1:
+        pdf_path = sys.argv[1]
+        if not os.path.exists(pdf_path):
+            print(f"Ошибка: файл {pdf_path} не найден")
+            return
+    else:
+        # Ищем PDF файлы в папке schedules_pdf или текущей директории
+        if os.path.exists(pdfs_dir):
+            pdf_files = list(Path(pdfs_dir).glob('*.pdf'))
+            if pdf_files:
+                print(f"Найдено PDF файлов в {pdfs_dir}: {len(pdf_files)}")
+                # Парсим все файлы
+                for pdf_file in pdf_files:
+                    print(f"\n{'='*60}")
+                    print(f"Парсинг файла: {pdf_file.name}")
+                    print(f"{'='*60}")
+                    results = parse_pdf(str(pdf_file))
+                    
+                    # Создаем имя JSON файла на основе имени PDF
+                    json_name = pdf_file.stem + '.json'
+                    output_path = os.path.join(jsons_dir, json_name)
+                    
+                    print(f"Найдено записей: {len(results)}")
+                    
+                    # Сохраняем в JSON
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        json.dump(results, f, ensure_ascii=False, indent=2)
+                    
+                    print(f"Результаты сохранены в {output_path}")
+                return
+            else:
+                print(f"В папке {pdfs_dir} не найдено PDF файлов")
+        
+        # Пробуем найти в текущей директории
+        pdf_files = list(Path('.').glob('*.pdf'))
+        if pdf_files:
+            print(f"Найдено PDF файлов в текущей директории: {len(pdf_files)}")
+            for pdf_file in pdf_files:
+                print(f"\n{'='*60}")
+                print(f"Парсинг файла: {pdf_file.name}")
+                print(f"{'='*60}")
+                results = parse_pdf(str(pdf_file))
+                
+                json_name = pdf_file.stem + '.json'
+                output_path = os.path.join(jsons_dir, json_name)
+                
+                print(f"Найдено записей: {len(results)}")
+                
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+                
+                print(f"Результаты сохранены в {output_path}")
+            return
+        
+        # Если ничего не найдено, используем файл по умолчанию
+        pdf_path = 'Lechebnoe delo-13-01-26.pdf'
+        if not os.path.exists(pdf_path):
+            print("Ошибка: не найдено PDF файлов для парсинга")
+            print("Использование: python3 parse_timetable.py [путь_к_pdf_файлу]")
+            print("Или поместите PDF файлы в папку schedules_pdf/")
+            return
+    
+    # Парсим один файл
+    output_name = Path(pdf_path).stem + '.json'
+    output_path = os.path.join(jsons_dir, output_name)
     
     print(f"Парсинг файла {pdf_path}...")
     results = parse_pdf(pdf_path)
@@ -406,7 +481,7 @@ def main():
     # Выводим примеры
     if results:
         print("\nПримеры записей:")
-        for i, entry in enumerate(results[:5]):
+        for i, entry in enumerate(results[:3]):
             print(f"\n{i+1}. {json.dumps(entry, ensure_ascii=False, indent=2)}")
 
 if __name__ == '__main__':

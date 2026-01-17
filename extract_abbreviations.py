@@ -8,6 +8,7 @@
 import json
 import re
 import glob
+import time
 from collections import defaultdict
 from typing import Dict, Set, List
 
@@ -262,32 +263,61 @@ def merge_abbreviations(existing: Dict[str, str], new: Dict[str, str]) -> Dict[s
     
     return merged
 
-def save_abbreviations(abbreviations: Dict[str, str], output_file: str):
-    """Сохраняет сокращения в JSON файл"""
-    # Группируем по категориям (можно улучшить логику группировки)
-    categorized = {
-        "Медицинские термины": {},
-        "Другие": {}
-    }
+def save_abbreviations(abbreviations: Dict[str, str], output_file: str, existing_structure: Dict = None):
+    """Сохраняет сокращения в JSON файл, дополняя существующую структуру"""
+    # Если есть существующая структура, используем её категории
+    if existing_structure and 'abbreviations' in existing_structure:
+        categorized = existing_structure['abbreviations'].copy()
+        # Обновляем существующие категории новыми сокращениями
+        for category in categorized:
+            categorized[category] = categorized[category].copy()
+    else:
+        categorized = {
+            "Медицинские термины": {},
+            "Другие": {}
+        }
     
     medical_keywords = ['медиц', 'эмбр', 'цит', 'вирус', 'анат', 'физиол', 'пат', 'хир', 'топ']
     
+    # Распределяем новые сокращения по категориям
     for pattern, replacement in abbreviations.items():
         pattern_lower = pattern.lower()
         is_medical = any(keyword in pattern_lower for keyword in medical_keywords)
         
-        if is_medical:
-            categorized["Медицинские термины"][pattern] = replacement
-        else:
-            categorized["Другие"][pattern] = replacement
+        # Ищем подходящую категорию или создаем новую
+        placed = False
+        for category in categorized:
+            if pattern in categorized[category]:
+                # Уже есть, обновляем
+                categorized[category][pattern] = replacement
+                placed = True
+                break
+        
+        if not placed:
+            # Добавляем в подходящую категорию
+            if is_medical:
+                if "Медицинские термины" not in categorized:
+                    categorized["Медицинские термины"] = {}
+                categorized["Медицинские термины"][pattern] = replacement
+            else:
+                if "Другие" not in categorized:
+                    categorized["Другие"] = {}
+                categorized["Другие"][pattern] = replacement
+    
+    # Сохраняем метаданные из существующего файла или создаем новые
+    if existing_structure and 'metadata' in existing_structure:
+        metadata = existing_structure['metadata'].copy()
+        metadata['last_updated'] = time.strftime('%Y-%m-%d')
+    else:
+        metadata = {
+            "version": "1.0",
+            "last_updated": time.strftime('%Y-%m-%d'),
+            "description": "Словарь сокращений для нормализации названий дисциплин"
+        }
     
     data = {
         "abbreviations": categorized,
-        "metadata": {
-            "version": "1.0",
-            "last_updated": "2026-01-26",
-            "description": "Словарь сокращений для нормализации названий дисциплин"
-        }
+        "metadata": metadata
     }
     
     with open(output_file, 'w', encoding='utf-8') as f:
@@ -308,6 +338,8 @@ def main():
         json_files = glob.glob('timetable*.json')
         # Также ищем normalized версии
         json_files.extend(glob.glob('*_normalized.json'))
+        # Ищем в папке schedules_json
+        json_files.extend(glob.glob('schedules_json/*.json'))
         json_files = list(set(json_files))  # Убираем дубликаты
     
     if not json_files:
@@ -359,10 +391,20 @@ def main():
     print(f"  Найдено новых: {len(new_abbrev)}")
     print(f"  Всего будет сохранено: {len(merged_abbrev)}")
     
-    # Спрашиваем, сохранять ли (или можно добавить флаг --force)
-    save_abbreviations(merged_abbrev, abbrev_file)
+    # Сохраняем в существующий файл (дополняем, не перезаписываем)
+    # Сначала загружаем существующую структуру, чтобы сохранить категории
+    existing_structure = {}
+    if Path(abbrev_file).exists():
+        try:
+            with open(abbrev_file, 'r', encoding='utf-8') as f:
+                existing_structure = json.load(f)
+        except:
+            pass
     
-    print(f"\nВсего сокращений сохранено: {len(merged_abbrev)}")
+    save_abbreviations(merged_abbrev, abbrev_file, existing_structure)
+    
+    print(f"\n✅ Сокращения дополнены и сохранены в {abbrev_file}")
+    print(f"Всего сокращений: {len(merged_abbrev)}")
 
 if __name__ == '__main__':
     main()

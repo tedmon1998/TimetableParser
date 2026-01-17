@@ -3,16 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "dependencies": {
+    "@tanstack/react-table": "^8.10.7",
     "@types/node": "^20.10.0",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
+    "axios": "^1.6.2",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
-    "typescript": "^5.3.3",
-    "axios": "^1.6.2",
     "react-table": "^7.8.0",
-    "@tanstack/react-table": "^8.10.7"
+    "typescript": "^5.3.3"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -37,6 +37,8 @@
       "last 1 safari version"
     ]
   },
-  "proxy": "http://localhost:5000"
+  "proxy": "http://localhost:5001",
+  "devDependencies": {
+    "ajv": "^7.2.4"
+  }
 }
-

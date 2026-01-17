@@ -60,10 +60,17 @@ const AbbreviationsEditor: React.FC = () => {
   const handleAddAbbreviation = (category: string) => {
     if (!data) return;
     
-    const pattern = prompt('Введите паттерн (regex):');
+    const patternInput = prompt('Введите паттерн (например: АДАП. или АДАП):');
     const replacement = prompt('Введите замену:');
     
-    if (pattern && replacement) {
+    if (patternInput && replacement) {
+      // Автоматически добавляем границы слов если паттерн не начинается с \
+      let pattern = patternInput.trim();
+      if (!pattern.startsWith('\\')) {
+        // Добавляем \b в начале и конце для границ слов
+        pattern = '\\b' + pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b';
+      }
+      
       setData({
         ...data,
         abbreviations: {
@@ -184,6 +191,42 @@ interface AbbreviationItemProps {
   onDelete: (category: string, pattern: string) => void;
 }
 
+// Функция для отображения паттерна без regex символов
+const displayPattern = (pattern: string): string => {
+  // Убираем regex символы для отображения
+  return pattern
+    .replace(/\\b/g, '')  // Убираем \b
+    .replace(/\\/g, '')    // Убираем оставшиеся \
+    .replace(/\^/g, '')    // Убираем ^
+    .replace(/\$/g, '')    // Убираем $
+    .trim();
+};
+
+// Функция для преобразования человекочитаемого паттерна обратно в regex
+const patternToRegex = (displayPattern: string, originalPattern: string): string => {
+  // Если паттерн начинался с \b, сохраняем это
+  const needsWordBoundary = originalPattern.startsWith('\\b');
+  const needsEndBoundary = originalPattern.endsWith('\\b');
+  
+  // Экранируем специальные символы regex
+  // Список специальных символов: . * + ? ^ $ { } ( ) | [ ] \
+  const specialChars = /[.*+?^${}()|[\]\\]/g;
+  let result = displayPattern.replace(specialChars, (match) => {
+    // Если символ уже экранирован, не экранируем повторно
+    return '\\' + match;
+  });
+  
+  // Добавляем границы слов если нужно
+  if (needsWordBoundary && !result.startsWith('\\b')) {
+    result = '\\b' + result;
+  }
+  if (needsEndBoundary && !result.endsWith('\\b')) {
+    result = result + '\\b';
+  }
+  
+  return result;
+};
+
 const AbbreviationItem: React.FC<AbbreviationItemProps> = ({
   category,
   pattern,
@@ -192,16 +235,18 @@ const AbbreviationItem: React.FC<AbbreviationItemProps> = ({
   onDelete
 }) => {
   const [editing, setEditing] = useState(false);
-  const [editPattern, setEditPattern] = useState(pattern);
+  const [editPattern, setEditPattern] = useState(displayPattern(pattern));
   const [editReplacement, setEditReplacement] = useState(replacement);
 
   const handleSave = () => {
-    onUpdate(category, pattern, editPattern, editReplacement);
+    // Преобразуем человекочитаемый паттерн обратно в regex
+    const regexPattern = patternToRegex(editPattern, pattern);
+    onUpdate(category, pattern, regexPattern, editReplacement);
     setEditing(false);
   };
 
   const handleCancel = () => {
-    setEditPattern(pattern);
+    setEditPattern(displayPattern(pattern));
     setEditReplacement(replacement);
     setEditing(false);
   };
@@ -230,7 +275,7 @@ const AbbreviationItem: React.FC<AbbreviationItemProps> = ({
   return (
     <div className="abbreviation-item">
       <div className="abbreviation-content">
-        <div className="abbreviation-pattern">{pattern}</div>
+        <div className="abbreviation-pattern" title={pattern}>{displayPattern(pattern)}</div>
         <div className="abbreviation-arrow">→</div>
         <div className="abbreviation-replacement">{replacement}</div>
       </div>

@@ -7,6 +7,7 @@
 
 import json
 import re
+import os
 from typing import Dict, List
 
 def load_abbreviations(abbrev_file: str = 'abbreviations.json') -> Dict[str, str]:
@@ -176,19 +177,62 @@ def normalize_timetable(input_file: str, output_file: str = None):
 
 def main():
     import sys
+    from pathlib import Path
     
     # Можно указать файл с сокращениями как аргумент
-    abbrev_file = sys.argv[1] if len(sys.argv) > 1 else 'abbreviations.json'
+    if len(sys.argv) > 1 and not sys.argv[1].endswith('.json'):
+        abbrev_file = sys.argv[1]
+    else:
+        abbrev_file = 'abbreviations.json'
     
     # Перезагружаем сокращения
     global ABBREVIATIONS
     ABBREVIATIONS = load_abbreviations(abbrev_file)
     print(f"Загружено сокращений: {len(ABBREVIATIONS)}")
     
-    input_file = 'timetable.json'
-    output_file = 'timetable_normalized.json'
+    # Определяем входные файлы
+    jsons_dir = 'schedules_json'
     
-    normalize_timetable(input_file, output_file)
+    # Если указан конкретный файл
+    if len(sys.argv) > 1 and sys.argv[1].endswith('.json') and os.path.exists(sys.argv[1]):
+        input_files = [sys.argv[1]]
+    elif os.path.exists(jsons_dir):
+        # Ищем все JSON файлы в папке
+        input_files = list(Path(jsons_dir).glob('*.json'))
+        if not input_files:
+            # Пробуем текущую директорию
+            input_files = list(Path('.').glob('timetable*.json'))
+    else:
+        # Используем файл по умолчанию
+        input_files = ['timetable.json'] if os.path.exists('timetable.json') else []
+    
+    if not input_files:
+        print("Не найдено JSON файлов для нормализации")
+        print("Использование: python3 normalize_disciplines.py [файл.json]")
+        print("Или поместите JSON файлы в папку schedules_json/")
+        return
+    
+    print(f"Найдено JSON файлов: {len(input_files)}")
+    
+    # Нормализуем каждый файл
+    for input_file in input_files:
+        input_file = str(input_file)
+        print(f"\n{'='*60}")
+        print(f"Обработка: {input_file}")
+        print(f"{'='*60}")
+        
+        # Создаем имя выходного файла в папке schedules_parsed/
+        parsed_dir = 'schedules_parsed'
+        Path(parsed_dir).mkdir(exist_ok=True)
+        
+        # Берем только имя файла без пути
+        base_name = os.path.basename(input_file)
+        # Убираем расширение и добавляем _normalized
+        if base_name.endswith('.json'):
+            base_name = base_name[:-5]  # Убираем .json
+        output_file = os.path.join(parsed_dir, base_name + '_normalized.json')
+        
+        normalize_timetable(input_file, output_file)
     
     # Опционально: можно заменить исходный файл
     # import shutil
