@@ -148,7 +148,7 @@ def normalize_short_fio(short_fio):
     
     return short_fio
 
-def load_teacher_names(teacher_file='teacher_all.json'):
+def load_teacher_names(teacher_file='info/teacher_all.json'):
     """Загружает полные ФИО преподавателей из JSON файла и создает маппинг"""
     if not os.path.exists(teacher_file):
         print(f"Файл {teacher_file} не найден. Будет использоваться короткое ФИО.")
@@ -289,7 +289,7 @@ def process_csv_file(input_file, teacher_name_mapping=None):
     return results, missing_teachers
 
 def save_to_csv(data, output_file):
-    """Сохраняет данные в CSV файл"""
+    """Сохраняет данные в CSV файл с UTF-8 BOM для корректного отображения в Excel"""
     if not data:
         return
     
@@ -298,7 +298,7 @@ def save_to_csv(data, output_file):
         'week', 'subgroup', 'num_subgroups', 'is_external', 'is_remote', 'subject_name'
     ]
     
-    with open(output_file, 'w', encoding='utf-8', newline='') as f:
+    with open(output_file, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(data)
@@ -308,15 +308,75 @@ def save_to_json(data, output_file):
     with open(output_file, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+def save_to_excel(data, output_file):
+    """Сохраняет данные в Excel файл"""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment
+    except ImportError:
+        print("Библиотека openpyxl не установлена. Установите её командой: pip install openpyxl")
+        return
+    
+    if not data:
+        return
+    
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Расписание"
+    
+    # Заголовки
+    headers = [
+        'ФИО', 'Номер пары', 'День недели', 'Группа', 'Аудитория', 'Кафедра',
+        'Неделя', 'Подгруппа', 'Кол-во подгрупп', 'Внешний', 'Дистанционно', 'Название предмета'
+    ]
+    
+    # Записываем заголовки
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num, value=header)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Записываем данные
+    fieldnames = [
+        'fio', 'pair_number', 'day_of_week', 'group', 'audience', 'department',
+        'week', 'subgroup', 'num_subgroups', 'is_external', 'is_remote', 'subject_name'
+    ]
+    
+    for row_num, row_data in enumerate(data, 2):
+        for col_num, field in enumerate(fieldnames, 1):
+            value = row_data.get(field, '')
+            # Преобразуем булевы значения в текст
+            if isinstance(value, bool):
+                value = 'Да' if value else 'Нет'
+            ws.cell(row=row_num, column=col_num, value=value)
+    
+    # Автоподбор ширины столбцов
+    for col in ws.columns:
+        max_length = 0
+        col_letter = col[0].column_letter
+        for cell in col:
+            try:
+                if len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        adjusted_width = min(max_length + 2, 50)
+        ws.column_dimensions[col_letter].width = adjusted_width
+    
+    # Замораживаем первую строку
+    ws.freeze_panes = 'A2'
+    
+    wb.save(output_file)
+
 def save_missing_teachers(missing_teachers, output_file='missing_teachers.csv'):
-    """Сохраняет список преподавателей без полного ФИО в CSV файл"""
+    """Сохраняет список преподавателей без полного ФИО в CSV файл с UTF-8 BOM"""
     if not missing_teachers:
         return
     
     # Сортируем для удобства
     sorted_teachers = sorted(missing_teachers)
     
-    with open(output_file, 'w', encoding='utf-8', newline='') as f:
+    with open(output_file, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['short_fio'])  # Заголовок
         for teacher in sorted_teachers:
@@ -329,11 +389,15 @@ def main():
     import glob
     import os
     
-    # Ищем файлы, начинающиеся с "Zanyatost prepodavateley"
-    csv_files = glob.glob("Zanyatost prepodavateley*.csv")
+    # Создаем папки, если их нет
+    os.makedirs('input', exist_ok=True)
+    os.makedirs('output', exist_ok=True)
+    
+    # Ищем файлы, начинающиеся с "Zanyatost prepodavateley" в папке input
+    csv_files = glob.glob("input/Zanyatost prepodavateley*.csv")
     
     if not csv_files:
-        print("Не найден CSV файл с расписанием. Ожидается файл вида 'Zanyatost prepodavateley*.csv'")
+        print("Не найден CSV файл с расписанием. Ожидается файл вида 'input/Zanyatost prepodavateley*.csv'")
         return
     
     input_file = csv_files[0]
@@ -349,9 +413,10 @@ def main():
     
     print(f"Обработано записей: {len(results)}")
     
-    # Сохраняем результаты
-    csv_output = 'timetable_processed.csv'
-    json_output = 'timetable_processed.json'
+    # Сохраняем результаты в папку output
+    csv_output = 'output/timetable_processed.csv'
+    json_output = 'output/timetable_processed.json'
+    excel_output = 'output/timetable_processed.xlsx'
     
     save_to_csv(results, csv_output)
     print(f"Данные сохранены в CSV: {csv_output}")
@@ -359,9 +424,12 @@ def main():
     save_to_json(results, json_output)
     print(f"Данные сохранены в JSON: {json_output}")
     
+    save_to_excel(results, excel_output)
+    print(f"Данные сохранены в Excel: {excel_output}")
+    
     # Сохраняем преподавателей без полного ФИО
     if missing_teachers:
-        save_missing_teachers(missing_teachers)
+        save_missing_teachers(missing_teachers, 'output/missing_teachers.csv')
 
 if __name__ == '__main__':
     main()

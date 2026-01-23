@@ -41,6 +41,8 @@ for i in range(0, 1000):
                     predmet = predmet + q.text + "|"
                 objectData["predmet"] = predmet
         mass.append(objectData)
-with open("teacher_all.json", "w") as json_file:
+import os
+os.makedirs('info', exist_ok=True)
+with open("info/teacher_all.json", "w") as json_file:
     json.dump(mass, json_file)
 

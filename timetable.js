@@ -5,7 +5,14 @@ const XLSX = require('xlsx');
 const { Pool } = require('pg');
 
 const url = 'https://www.surgu.ru/ucheba/raspisanie/zanyatost-prepodavateley';
-const path = `downloaded_file.xlsx`;
+// Создаем папки, если их нет
+if (!fs.existsSync('input')) {
+    fs.mkdirSync('input');
+}
+if (!fs.existsSync('output')) {
+    fs.mkdirSync('output');
+}
+const path = `input/downloaded_file.xlsx`;
 
 
 function arrayValidator(arr) {
