@@ -849,26 +849,63 @@ def parse_excel_file(file_path, teacher_name_mapping):
     return all_results
 
 def save_results_to_csv(results, output_file):
-    """Сохраняет результаты в CSV файл с обязательными полями: день, пара, дисциплина"""
+    """Сохраняет результаты в CSV файл со всеми доступными полями"""
     import csv
     
     if not results:
         return
     
-    # Обязательные поля (минимум)
-    fieldnames = ['day_of_week', 'pair_number', 'subject_name']
+    # Собираем все уникальные поля из всех результатов
+    all_fields = set()
+    for result in results:
+        all_fields.update(result.keys())
+    
+    # Определяем порядок полей (приоритетные сначала)
+    priority_fields = [
+        'day_of_week', 'pair_number', 'subject_name', 
+        'teacher', 'fio', 'audience', 'lecture_type', 
+        'week_type', 'week', 'group', 'group_name',
+        'subgroup', 'num_subgroups', 'is_external', 
+        'is_remote', 'department', 'institute', 
+        'course', 'direction'
+    ]
+    
+    # Формируем финальный список полей
+    fieldnames = []
+    # Сначала добавляем приоритетные поля, которые есть в данных
+    for field in priority_fields:
+        if field in all_fields:
+            fieldnames.append(field)
+            all_fields.discard(field)
+    
+    # Затем добавляем остальные поля в алфавитном порядке
+    fieldnames.extend(sorted(all_fields))
+    
+    # Убеждаемся, что обязательные поля есть
+    required_fields = ['day_of_week', 'pair_number', 'subject_name']
+    for field in required_fields:
+        if field not in fieldnames:
+            fieldnames.insert(0, field)
     
     with open(output_file, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         
         for result in results:
-            row = {
-                'day_of_week': result.get('day_of_week', ''),
-                'pair_number': result.get('pair_number', ''),
-                'subject_name': result.get('subject_name', '')
-            }
+            # Создаем строку со всеми полями
+            row = {}
+            for field in fieldnames:
+                value = result.get(field, '')
+                # Преобразуем None в пустую строку
+                if value is None:
+                    value = ''
+                # Преобразуем булевы значения
+                elif isinstance(value, bool):
+                    value = 'True' if value else 'False'
+                row[field] = value
             writer.writerow(row)
+    
+    print(f"CSV сохранен с полями: {fieldnames}")
 
 def save_results_to_excel(results, output_file):
     """Сохраняет результаты в Excel файл в формате, похожем на timetable_processed.csv"""

@@ -1,0 +1,21 @@
+.script-runner {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.description {
+  color: #666;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+
+.progress-container {
+  margin-top: 1.5rem;
+}
+
+.progress-message {
+  margin-top: 0.5rem;
+  color: #666;
+  font-size: 0.9rem;
+}

@@ -13,3 +13,8 @@ extract_rooms.py
 
 <!-- Из папки input/timetable/* парсит все расписания в файл output/timetable -->
 parse_timetable_excel.py
+
+<!-- Из папки output/timetable/* парсит все расписания в файл output/timetable нормализованный вид -->
+clean_audiences.py
+
+
