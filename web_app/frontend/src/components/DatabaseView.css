@@ -50,7 +50,7 @@
 }
 
 /* Фиксированные ширины для колонок */
-.grid-table-row .grid-table-cell:nth-child(1) { width: 100px; flex-grow: 0; flex-shrink: 0; }
+.grid-table-row .grid-table-cell:nth-child(1) { width: 100px; flex-grow: 0; flex-shrink: 0; min-height: 3.5rem; }
 .grid-table-row .grid-table-cell:nth-child(2) { width: 120px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(3) { width: 80px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(4) { flex: 1 1 200px; min-width: 200px; }
@@ -577,6 +577,12 @@
   border: 2px solid var(--primary-color);
 }
 
+.grid-table-row.editing-row .grid-table-cell:nth-child(1) {
+  height: auto;
+  min-height: 3.5rem;
+  max-height: none;
+}
+
 .editable-cell {
   padding: 0.25rem;
 }
@@ -626,6 +632,35 @@
   justify-content: center;
   gap: 0.5rem;
   padding: 0.5rem;
+}
+
+.id-cell-with-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  position: relative;
+  height: auto;
+  min-height: 3.5rem;
+  max-height: none;
+}
+
+.id-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  flex-shrink: 0;
+}
+
+.id-value {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: 500;
+  flex-shrink: 0;
 }
 
 .save-button,
@@ -681,6 +716,84 @@
   font-weight: 600;
 }
 
+/* Контекстное меню */
+.context-menu {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  padding: 0.5rem 0;
+  min-width: 200px;
+  z-index: 10001;
+}
+
+.context-menu-item {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: none;
+  background: white;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #333;
+  transition: background-color 0.2s ease;
+  display: block;
+}
+
+.context-menu-item:hover {
+  background-color: #f8f9fa;
+}
+
+.context-menu-item-danger {
+  color: #dc3545;
+}
+
+.context-menu-item-danger:hover {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.context-menu-item:first-child {
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+
+.context-menu-item:last-child {
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+
+.context-menu-divider {
+  height: 1px;
+  background: #e0e0e0;
+  margin: 0.25rem 0;
+}
+
+/* Адаптивные стили для контекстного меню */
+@media (max-width: 768px) {
+  .context-menu {
+    min-width: 180px;
+    padding: 0.4rem 0;
+  }
+  
+  .context-menu-item {
+    padding: 0.6rem 0.8rem;
+    font-size: 0.85rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .context-menu {
+    min-width: 160px;
+    padding: 0.3rem 0;
+  }
+  
+  .context-menu-item {
+    padding: 0.5rem 0.7rem;
+    font-size: 0.8rem;
+  }
+}
+
 /* Адаптивные стили */
 @media (max-width: 1200px) {
   .grid-table-row .grid-table-cell:nth-child(1) { width: 80px; }
@@ -716,6 +829,16 @@
   .cell-content {
     font-size: 0.85rem;
     padding: 0.5rem;
+  }
+  
+  .cell-input {
+    font-size: 0.8rem;
+    padding: 0.4rem;
+  }
+  
+  .cell-select {
+    font-size: 0.8rem;
+    padding: 0.4rem;
   }
 }
 
@@ -793,6 +916,10 @@
     padding: 0.5rem;
   }
   
+  .editable-cell {
+    padding: 0.2rem;
+  }
+  
   .cell-input {
     font-size: 0.8rem;
     padding: 0.4rem;
@@ -808,6 +935,25 @@
     width: 28px;
     height: 28px;
     font-size: 1rem;
+  }
+  
+  .action-cell {
+    padding: 0.3rem;
+    gap: 0.3rem;
+  }
+  
+  .id-cell-with-actions {
+    min-height: 3rem;
+    padding: 0.2rem 0.4rem;
+    gap: 0.2rem;
+  }
+  
+  .id-actions {
+    gap: 0.4rem;
+  }
+  
+  .id-value {
+    font-size: 0.8rem;
   }
   
   .stats-grid {
@@ -896,6 +1042,10 @@
     max-height: 2rem;
   }
   
+  .editable-cell {
+    padding: 0.15rem;
+  }
+  
   .cell-input {
     font-size: 0.75rem;
     padding: 0.3rem;
@@ -914,8 +1064,30 @@
   }
   
   .action-cell {
-    padding: 0.3rem;
+    padding: 0.25rem;
+    gap: 0.25rem;
+  }
+  
+  .id-cell-with-actions {
+    min-height: 2.5rem;
+    padding: 0.15rem 0.3rem;
+    gap: 0.15rem;
+  }
+  
+  .id-actions {
     gap: 0.3rem;
+  }
+  
+  .id-value {
+    font-size: 0.75rem;
+  }
+  
+  .grid-table-row.editing-row {
+    flex-wrap: wrap;
+  }
+  
+  .grid-table-row.editing-row .grid-table-cell {
+    min-width: 0;
   }
   
   .filter-hint {

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffe
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import axios from 'axios';
 import { useDebounce } from '../hooks/useDebounce';
+import Toast from './Toast';
 import './DatabaseView.css';
 
 interface DatabaseStats {
@@ -89,6 +90,17 @@ const DatabaseView: React.FC = () => {
   const [editedValues, setEditedValues] = useState<Partial<DatabaseRecord>>({});
   const [originalValues, setOriginalValues] = useState<Partial<DatabaseRecord>>({});
   const [copiedCellId, setCopiedCellId] = useState<string | null>(null);
+  
+  // Состояние для toast уведомлений
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+  
+  // Состояние для контекстного меню
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    recordId: number;
+    position: 'before' | 'after';
+  } | null>(null);
 
   // Используем useDebounce для оптимизации запросов (800мс задержка)
   const debouncedFilters = useDebounce<Filters>(filters, 800);
@@ -624,10 +636,152 @@ const DatabaseView: React.FC = () => {
       setEditingRecordId(null);
       setEditedValues({});
       setOriginalValues({});
+      
+      // Показываем toast уведомление об успехе
+      setToast({ message: 'Запись успешно сохранена', type: 'success' });
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Ошибка при сохранении записи');
+      const errorMessage = err.response?.data?.error || 'Ошибка при сохранении записи';
+      setError(errorMessage);
+      setToast({ message: errorMessage, type: 'error' });
     }
   };
+  
+  // Функция для создания копии записи
+  const duplicateRecord = async (recordId: number, position: 'before' | 'after') => {
+    try {
+      // Находим запись в текущем списке
+      const record = records.find((r: DatabaseRecord) => r.id === recordId);
+      if (!record) {
+        setToast({ message: 'Запись не найдена', type: 'error' });
+        setContextMenu(null);
+        return;
+      }
+      
+      // Создаем копию без ID, добавляем параметры позиционирования
+      const { id, ...recordData } = record;
+      const dataToSend = {
+        ...recordData,
+        _reference_id: recordId,
+        _position: position
+      };
+      
+      // Создаем новую запись
+      await axios.post(`${API_BASE}/db/records`, dataToSend);
+      
+      // Инвалидируем кеш для обновления данных
+      queryClient.invalidateQueries({ queryKey: ['db-records'] });
+      queryClient.invalidateQueries({ queryKey: ['db-stats'] });
+      
+      setToast({ message: 'Копия записи успешно создана', type: 'success' });
+      setContextMenu(null);
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.error || 'Ошибка при создании копии записи';
+      setToast({ message: errorMessage, type: 'error' });
+      setContextMenu(null);
+    }
+  };
+  
+  // Функция для создания пустой записи
+  const createEmptyRecord = async (recordId: number, position: 'before' | 'after') => {
+    try {
+      // Создаем пустую запись с параметрами позиционирования
+      const emptyRecord: any = {
+        day_of_week: null,
+        pair_number: null,
+        subject_name: null,
+        lecture_type: null,
+        audience: null,
+        fio: null,
+        teacher: null,
+        group_name: null,
+        week_type: null,
+        subgroup: null,
+        institute: null,
+        course: null,
+        direction: null,
+        department: null,
+        is_external: null,
+        is_remote: null,
+        num_subgroups: null,
+        _reference_id: recordId,
+        _position: position
+      };
+      
+      // Создаем новую запись
+      await axios.post(`${API_BASE}/db/records`, emptyRecord);
+      
+      // Инвалидируем кеш для обновления данных
+      queryClient.invalidateQueries({ queryKey: ['db-records'] });
+      queryClient.invalidateQueries({ queryKey: ['db-stats'] });
+      
+      setToast({ message: 'Пустая запись успешно создана', type: 'success' });
+      setContextMenu(null);
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.error || 'Ошибка при создании пустой записи';
+      setToast({ message: errorMessage, type: 'error' });
+      setContextMenu(null);
+    }
+  };
+  
+  // Функция для удаления записи
+  const deleteRecord = async (recordId: number) => {
+    if (!window.confirm('Вы уверены, что хотите удалить эту запись?')) {
+      setContextMenu(null);
+      return;
+    }
+    
+    try {
+      await axios.delete(`${API_BASE}/db/records/${recordId}`);
+      
+      // Инвалидируем кеш для обновления данных
+      queryClient.invalidateQueries({ queryKey: ['db-records'] });
+      queryClient.invalidateQueries({ queryKey: ['db-stats'] });
+      
+      setToast({ message: 'Запись успешно удалена', type: 'success' });
+      setContextMenu(null);
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.error || 'Ошибка при удалении записи';
+      setToast({ message: errorMessage, type: 'error' });
+      setContextMenu(null);
+    }
+  };
+  
+  // Обработчик правого клика на строке
+  const handleRowContextMenu = (e: React.MouseEvent, record: DatabaseRecord) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Определяем позицию (до или после)
+    const rowElement = e.currentTarget as HTMLElement;
+    const rowRect = rowElement.getBoundingClientRect();
+    const clickY = e.clientY;
+    const rowCenterY = rowRect.top + rowRect.height / 2;
+    const position = clickY < rowCenterY ? 'before' : 'after';
+    
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      recordId: record.id,
+      position
+    });
+  };
+  
+  // Закрытие контекстного меню при клике вне его
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setContextMenu(null);
+    };
+    
+    if (contextMenu) {
+      document.addEventListener('click', handleClickOutside);
+      document.addEventListener('contextmenu', handleClickOutside);
+    }
+    
+    return () => {
+      document.removeEventListener('click', handleClickOutside);
+      document.removeEventListener('contextmenu', handleClickOutside);
+    };
+  }, [contextMenu]);
 
   return (
     <div className="database-view">
@@ -1169,6 +1323,34 @@ const DatabaseView: React.FC = () => {
                         const expandDirection = expandedCell?.direction || 'right';
                         const expandWidth = expandedCell?.width || 0;
                         
+                        // Специальная обработка ячейки ID при редактировании
+                        if (isEditing && field === 'id') {
+                          return (
+                            <div 
+                              key={cellIndex}
+                              className="grid-table-cell id-cell-with-actions"
+                            >
+                              <div className="id-actions">
+                                <button
+                                  className="save-button"
+                                  onClick={() => saveRecord(record.id)}
+                                  title="Сохранить изменения"
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  className="cancel-button"
+                                  onClick={cancelEditing}
+                                  title="Отменить изменения"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                              <div className="id-value">{displayValue}</div>
+                            </div>
+                          );
+                        }
+                        
                         if (isEditing && field !== 'id') {
                           // Редактируемая ячейка
                           const isNumericField = field === 'pair_number' || field === 'subgroup' || field === 'num_subgroups';
@@ -1320,7 +1502,11 @@ const DatabaseView: React.FC = () => {
                       };
                       
                       return (
-                        <div key={record.id} className={`grid-table-row ${isEditing ? 'editing-row' : ''}`}>
+                        <div 
+                          key={record.id} 
+                          className={`grid-table-row ${isEditing ? 'editing-row' : ''}`}
+                          onContextMenu={(e) => !isEditing && handleRowContextMenu(e, record)}
+                        >
                           {renderEditableCell('id', 0, String(record.id || '-'))}
                           {renderEditableCell('day_of_week', 1, getValue(currentRecord.day_of_week))}
                           {renderEditableCell('pair_number', 2, getValue(currentRecord.pair_number))}
@@ -1330,24 +1516,6 @@ const DatabaseView: React.FC = () => {
                           {renderEditableCell('fio', 6, getValue(currentRecord.fio || currentRecord.teacher))}
                           {renderEditableCell('group_name', 7, getValue(currentRecord.group_name))}
                           {renderEditableCell('week_type', 8, getValue(currentRecord.week_type))}
-                          {isEditing && (
-                            <div className="grid-table-cell action-cell">
-                              <button
-                                className="save-button"
-                                onClick={() => saveRecord(record.id)}
-                                title="Сохранить изменения"
-                              >
-                                ✓
-                              </button>
-                              <button
-                                className="cancel-button"
-                                onClick={cancelEditing}
-                                title="Отменить изменения"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                          )}
                         </div>
                       );
                     })
@@ -1387,6 +1555,55 @@ const DatabaseView: React.FC = () => {
         )}
       </div>
 
+      {/* Toast уведомления */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
+
+      {/* Контекстное меню */}
+      {contextMenu && (
+        <div
+          className="context-menu"
+          style={{
+            position: 'fixed',
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+            zIndex: 10001
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="context-menu-item"
+            onClick={() => duplicateRecord(contextMenu.recordId, contextMenu.position)}
+          >
+            {contextMenu.position === 'before' ? 'Создать копию выше' : 'Создать копию ниже'}
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={() => createEmptyRecord(contextMenu.recordId, contextMenu.position)}
+          >
+            {contextMenu.position === 'before' ? 'Создать пустую выше' : 'Создать пустую ниже'}
+          </button>
+          <div className="context-menu-divider"></div>
+          <button
+            className="context-menu-item context-menu-item-danger"
+            onClick={() => deleteRecord(contextMenu.recordId)}
+          >
+            Удалить запись
+          </button>
+          <div className="context-menu-divider"></div>
+          <button
+            className="context-menu-item"
+            onClick={() => setContextMenu(null)}
+          >
+            Отмена
+          </button>
+        </div>
+      )}
     </div>
   );
 };

@@ -489,6 +489,9 @@ def update_record(record_id):
     try:
         data = request.get_json()
         
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
         # Получаем список разрешенных полей для обновления
         allowed_fields = [
             'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
@@ -511,14 +514,15 @@ def update_record(record_id):
                 elif field in ['pair_number', 'subgroup', 'num_subgroups']:
                     # Для числовых полей пытаемся преобразовать
                     try:
-                        update_values.append(int(value) if value else None)
+                        update_values.append(int(value) if value is not None else None)
                     except (ValueError, TypeError):
                         update_values.append(None)
                 elif field in ['is_external', 'is_remote']:
                     # Для булевых полей
                     update_values.append(bool(value) if value is not None else None)
                 else:
-                    update_values.append(str(value) if value else None)
+                    # Для строковых полей
+                    update_values.append(str(value) if value is not None else None)
         
         if not update_fields:
             return jsonify({'error': 'No fields to update'}), 400
@@ -534,9 +538,15 @@ def update_record(record_id):
         """
         
         conn = psycopg2.connect(**DB_CONFIG)
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(update_query, update_values)
+        rows_affected = cursor.rowcount
         conn.commit()
+        
+        if rows_affected == 0:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Record not found'}), 404
         
         # Получаем обновленную запись
         cursor.execute("SELECT * FROM timetable_cleaned WHERE id = %s", (record_id,))
@@ -553,6 +563,160 @@ def update_record(record_id):
             return jsonify({'error': 'Record not found'}), 404
             
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error updating record {record_id}: {error_trace}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/db/records', methods=['POST'])
+def create_record():
+    """Создает новую запись в базе данных"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        # Получаем параметры позиционирования (если есть)
+        reference_id = data.get('_reference_id')
+        position = data.get('_position')  # 'before' or 'after'
+        
+        # Удаляем служебные поля из данных
+        record_data = {k: v for k, v in data.items() if not k.startswith('_')}
+        
+        # Получаем список разрешенных полей
+        allowed_fields = [
+            'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
+            'audience', 'fio', 'teacher', 'group_name', 'week_type',
+            'subgroup', 'institute', 'course', 'direction', 'department',
+            'is_external', 'is_remote', 'num_subgroups'
+        ]
+        
+        # Формируем списки полей и значений для INSERT
+        insert_fields = []
+        insert_values = []
+        placeholders = []
+        
+        for field in allowed_fields:
+            if field in record_data:
+                insert_fields.append(field)
+                placeholders.append('%s')
+                value = record_data[field]
+                
+                if value == '' or value is None:
+                    insert_values.append(None)
+                elif field in ['pair_number', 'subgroup', 'num_subgroups']:
+                    try:
+                        insert_values.append(int(value) if value is not None else None)
+                    except (ValueError, TypeError):
+                        insert_values.append(None)
+                elif field in ['is_external', 'is_remote']:
+                    insert_values.append(bool(value) if value is not None else None)
+                else:
+                    insert_values.append(str(value) if value is not None else None)
+        
+        if not insert_fields:
+            return jsonify({'error': 'No valid fields provided'}), 400
+        
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Создаем запись
+        insert_query = f"""
+            INSERT INTO timetable_cleaned ({', '.join(insert_fields)})
+            VALUES ({', '.join(placeholders)})
+            RETURNING *
+        """
+        cursor.execute(insert_query, insert_values)
+        new_record = cursor.fetchone()
+        new_id = new_record['id']
+        
+        # Если указана позиция относительно другой записи, используем специальную логику
+        if reference_id and position:
+            # Получаем ID целевой записи
+            cursor.execute("SELECT id FROM timetable_cleaned WHERE id = %s", (reference_id,))
+            ref_record = cursor.fetchone()
+            
+            if not ref_record:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Reference record not found'}), 404
+            
+            ref_id = ref_record['id']
+            
+            # Если нужно создать "выше", используем временный большой ID для перестановки
+            if position == 'before':
+                # Находим максимальный ID в таблице
+                cursor.execute("SELECT MAX(id) as max_id FROM timetable_cleaned")
+                max_id_result = cursor.fetchone()
+                max_id = max_id_result['max_id'] if max_id_result and max_id_result['max_id'] else new_id
+                temp_id = max_id + 1000000  # Временный очень большой ID
+                
+                # Переставляем ID: новая запись -> temp, целевая -> новая, temp -> целевая
+                cursor.execute("UPDATE timetable_cleaned SET id = %s WHERE id = %s", (temp_id, new_id))
+                cursor.execute("UPDATE timetable_cleaned SET id = %s WHERE id = %s", (new_id, ref_id))
+                cursor.execute("UPDATE timetable_cleaned SET id = %s WHERE id = %s", (ref_id, temp_id))
+                final_id = new_id
+            else:
+                # Для "after" запись уже создана с большим ID, ничего не делаем
+                final_id = new_id
+        else:
+            final_id = new_id
+        
+        conn.commit()
+        
+        # Получаем финальную версию записи
+        cursor.execute("SELECT * FROM timetable_cleaned WHERE id = %s", (final_id,))
+        final_record = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if final_record:
+            record_dict = dict(final_record)
+            return jsonify({'message': 'Record created successfully', 'record': record_dict}), 201
+        else:
+            return jsonify({'error': 'Failed to create record'}), 500
+            
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error creating record: {error_trace}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/db/records/<int:record_id>', methods=['DELETE'])
+def delete_record(record_id):
+    """Удаляет запись из базы данных"""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Проверяем существование записи
+        cursor.execute("SELECT id FROM timetable_cleaned WHERE id = %s", (record_id,))
+        record = cursor.fetchone()
+        
+        if not record:
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Record not found'}), 404
+        
+        # Удаляем запись
+        cursor.execute("DELETE FROM timetable_cleaned WHERE id = %s", (record_id,))
+        rows_affected = cursor.rowcount
+        conn.commit()
+        
+        cursor.close()
+        conn.close()
+        
+        if rows_affected > 0:
+            return jsonify({'message': 'Record deleted successfully'}), 200
+        else:
+            return jsonify({'error': 'Failed to delete record'}), 500
+            
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Error deleting record {record_id}: {error_trace}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
