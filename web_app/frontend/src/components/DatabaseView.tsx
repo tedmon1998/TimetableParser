@@ -84,6 +84,12 @@ const DatabaseView: React.FC = () => {
     direction: 'left' | 'right';
   } | null>(null);
 
+  // Состояние для редактирования записей
+  const [editingRecordId, setEditingRecordId] = useState<number | null>(null);
+  const [editedValues, setEditedValues] = useState<Partial<DatabaseRecord>>({});
+  const [originalValues, setOriginalValues] = useState<Partial<DatabaseRecord>>({});
+  const [copiedCellId, setCopiedCellId] = useState<string | null>(null);
+
   // Используем useDebounce для оптимизации запросов (800мс задержка)
   const debouncedFilters = useDebounce<Filters>(filters, 800);
 
@@ -536,6 +542,93 @@ const DatabaseView: React.FC = () => {
     return date.toLocaleString('ru-RU');
   };
 
+  // Функция копирования в буфер обмена
+  const copyToClipboard = async (text: string, cellId: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      // Визуальная обратная связь
+      setCopiedCellId(cellId);
+      setTimeout(() => setCopiedCellId(null), 1000);
+    } catch (err) {
+      // Fallback для старых браузеров
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.opacity = '0';
+      document.body.appendChild(textArea);
+      textArea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textArea);
+      // Визуальная обратная связь
+      setCopiedCellId(cellId);
+      setTimeout(() => setCopiedCellId(null), 1000);
+    }
+  };
+
+  // Функции для редактирования записей
+  const startEditing = (record: DatabaseRecord) => {
+    setEditingRecordId(record.id);
+    setOriginalValues({ ...record });
+    setEditedValues({ ...record });
+  };
+
+  const cancelEditing = () => {
+    setEditingRecordId(null);
+    setEditedValues({});
+    setOriginalValues({});
+  };
+
+  const handleFieldChange = (field: string, value: string | number | null) => {
+    if (editingRecordId) {
+      let processedValue: string | number | null = value === '' ? null : value;
+      
+      // Обрабатываем числовые поля
+      if (field === 'pair_number' || field === 'subgroup' || field === 'num_subgroups') {
+        if (processedValue === null || processedValue === '') {
+          processedValue = null;
+        } else {
+          const numValue = Number(processedValue);
+          processedValue = isNaN(numValue) ? null : numValue;
+        }
+      }
+      
+      setEditedValues(prev => ({
+        ...prev,
+        [field]: processedValue
+      }));
+    }
+  };
+
+  const saveRecord = async (recordId: number) => {
+    try {
+      // Подготавливаем данные для отправки
+      const dataToSend: any = {};
+      Object.keys(editedValues).forEach(key => {
+        if (key !== 'id' && editedValues[key as keyof DatabaseRecord] !== originalValues[key as keyof DatabaseRecord]) {
+          dataToSend[key] = editedValues[key as keyof DatabaseRecord];
+        }
+      });
+      
+      if (Object.keys(dataToSend).length === 0) {
+        // Нет изменений
+        cancelEditing();
+        return;
+      }
+      
+      await axios.put(`${API_BASE}/db/records/${recordId}`, dataToSend);
+      
+      // Инвалидируем кеш для обновления данных
+      queryClient.invalidateQueries({ queryKey: ['db-records'] });
+      queryClient.invalidateQueries({ queryKey: ['db-stats'] });
+      
+      setEditingRecordId(null);
+      setEditedValues({});
+      setOriginalValues({});
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Ошибка при сохранении записи');
+    }
+  };
+
   return (
     <div className="database-view">
       <div className="card">
@@ -630,7 +723,7 @@ const DatabaseView: React.FC = () => {
           </div>
           <div className="filter-controls">
             <div className="filter-hint">
-              💡 Кликните на заголовок колонки для фильтрации
+              💡 Кликните на ячейку для копирования, двойной клик по строке для редактирования
             </div>
             {hasActiveFilters() && (
               <button
@@ -1052,57 +1145,209 @@ const DatabaseView: React.FC = () => {
                     ))
                   ) : (
                     records.map((record: DatabaseRecord) => {
+                      const isEditing = editingRecordId === record.id;
+                      const currentRecord = isEditing ? { ...record, ...editedValues } : record;
+                      
                       // Безопасное получение значений с обработкой null/undefined
                       const getValue = (value: any): string => {
                         if (value === null || value === undefined || value === '') {
-                          return '-';
+                          return '';
                         }
                         return String(value);
                       };
 
                       const cellId = `cell-${record.id}`;
                       
-                      // Функция для рендеринга ячейки
-                      const renderCell = (value: string | number, cellIndex: number) => {
+                      // Функция для рендеринга редактируемой ячейки
+                      const renderEditableCell = (
+                        field: keyof DatabaseRecord,
+                        cellIndex: number,
+                        displayValue: string
+                      ) => {
                         const uniqueCellId = `${cellId}-${cellIndex}`;
                         const isExpanded = expandedCell?.id === uniqueCellId;
                         const expandDirection = expandedCell?.direction || 'right';
                         const expandWidth = expandedCell?.width || 0;
                         
-                        return (
-                          <div 
-                            key={cellIndex}
-                            className="grid-table-cell expandable-cell"
-                            onMouseEnter={(e) => handleCellMouseEnter(e, uniqueCellId)}
-                            onMouseLeave={handleCellMouseLeave}
-                          >
+                        if (isEditing && field !== 'id') {
+                          // Редактируемая ячейка
+                          const isNumericField = field === 'pair_number' || field === 'subgroup' || field === 'num_subgroups';
+                          
+                          // Выпадающие списки для определенных полей
+                          if (field === 'day_of_week') {
+                            return (
+                              <div 
+                                key={cellIndex}
+                                className="grid-table-cell editable-cell"
+                              >
+                                <select
+                                  className="cell-select"
+                                  value={getValue(currentRecord[field])}
+                                  onChange={(e) => handleFieldChange(field, e.target.value || null)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onFocus={(e) => e.stopPropagation()}
+                                >
+                                  <option value="">-</option>
+                                  <option value="понедельник">понедельник</option>
+                                  <option value="вторник">вторник</option>
+                                  <option value="среда">среда</option>
+                                  <option value="четверг">четверг</option>
+                                  <option value="пятница">пятница</option>
+                                  <option value="суббота">суббота</option>
+                                  <option value="воскресенье">воскресенье</option>
+                                </select>
+                              </div>
+                            );
+                          }
+                          
+                          if (field === 'pair_number') {
+                            return (
+                              <div 
+                                key={cellIndex}
+                                className="grid-table-cell editable-cell"
+                              >
+                                <select
+                                  className="cell-select"
+                                  value={getValue(currentRecord[field])}
+                                  onChange={(e) => handleFieldChange(field, e.target.value === '' ? null : Number(e.target.value))}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onFocus={(e) => e.stopPropagation()}
+                                >
+                                  <option value="">-</option>
+                                  {[1, 2, 3, 4, 5, 6, 7, 8].map(num => (
+                                    <option key={num} value={num}>{num}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          }
+                          
+                          if (field === 'lecture_type') {
+                            return (
+                              <div 
+                                key={cellIndex}
+                                className="grid-table-cell editable-cell"
+                              >
+                                <select
+                                  className="cell-select"
+                                  value={getValue(currentRecord[field])}
+                                  onChange={(e) => handleFieldChange(field, e.target.value || null)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onFocus={(e) => e.stopPropagation()}
+                                >
+                                  <option value="">-</option>
+                                  <option value="лекция">лекция</option>
+                                  <option value="практика">практика</option>
+                                  <option value="лабораторная">лабораторная</option>
+                                  <option value="семинар">семинар</option>
+                                </select>
+                              </div>
+                            );
+                          }
+                          
+                          if (field === 'week_type') {
+                            return (
+                              <div 
+                                key={cellIndex}
+                                className="grid-table-cell editable-cell"
+                              >
+                                <select
+                                  className="cell-select"
+                                  value={getValue(currentRecord[field])}
+                                  onChange={(e) => handleFieldChange(field, e.target.value || null)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onFocus={(e) => e.stopPropagation()}
+                                >
+                                  <option value="">-</option>
+                                  <option value="числитель">числитель</option>
+                                  <option value="знаменатель">знаменатель</option>
+                                  <option value="обе недели">обе недели</option>
+                                </select>
+                              </div>
+                            );
+                          }
+                          
+                          // Обычное текстовое поле для остальных полей
+                          return (
                             <div 
-                              className="cell-content"
-                              data-expanded={isExpanded}
-                              data-direction={expandDirection}
-                              style={isExpanded ? {
-                                width: `${expandWidth}px`,
-                                minWidth: `${expandWidth}px`,
-                                ...(expandDirection === 'left' ? { right: 0, left: 'auto' } : { left: 0, right: 'auto' })
-                              } : {}}
+                              key={cellIndex}
+                              className="grid-table-cell editable-cell"
                             >
-                              {value}
+                              <input
+                                type="text"
+                                className="cell-input"
+                                value={getValue(currentRecord[field])}
+                                onChange={(e) => handleFieldChange(field, e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                                onFocus={(e) => e.stopPropagation()}
+                              />
                             </div>
-                          </div>
-                        );
+                          );
+                        } else {
+                          // Обычная ячейка
+                          return (
+                            <div 
+                              key={cellIndex}
+                              className={`grid-table-cell expandable-cell ${copiedCellId === uniqueCellId ? 'cell-copied' : ''}`}
+                              onMouseEnter={(e) => handleCellMouseEnter(e, uniqueCellId)}
+                              onMouseLeave={handleCellMouseLeave}
+                              onDoubleClick={() => !isEditing && startEditing(record)}
+                              onClick={(e) => {
+                                // Копируем значение при клике
+                                const textToCopy = displayValue || '-';
+                                if (textToCopy !== '-') {
+                                  copyToClipboard(textToCopy, uniqueCellId);
+                                }
+                                e.stopPropagation();
+                              }}
+                              title="Кликните для копирования, двойной клик для редактирования"
+                            >
+                              <div 
+                                className="cell-content"
+                                data-expanded={isExpanded}
+                                data-direction={expandDirection}
+                                style={isExpanded ? {
+                                  width: `${expandWidth}px`,
+                                  minWidth: `${expandWidth}px`,
+                                  ...(expandDirection === 'left' ? { right: 0, left: 'auto' } : { left: 0, right: 'auto' })
+                                } : {}}
+                              >
+                                {displayValue || '-'}
+                              </div>
+                            </div>
+                          );
+                        }
                       };
                       
                       return (
-                        <div key={record.id} className="grid-table-row">
-                          {renderCell(record.id || '-', 0)}
-                          {renderCell(getValue(record.day_of_week), 1)}
-                          {renderCell(getValue(record.pair_number), 2)}
-                          {renderCell(getValue(record.subject_name), 3)}
-                          {renderCell(getValue(record.lecture_type), 4)}
-                          {renderCell(getValue(record.audience), 5)}
-                          {renderCell(getValue(record.fio || record.teacher), 6)}
-                          {renderCell(getValue(record.group_name), 7)}
-                          {renderCell(getValue(record.week_type), 8)}
+                        <div key={record.id} className={`grid-table-row ${isEditing ? 'editing-row' : ''}`}>
+                          {renderEditableCell('id', 0, String(record.id || '-'))}
+                          {renderEditableCell('day_of_week', 1, getValue(currentRecord.day_of_week))}
+                          {renderEditableCell('pair_number', 2, getValue(currentRecord.pair_number))}
+                          {renderEditableCell('subject_name', 3, getValue(currentRecord.subject_name))}
+                          {renderEditableCell('lecture_type', 4, getValue(currentRecord.lecture_type))}
+                          {renderEditableCell('audience', 5, getValue(currentRecord.audience))}
+                          {renderEditableCell('fio', 6, getValue(currentRecord.fio || currentRecord.teacher))}
+                          {renderEditableCell('group_name', 7, getValue(currentRecord.group_name))}
+                          {renderEditableCell('week_type', 8, getValue(currentRecord.week_type))}
+                          {isEditing && (
+                            <div className="grid-table-cell action-cell">
+                              <button
+                                className="save-button"
+                                onClick={() => saveRecord(record.id)}
+                                title="Сохранить изменения"
+                              >
+                                ✓
+                              </button>
+                              <button
+                                className="cancel-button"
+                                onClick={cancelEditing}
+                                title="Отменить изменения"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          )}
                         </div>
                       );
                     })

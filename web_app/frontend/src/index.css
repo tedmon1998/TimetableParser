@@ -1,3 +1,13 @@
+:root {
+  --primary-color: #1143c0;
+  --primary-dark: #0d3490;
+  --primary-light: #1a5dd9;
+  --primary-gradient: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+  --primary-gradient-horizontal: linear-gradient(90deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+  --primary-rgba: rgba(17, 67, 192, 0.4);
+  --primary-rgba-light: rgba(17, 67, 192, 0.1);
+}
+
 * {
   margin: 0;
   padding: 0;

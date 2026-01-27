@@ -110,40 +110,69 @@ def extract_lecture_type(text):
     return None
 
 def split_multiple_disciplines(text, valid_audiences):
-    """Разбивает текст на несколько дисциплин, если они есть"""
+    """Разбивает текст на несколько дисциплин, если они есть.
+    Разделение происходит, если после аудитории есть текст (начало следующей дисциплины)"""
     if not text:
         return [text]
     
     text = str(text)
     disciplines = []
     
-    # Ищем разделители между дисциплинами
-    # Паттерн: валидная аудитория + пробел + заглавная буква (начало нового предмета)
-    # Или: валидная аудитория + пробел + "//" (начало знаменателя)
-    
-    # Создаем паттерн из всех валидных аудиторий
+    # Создаем паттерн из всех валидных аудиторий (сортируем по длине в обратном порядке для более точного совпадения)
     aud_pattern = '|'.join([re.escape(aud) for aud in sorted(valid_audiences, key=len, reverse=True)])
     
-    # Паттерн: аудитория + пробел + заглавная буква или "//"
-    pattern = rf'\b({aud_pattern})\s+([А-ЯЁ]|//)'
+    # Находим все позиции аудиторий в тексте
+    # Паттерн: граница слова + аудитория + граница слова
+    pattern = rf'\b({aud_pattern})\b'
+    aud_matches = list(re.finditer(pattern, text, re.IGNORECASE))
     
-    matches = list(re.finditer(pattern, text, re.IGNORECASE))
-    
-    if not matches:
-        # Если не нашли разделители, возвращаем весь текст как одну дисциплину
+    if len(aud_matches) <= 1:
+        # Если одна или нет аудиторий, возвращаем весь текст как одну дисциплину
         return [text]
     
-    # Разбиваем текст по найденным разделителям
-    last_pos = 0
-    for i, match in enumerate(matches):
-        # Берем текст до разделителя (включая аудиторию)
-        # Разделитель - это позиция перед началом нового предмета
-        split_pos = match.start() + len(match.group(1))  # Позиция после аудитории
+    # Проверяем каждую аудиторию (кроме последней) - есть ли после неё текст
+    split_positions = []
+    for i, match in enumerate(aud_matches[:-1]):  # Все кроме последней
+        aud_end_pos = match.end()  # Позиция после аудитории
         
+        # Проверяем, что после аудитории есть текст (не конец строки)
+        if aud_end_pos < len(text):
+            # Берем текст после аудитории (до следующей аудитории или до конца)
+            text_after = text[aud_end_pos:].strip()
+            
+            # Если после аудитории есть текст, который начинается с заглавной буквы или содержит название дисциплины
+            # Это означает, что начинается новая дисциплина
+            if text_after:
+                # Проверяем, что следующий символ - это пробел и затем заглавная буква или начало нового слова
+                # Или что после аудитории идет текст, который не является частью текущей дисциплины
+                next_char_pos = aud_end_pos
+                # Пропускаем пробелы и запятые
+                while next_char_pos < len(text) and text[next_char_pos] in ' ,':
+                    next_char_pos += 1
+                
+                if next_char_pos < len(text):
+                    # Если следующий символ - заглавная буква (начало нового слова/дисциплины)
+                    # Или если до следующей аудитории есть достаточно текста (больше 3 символов)
+                    next_aud_pos = aud_matches[i + 1].start() if i + 1 < len(aud_matches) else len(text)
+                    text_between = text[aud_end_pos:next_aud_pos].strip()
+                    
+                    # Если между аудиториями есть текст, начинающийся с заглавной буквы - это новая дисциплина
+                    if text_between and len(text_between) > 3:
+                        # Проверяем, что это не просто продолжение текущей дисциплины
+                        # Если текст начинается с заглавной буквы после пробела/запятой - это новая дисциплина
+                        if re.match(r'^[,\s]*[А-ЯЁ]', text_between):
+                            split_positions.append(aud_end_pos)
+    
+    # Если не нашли позиций разделения, возвращаем весь текст
+    if not split_positions:
+        return [text]
+    
+    # Разбиваем текст по найденным позициям
+    last_pos = 0
+    for split_pos in split_positions:
         part = text[last_pos:split_pos].strip()
         if part:
             disciplines.append(part)
-        
         last_pos = split_pos
     
     # Добавляем оставшуюся часть
@@ -314,52 +343,108 @@ def extract_audience_for_subgroup(text, subgroup_num, valid_audiences):
     
     return None
 
-def process_discipline_text(text, valid_audiences, teacher_text=None):
-    """Обрабатывает текст дисциплины и возвращает список записей (по одной на каждую дисциплину/неделю)"""
+def process_discipline_text(text, valid_audiences, teacher_text=None, existing_week_type=None):
+    """Обрабатывает текст дисциплины и возвращает список записей (по одной на каждую дисциплину/неделю)
+    
+    Args:
+        text: Текст дисциплины
+        valid_audiences: Список валидных аудиторий
+        teacher_text: Текст с преподавателями
+        existing_week_type: Если указан, обрабатываем только эту неделю (числитель/знаменатель)
+    """
     if not text:
         return []
     
     text = str(text)
     results = []
     
-    # Проверяем, есть ли разделение преподавателей по ';' (для подгрупп)
-    teachers_by_subgroups = split_teachers_by_subgroups(teacher_text) if teacher_text else []
-    subgroups_in_text = extract_subgroups_from_text(text)
-    
-    # Если есть разделение по ';' и есть подгруппы в тексте, обрабатываем отдельно
-    if len(teachers_by_subgroups) > 1 and len(subgroups_in_text) > 0:
-        # Определяем тип занятия
-        lecture_type = extract_lecture_type(text)
-        if not lecture_type:
-            lecture_type = 'практика'  # Если есть подгруппы, это практика
+    # СНАЧАЛА проверяем разделение по неделям (//) - это приоритетнее всего
+    # Если есть разделение по //, обрабатываем его сразу
+    if '//' in text:
+        # Разделение по числителю/знаменателю обрабатывается ниже (строка 451)
+        # Пропускаем обработку подгрупп и множественных дисциплин
+        pass
+    else:
+        # Если нет разделения по //, проверяем множественные дисциплины
+        multiple_disciplines = split_multiple_disciplines(text, valid_audiences)
         
-        # Очищаем название дисциплины
-        clean_name = clean_subject_name_final(text, valid_audiences)
+        # Если нашли несколько дисциплин, обрабатываем каждую отдельно
+        if len(multiple_disciplines) > 1:
+            # Разделяем преподавателей по ';' если они есть
+            teachers_list = split_teachers_by_subgroups(teacher_text) if teacher_text else []
+            
+            # Обрабатываем каждую дисциплину с соответствующим преподавателем
+            for disc_idx, disc_text in enumerate(multiple_disciplines):
+                # Сопоставляем преподавателя с дисциплиной по порядку
+                if disc_idx < len(teachers_list):
+                    # Есть преподаватель для этой дисциплины
+                    disc_teacher = teachers_list[disc_idx]
+                elif len(teachers_list) > 0:
+                    # Если преподавателей меньше, чем дисциплин, используем последнего
+                    disc_teacher = teachers_list[-1]
+                else:
+                    # Нет преподавателей
+                    disc_teacher = None
+                
+                # Рекурсивно обрабатываем каждую дисциплину с её преподавателем
+                disc_results = process_discipline_text(disc_text, valid_audiences, disc_teacher)
+                results.extend(disc_results)
+            
+            # Если создали записи, возвращаем их
+            if results:
+                return results
         
-        # Сопоставляем преподавателей с подгруппами
-        for i, subgroup_num in enumerate(subgroups_in_text):
-            teacher_for_subgroup = teachers_by_subgroups[i] if i < len(teachers_by_subgroups) else teachers_by_subgroups[-1]
-            
-            # Извлекаем аудиторию для этой конкретной подгруппы
-            aud_for_subgroup = extract_audience_for_subgroup(text, subgroup_num, valid_audiences)
-            
-            # Если не нашли специфичную аудиторию, берем все аудитории из текста
-            if not aud_for_subgroup:
-                all_audiences = extract_audiences_from_text(text, valid_audiences)
-                aud_for_subgroup = all_audiences[0] if all_audiences else ''
-            
-            result_entry = {
-                'audience': aud_for_subgroup,
-                'subject_name': clean_name,
-                'lecture_type': lecture_type or '',
-                'teacher': teacher_for_subgroup,
-                'subgroup': subgroup_num
-            }
-            results.append(result_entry)
+        # Если нет множественных дисциплин, проверяем подгруппы
+        # Проверяем, есть ли разделение преподавателей по ';' (для подгрупп)
+        teachers_by_subgroups = split_teachers_by_subgroups(teacher_text) if teacher_text else []
+        subgroups_in_text = extract_subgroups_from_text(text)
         
-        # Если создали записи для подгрупп, возвращаем их
-        if results:
-            return results
+        # Если есть подгруппы в тексте, обрабатываем отдельно
+        # Если есть несколько преподавателей - сопоставляем по порядку
+        # Если один преподаватель - он для всех подгрупп
+        if len(subgroups_in_text) > 0:
+            # Определяем тип занятия
+            lecture_type = extract_lecture_type(text)
+            if not lecture_type:
+                lecture_type = 'практика'  # Если есть подгруппы, это практика
+            
+            # Очищаем название дисциплины
+            clean_name = clean_subject_name_final(text, valid_audiences)
+            
+            # Сопоставляем преподавателей с подгруппами
+            for i, subgroup_num in enumerate(subgroups_in_text):
+                # Если есть несколько преподавателей, сопоставляем по порядку
+                # Если один преподаватель или их нет, используем первого/единственного
+                if len(teachers_by_subgroups) > 1:
+                    teacher_for_subgroup = teachers_by_subgroups[i] if i < len(teachers_by_subgroups) else teachers_by_subgroups[-1]
+                elif len(teachers_by_subgroups) == 1:
+                    teacher_for_subgroup = teachers_by_subgroups[0]
+                else:
+                    teacher_for_subgroup = None
+                
+                # Извлекаем аудиторию для этой конкретной подгруппы
+                aud_for_subgroup = extract_audience_for_subgroup(text, subgroup_num, valid_audiences)
+                
+                # Если не нашли специфичную аудиторию, берем все аудитории из текста
+                if not aud_for_subgroup:
+                    all_audiences = extract_audiences_from_text(text, valid_audiences)
+                    aud_for_subgroup = all_audiences[0] if all_audiences else ''
+                
+                result_entry = {
+                    'audience': aud_for_subgroup,
+                    'subject_name': clean_name,
+                    'lecture_type': lecture_type or '',
+                    'subgroup': subgroup_num
+                }
+                # Добавляем преподавателя только если он есть
+                if teacher_for_subgroup:
+                    result_entry['teacher'] = teacher_for_subgroup
+                
+                results.append(result_entry)
+            
+            # Если создали записи для подгрупп, возвращаем их
+            if results:
+                return results
     
     # Иначе обрабатываем как обычно (разделение по '/' для числителя/знаменателя)
     # Разделяем преподавателей, если они есть
@@ -383,6 +468,19 @@ def process_discipline_text(text, valid_audiences, teacher_text=None):
         # Знаменатель - последняя часть после "//"
         denominator_text = parts[-1].strip() if len(parts) > 1 else ''
         
+        # Если в исходной строке уже указан week_type, обрабатываем только соответствующую часть
+        if existing_week_type:
+            if existing_week_type == 'числитель':
+                # Обрабатываем только числитель
+                denominator_text = ''
+            elif existing_week_type == 'знаменатель':
+                # Обрабатываем только знаменатель
+                numerator_text = ''
+        
+        # Извлекаем подгруппы из числителя и знаменателя
+        numerator_subgroups = extract_subgroups_from_text(numerator_text) if numerator_text else []
+        denominator_subgroups = extract_subgroups_from_text(denominator_text) if denominator_text else []
+        
         # Извлекаем аудитории из числителя (убираем дубликаты)
         numerator_audiences_unique = []
         if numerator_text:
@@ -401,64 +499,108 @@ def process_discipline_text(text, valid_audiences, teacher_text=None):
                 if aud not in denominator_audiences_unique:
                     denominator_audiences_unique.append(aud)
         
-        # Создаем отдельные строки для числителя (полный текст числителя, включая аудиторию)
-        for aud in numerator_audiences_unique:
-            # Очищаем название от лишних символов
-            clean_name = clean_subject_name_final(numerator_text, valid_audiences)
-            result_entry = {
-                'audience': aud,
-                'subject_name': clean_name,
-                'lecture_type': lecture_type or ''
-            }
-            # Добавляем преподавателя для числителя
-            if numerator_teacher:
-                result_entry['teacher'] = numerator_teacher
-                result_entry['week_type'] = 'числитель'
-            results.append(result_entry)
+        # Создаем отдельные строки для числителя
+        if numerator_text:
+            # Если есть подгруппы в числителе, создаем запись для каждой
+            if numerator_subgroups:
+                for subgroup_num in numerator_subgroups:
+                    # Извлекаем аудиторию для этой подгруппы
+                    aud_for_subgroup = extract_audience_for_subgroup(numerator_text, subgroup_num, valid_audiences)
+                    if not aud_for_subgroup and numerator_audiences_unique:
+                        aud_for_subgroup = numerator_audiences_unique[0]
+                    
+                    # Очищаем название от лишних символов, но сохраняем структуру
+                    clean_name = clean_subject_name_final(numerator_text, valid_audiences)
+                    
+                    result_entry = {
+                        'audience': aud_for_subgroup or '',
+                        'subject_name': clean_name,
+                        'lecture_type': lecture_type or '',
+                        'week_type': 'числитель',
+                        'subgroup': subgroup_num
+                    }
+                    # Добавляем преподавателя для числителя
+                    if numerator_teacher:
+                        result_entry['teacher'] = numerator_teacher
+                    results.append(result_entry)
+            else:
+                # Нет подгрупп в числителе - создаем одну запись
+                for aud in numerator_audiences_unique:
+                    clean_name = clean_subject_name_final(numerator_text, valid_audiences)
+                    result_entry = {
+                        'audience': aud,
+                        'subject_name': clean_name,
+                        'lecture_type': lecture_type or '',
+                        'week_type': 'числитель'
+                    }
+                    if numerator_teacher:
+                        result_entry['teacher'] = numerator_teacher
+                    results.append(result_entry)
         
-        # Создаем отдельные строки для знаменателя (полный текст знаменателя, включая аудиторию)
-        for aud in denominator_audiences_unique:
-            # Очищаем название от лишних символов
-            clean_name = clean_subject_name_final(denominator_text, valid_audiences)
-            result_entry = {
-                'audience': aud,
-                'subject_name': clean_name,
-                'lecture_type': lecture_type or ''
-            }
-            # Добавляем преподавателя для знаменателя
-            if denominator_teacher:
-                result_entry['teacher'] = denominator_teacher
-                result_entry['week_type'] = 'знаменатель'
-            results.append(result_entry)
+        # Создаем отдельные строки для знаменателя
+        if denominator_text:
+            # Если есть подгруппы в знаменателе, создаем запись для каждой
+            if denominator_subgroups:
+                for subgroup_num in denominator_subgroups:
+                    # Извлекаем аудиторию для этой подгруппы
+                    aud_for_subgroup = extract_audience_for_subgroup(denominator_text, subgroup_num, valid_audiences)
+                    if not aud_for_subgroup and denominator_audiences_unique:
+                        aud_for_subgroup = denominator_audiences_unique[0]
+                    
+                    # Очищаем название от лишних символов, но сохраняем структуру
+                    clean_name = clean_subject_name_final(denominator_text, valid_audiences)
+                    
+                    result_entry = {
+                        'audience': aud_for_subgroup or '',
+                        'subject_name': clean_name,
+                        'lecture_type': lecture_type or '',
+                        'week_type': 'знаменатель',
+                        'subgroup': subgroup_num
+                    }
+                    # Добавляем преподавателя для знаменателя
+                    if denominator_teacher:
+                        result_entry['teacher'] = denominator_teacher
+                    results.append(result_entry)
+            else:
+                # Нет подгрупп в знаменателе - создаем одну запись
+                for aud in denominator_audiences_unique:
+                    clean_name = clean_subject_name_final(denominator_text, valid_audiences)
+                    result_entry = {
+                        'audience': aud,
+                        'subject_name': clean_name,
+                        'lecture_type': lecture_type or '',
+                        'week_type': 'знаменатель'
+                    }
+                    if denominator_teacher:
+                        result_entry['teacher'] = denominator_teacher
+                    results.append(result_entry)
     else:
-        # Нет разделения по неделям - разбиваем на несколько дисциплин
-        disciplines = split_multiple_disciplines(text, valid_audiences)
+        # Нет разделения по неделям - это одна дисциплина (уже проверили множественные выше)
+        # Обрабатываем как одну дисциплину (обе недели)
+        disc_text = text
+        audiences = extract_audiences_from_text(disc_text, valid_audiences)
+        # Убираем дубликаты, сохраняя порядок
+        audiences_unique = []
+        for aud in audiences:
+            if aud not in audiences_unique:
+                audiences_unique.append(aud)
         
-        # Обрабатываем каждую дисциплину отдельно (обе недели)
-        for disc_text in disciplines:
-            audiences = extract_audiences_from_text(disc_text, valid_audiences)
-            # Убираем дубликаты, сохраняя порядок
-            audiences_unique = []
-            for aud in audiences:
-                if aud not in audiences_unique:
-                    audiences_unique.append(aud)
-            
-            # Создаем одну строку для каждой уникальной аудитории
-            for aud in audiences_unique:
-                # Очищаем название дисциплины от аудитории, оставляя только название и подгруппу
-                clean_name = clean_discipline_name(disc_text, aud)
-                # Финальная очистка от (лек), (пр), п/г и т.д.
-                clean_name = clean_subject_name_final(clean_name, valid_audiences)
-                result_entry = {
-                    'audience': aud,
-                    'subject_name': clean_name,
-                    'lecture_type': lecture_type or ''
-                }
-                # Если есть преподаватель (без разделения), добавляем его для обеих недель
-                if numerator_teacher and numerator_teacher == denominator_teacher:
-                    result_entry['teacher'] = numerator_teacher
-                    result_entry['week_type'] = 'обе недели'
-                results.append(result_entry)
+        # Создаем одну строку для каждой уникальной аудитории
+        for aud in audiences_unique:
+            # Очищаем название дисциплины от аудитории, оставляя только название и подгруппу
+            clean_name = clean_discipline_name(disc_text, aud)
+            # Финальная очистка от (лек), (пр), п/г и т.д.
+            clean_name = clean_subject_name_final(clean_name, valid_audiences)
+            result_entry = {
+                'audience': aud,
+                'subject_name': clean_name,
+                'lecture_type': lecture_type or ''
+            }
+            # Если есть преподаватель (без разделения), добавляем его для обеих недель
+            if numerator_teacher and numerator_teacher == denominator_teacher:
+                result_entry['teacher'] = numerator_teacher
+                result_entry['week_type'] = 'обе недели'
+            results.append(result_entry)
     
     # Если не нашли ни одной аудитории, создаем запись без аудитории
     if not results:
@@ -489,8 +631,12 @@ def process_csv_file(input_file, output_file, valid_audiences):
             subject_name = row.get('subject_name', '')
             teacher_fio = row.get('fio', '') or row.get('teacher', '')
             
+            # Проверяем, есть ли уже week_type в исходной строке
+            existing_week_type = row.get('week_type', '') or row.get('week', '')
+            
             # Обрабатываем текст дисциплины - получаем список записей
-            processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio)
+            # Передаем existing_week_type, чтобы обработать только соответствующую часть
+            processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type)
             
             # Создаем отдельную запись для каждой дисциплины/аудитории
             for processed in processed_list:

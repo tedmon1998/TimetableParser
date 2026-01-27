@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "Starting Timetable Parser Web Application..."
+echo "Starting Парсер расписания Web Application..."
 echo ""
 
 # Проверяем наличие Python

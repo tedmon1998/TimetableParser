@@ -483,5 +483,77 @@ def clear_database():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/db/records/<int:record_id>', methods=['PUT'])
+def update_record(record_id):
+    """Обновляет запись в базе данных"""
+    try:
+        data = request.get_json()
+        
+        # Получаем список разрешенных полей для обновления
+        allowed_fields = [
+            'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
+            'audience', 'fio', 'teacher', 'group_name', 'week_type',
+            'subgroup', 'institute', 'course', 'direction', 'department',
+            'is_external', 'is_remote', 'num_subgroups'
+        ]
+        
+        # Формируем список полей для обновления
+        update_fields = []
+        update_values = []
+        
+        for field in allowed_fields:
+            if field in data:
+                update_fields.append(f"{field} = %s")
+                # Обрабатываем пустые строки как NULL
+                value = data[field]
+                if value == '' or value is None:
+                    update_values.append(None)
+                elif field in ['pair_number', 'subgroup', 'num_subgroups']:
+                    # Для числовых полей пытаемся преобразовать
+                    try:
+                        update_values.append(int(value) if value else None)
+                    except (ValueError, TypeError):
+                        update_values.append(None)
+                elif field in ['is_external', 'is_remote']:
+                    # Для булевых полей
+                    update_values.append(bool(value) if value is not None else None)
+                else:
+                    update_values.append(str(value) if value else None)
+        
+        if not update_fields:
+            return jsonify({'error': 'No fields to update'}), 400
+        
+        # Добавляем ID в конец для WHERE условия
+        update_values.append(record_id)
+        
+        # Формируем SQL запрос
+        update_query = f"""
+            UPDATE timetable_cleaned 
+            SET {', '.join(update_fields)}
+            WHERE id = %s
+        """
+        
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(update_query, update_values)
+        conn.commit()
+        
+        # Получаем обновленную запись
+        cursor.execute("SELECT * FROM timetable_cleaned WHERE id = %s", (record_id,))
+        updated_record = cursor.fetchone()
+        
+        cursor.close()
+        conn.close()
+        
+        if updated_record:
+            # Преобразуем в словарь
+            record_dict = dict(updated_record)
+            return jsonify({'message': 'Record updated successfully', 'record': record_dict})
+        else:
+            return jsonify({'error': 'Record not found'}), 404
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000, host='0.0.0.0')

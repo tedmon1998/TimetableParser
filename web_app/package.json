@@ -1,7 +1,7 @@
 {
   "name": "timetable-parser-web-app",
   "version": "1.0.0",
-  "description": "Web application for Timetable Parser with backend and frontend",
+  "description": "Web application for Парсер расписания with backend and frontend",
   "scripts": {
     "install:all": "npm run install:backend && npm run install:frontend",
     "install:backend": "cd backend && pip install -r requirements.txt",

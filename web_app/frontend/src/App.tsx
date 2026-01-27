@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './App.css';
 import ScriptRunner from './components/ScriptRunner';
 import DatabaseView from './components/DatabaseView';
+import logoImage from '../assets/SurSU.png';
 
 // Создаем QueryClient с настройками для оптимизации
 const queryClient = new QueryClient({
@@ -60,7 +61,10 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <div className="App">
         <header className="App-header">
-          <h1>Timetable Parser</h1>
+          <div className="App-header-content">
+            <img src={logoImage} alt="SurSU Logo" className="App-logo" />
+            <h1>Парсер расписания</h1>
+          </div>
           <nav className="App-nav">
             <button
               className={activeTab === 'scripts' ? 'active' : ''}

@@ -1,4 +1,4 @@
-# Timetable Parser Web Application
+# Парсер расписания Web Application
 
 Веб-интерфейс для управления парсингом расписания и работы с базой данных.
 

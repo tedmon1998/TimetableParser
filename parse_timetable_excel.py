@@ -538,7 +538,8 @@ def extract_schedule_metadata(ws, start_col, end_col):
     }
 
 def find_schedule_tables(ws, header_row):
-    """Находит все таблицы расписаний на странице по количеству вхождений слова 'дисциплина'"""
+    """Находит все таблицы расписаний на странице по количеству вхождений слова 'дисциплина'.
+    Также учитывает колонки 'Направление' для разделения на группы."""
     tables = []
     
     header_row_data = ws[header_row]
@@ -546,8 +547,9 @@ def find_schedule_tables(ws, header_row):
     teacher_cols = []
     pair_cols = []
     day_cols = []
+    direction_cols = []  # Колонки с заголовком "Направление"
     
-    # Ищем все вхождения "дисциплина" и связанные колонки
+    # Ищем все вхождения "дисциплина", "направление" и связанные колонки
     for col_idx, cell in enumerate(header_row_data, 1):
         if cell.value:
             value = str(cell.value).lower()
@@ -559,11 +561,111 @@ def find_schedule_tables(ws, header_row):
                 pair_cols.append(col_idx)
             if 'д/н' in value or ('день' in value and 'недели' in value):
                 day_cols.append(col_idx)
+            if 'направление' in value:
+                direction_cols.append(col_idx)
     
     # Если нет дисциплин, возвращаем пустой список
     if not discipline_cols:
         return tables
     
+    # Если есть колонки "Направление", разделяем таблицы по ним
+    # Каждый блок от одного "Направление" до следующего (или до конца) - это отдельная группа
+    if direction_cols:
+        # Сортируем колонки "Направление" по порядку
+        direction_cols_sorted = sorted(direction_cols)
+        
+        # Для каждого диапазона между колонками "Направление" создаем подтаблицы
+        for dir_idx, dir_col in enumerate(direction_cols_sorted):
+            # Начало диапазона - текущая колонка "Направление"
+            dir_start_col = dir_col
+            
+            # Конец диапазона - следующая колонка "Направление" или конец листа
+            if dir_idx + 1 < len(direction_cols_sorted):
+                dir_end_col = direction_cols_sorted[dir_idx + 1]
+            else:
+                dir_end_col = ws.max_column + 1
+            
+            # Находим все колонки "дисциплина" в этом диапазоне
+            disc_cols_in_range = [dc for dc in discipline_cols if dir_start_col <= dc < dir_end_col]
+            
+            # Для каждой колонки "дисциплина" в этом диапазоне создаем таблицу
+            for disc_col in disc_cols_in_range:
+                # Находим начало таблицы (ищем колонку "д/н", "№/п" или "пара" слева от дисциплины)
+                start_col = disc_col
+                # Ищем ближайшую колонку с заголовком слева от дисциплины
+                for col_idx in range(disc_col - 1, dir_start_col - 1, -1):
+                    if col_idx <= len(header_row_data):
+                        cell = header_row_data[col_idx - 1]
+                        if cell.value:
+                            value = str(cell.value).lower()
+                            if 'д/н' in value or '№/п' in value or 'пара' in value:
+                                start_col = col_idx
+                                break
+                
+                # Если не нашли, начинаем с начала диапазона направления
+                if start_col == disc_col:
+                    start_col = dir_start_col
+                
+                # Находим конец таблицы (колонка "преподаватель" справа от дисциплины или конец диапазона)
+                end_col = disc_col + 1
+                for teacher_col in teacher_cols:
+                    if teacher_col > disc_col and teacher_col < dir_end_col:
+                        end_col = teacher_col + 1
+                        break
+                
+                # Если не нашли преподавателя, ищем до следующей дисциплины или до конца диапазона
+                if end_col == disc_col + 1:
+                    next_disc = None
+                    for next_disc_col in disc_cols_in_range:
+                        if next_disc_col > disc_col:
+                            next_disc = next_disc_col
+                            break
+                    if next_disc:
+                        end_col = next_disc
+                    else:
+                        end_col = min(dir_end_col, ws.max_column + 1)
+                
+                # Находим колонки для этой таблицы
+                table_pair_col = None
+                table_day_col = None
+                table_teacher_col = None
+                
+                # Ищем колонку "д/н" во всем заголовке
+                for col_idx in range(1, len(header_row_data) + 1):
+                    if col_idx <= len(header_row_data):
+                        cell = header_row_data[col_idx - 1]
+                        if cell.value:
+                            value = str(cell.value).lower()
+                            if ('д/н' in value or ('день' in value and 'недели' in value)) and not table_day_col:
+                                table_day_col = col_idx
+                                break
+                
+                # Ищем колонки "пара" и "преподаватель" в пределах таблицы
+                for col_idx in range(start_col, min(end_col, len(header_row_data) + 1)):
+                    if col_idx <= len(header_row_data):
+                        cell = header_row_data[col_idx - 1]
+                        if cell.value:
+                            value = str(cell.value).lower()
+                            if 'пара' in value and not table_pair_col:
+                                table_pair_col = col_idx
+                            if 'преподаватель' in value and not table_teacher_col:
+                                table_teacher_col = col_idx
+                
+                tables.append({
+                    'start_col': start_col,
+                    'end_col': end_col,
+                    'discipline_col': disc_col,
+                    'teacher_col': table_teacher_col,
+                    'pair_col': table_pair_col,
+                    'day_col': table_day_col,
+                    'header_row': header_row,
+                    'direction_start_col': dir_start_col,  # Начало диапазона направления
+                    'direction_end_col': dir_end_col  # Конец диапазона направления
+                })
+        
+        return tables
+    
+    # Если нет колонок "Направление", обрабатываем как раньше
     # Для каждой колонки "дисциплина" создаем отдельную таблицу
     for disc_col in discipline_cols:
         # Находим начало таблицы (ищем колонку "д/н", "№/п" или "пара" слева от дисциплины)
@@ -671,11 +773,6 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
     if not schedule_tables:
         return results
     
-    # Извлекаем метаданные один раз для всего листа
-    metadata = extract_schedule_metadata(ws, 1, ws.max_column + 1)
-    if not metadata['course'] and course_from_sheet:
-        metadata['course'] = course_from_sheet
-    
     # Обрабатываем каждую таблицу
     for table in schedule_tables:
         start_col = table['start_col']
@@ -684,6 +781,18 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
         teacher_col = table['teacher_col']
         pair_col = table['pair_col']
         day_col = table['day_col']
+        
+        # Извлекаем метаданные для этого диапазона (если есть диапазон направления)
+        if 'direction_start_col' in table and 'direction_end_col' in table:
+            # Извлекаем метаданные из диапазона направления
+            metadata = extract_schedule_metadata(ws, table['direction_start_col'], table['direction_end_col'])
+        else:
+            # Извлекаем метаданные из диапазона таблицы
+            metadata = extract_schedule_metadata(ws, start_col, end_col)
+        
+        # Если курс не найден, используем курс из имени листа
+        if not metadata['course'] and course_from_sheet:
+            metadata['course'] = course_from_sheet
         
         # КРИТИЧНО: Сбрасываем current_day при начале каждой новой таблицы
         current_day = None

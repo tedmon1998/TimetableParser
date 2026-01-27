@@ -11,7 +11,7 @@
 .grid-table-header {
   display: flex;
   background: #f8f9fa;
-  border-bottom: 2px solid #667eea;
+  border-bottom: 2px solid var(--primary-color);
   font-weight: 600;
   color: #333;
   position: relative;
@@ -50,7 +50,7 @@
 }
 
 /* Фиксированные ширины для колонок */
-.grid-table-row .grid-table-cell:nth-child(1) { width: 60px; flex-grow: 0; flex-shrink: 0; }
+.grid-table-row .grid-table-cell:nth-child(1) { width: 100px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(2) { width: 120px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(3) { width: 80px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(4) { flex: 1 1 200px; min-width: 200px; }
@@ -59,6 +59,7 @@
 .grid-table-row .grid-table-cell:nth-child(7) { flex: 1 1 200px; min-width: 200px; }
 .grid-table-row .grid-table-cell:nth-child(8) { width: 120px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(9) { width: 120px; flex-grow: 0; flex-shrink: 0; }
+.grid-table-row .grid-table-cell:nth-child(10) { width: 80px; flex-grow: 0; flex-shrink: 0; }
 
 .grid-table-cell:last-child {
   border-right: none;
@@ -68,7 +69,7 @@
   background: #f8f9fa;
   font-weight: 600;
   color: #333;
-  border-bottom: 2px solid #667eea;
+  border-bottom: 2px solid var(--primary-color);
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
@@ -86,7 +87,7 @@
 }
 
 /* Фиксированные ширины для колонок заголовка - должны совпадать со строками */
-.grid-table-header .grid-table-cell:nth-child(1) { width: 60px; flex-grow: 0; flex-shrink: 0; }
+.grid-table-header .grid-table-cell:nth-child(1) { width: 100px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-header .grid-table-cell:nth-child(2) { width: 120px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-header .grid-table-cell:nth-child(3) { width: 80px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-header .grid-table-cell:nth-child(4) { flex: 1 1 200px; min-width: 200px; }
@@ -118,7 +119,7 @@
 }
 
 .header-sortable:hover {
-  color: #667eea;
+  color: var(--primary-color);
 }
 
 .sort-arrows {
@@ -141,7 +142,7 @@
 }
 
 .sort-arrow.active {
-  color: #667eea;
+  color: var(--primary-color);
   font-weight: bold;
 }
 
@@ -195,7 +196,7 @@
   overflow: visible;
   text-overflow: clip;
   background: white;
-  border: 1px solid #667eea;
+  border: 1px solid var(--primary-color);
   border-radius: 4px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 2;
@@ -361,8 +362,8 @@
 
 .header-filter-input:focus {
   outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-rgba-light);
   z-index: 2;
   /* При фокусе ширина не должна меняться */
   width: 100%;
@@ -385,6 +386,27 @@
 .table-container {
   overflow-x: auto;
   margin-top: 1rem;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: var(--primary-color) #f0f0f0;
+}
+
+.table-container::-webkit-scrollbar {
+  height: 8px;
+}
+
+.table-container::-webkit-scrollbar-track {
+  background: #f0f0f0;
+  border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+  background: var(--primary-color);
+  border-radius: 4px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-dark);
 }
 
 .database-view {
@@ -433,7 +455,7 @@
 
 .stats-value {
   font-weight: 600;
-  color: #667eea;
+  color: var(--primary-color);
 }
 
 .filter-controls {
@@ -484,8 +506,8 @@
 
 .filter-item input:focus {
   outline: none;
-  border-color: #667eea;
-  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-rgba-light);
 }
 
 .filter-item input::placeholder {
@@ -499,7 +521,7 @@
 }
 
 .records-count strong {
-  color: #667eea;
+  color: var(--primary-color);
   font-weight: 600;
 }
 
@@ -526,16 +548,16 @@
 
 .pagination button {
   padding: 0.5rem 1rem;
-  border: 1px solid #667eea;
+  border: 1px solid var(--primary-color);
   background: white;
-  color: #667eea;
+  color: var(--primary-color);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.2s ease;
 }
 
 .pagination button:hover:not(:disabled) {
-  background: #667eea;
+  background: var(--primary-color);
   color: white;
 }
 
@@ -547,4 +569,366 @@
 .pagination span {
   color: #666;
   font-weight: 500;
+}
+
+/* Стили для редактирования */
+.grid-table-row.editing-row {
+  background-color: #f0f7ff;
+  border: 2px solid var(--primary-color);
+}
+
+.editable-cell {
+  padding: 0.25rem;
+}
+
+.cell-input {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--primary-color);
+  border-radius: 4px;
+  font-size: 0.9rem;
+  background: white;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cell-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-rgba-light);
+}
+
+.cell-select {
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid var(--primary-color);
+  border-radius: 4px;
+  font-size: 0.9rem;
+  background: white;
+  box-sizing: border-box;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
+}
+
+.cell-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px var(--primary-rgba-light);
+}
+
+.cell-select option {
+  padding: 0.5rem;
+}
+
+.action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem;
+}
+
+.save-button,
+.cancel-button {
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1.2rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  font-weight: bold;
+}
+
+.save-button {
+  background-color: #4caf50;
+  color: white;
+}
+
+.save-button:hover {
+  background-color: #45a049;
+  transform: scale(1.1);
+}
+
+.cancel-button {
+  background-color: #f44336;
+  color: white;
+}
+
+.cancel-button:hover {
+  background-color: #da190b;
+  transform: scale(1.1);
+}
+
+.grid-table-row {
+  cursor: default;
+}
+
+.grid-table-row:not(.editing-row) .expandable-cell {
+  cursor: pointer;
+}
+
+.grid-table-cell.cell-copied {
+  background-color: #d4edda !important;
+  transition: background-color 0.3s ease;
+}
+
+.grid-table-cell.cell-copied .cell-content {
+  color: #155724;
+  font-weight: 600;
+}
+
+/* Адаптивные стили */
+@media (max-width: 1200px) {
+  .grid-table-row .grid-table-cell:nth-child(1) { width: 80px; }
+  .grid-table-row .grid-table-cell:nth-child(2) { width: 100px; }
+  .grid-table-row .grid-table-cell:nth-child(3) { width: 70px; }
+  .grid-table-row .grid-table-cell:nth-child(4) { min-width: 150px; }
+  .grid-table-row .grid-table-cell:nth-child(5) { width: 100px; }
+  .grid-table-row .grid-table-cell:nth-child(6) { width: 100px; }
+  .grid-table-row .grid-table-cell:nth-child(7) { min-width: 150px; }
+  .grid-table-row .grid-table-cell:nth-child(8) { width: 100px; }
+  .grid-table-row .grid-table-cell:nth-child(9) { width: 100px; }
+  .grid-table-row .grid-table-cell:nth-child(10) { width: 70px; }
+  
+  .grid-table-header .grid-table-cell:nth-child(1) { width: 80px; }
+  .grid-table-header .grid-table-cell:nth-child(2) { width: 100px; }
+  .grid-table-header .grid-table-cell:nth-child(3) { width: 70px; }
+  .grid-table-header .grid-table-cell:nth-child(4) { min-width: 150px; }
+  .grid-table-header .grid-table-cell:nth-child(5) { width: 100px; }
+  .grid-table-header .grid-table-cell:nth-child(6) { width: 100px; }
+  .grid-table-header .grid-table-cell:nth-child(7) { min-width: 150px; }
+  .grid-table-header .grid-table-cell:nth-child(8) { width: 100px; }
+  .grid-table-header .grid-table-cell:nth-child(9) { width: 100px; }
+  
+  .header-label {
+    font-size: 0.85rem;
+  }
+  
+  .header-filter-input {
+    font-size: 0.8rem;
+    padding: 0.4rem;
+  }
+  
+  .cell-content {
+    font-size: 0.85rem;
+    padding: 0.5rem;
+  }
+}
+
+@media (max-width: 768px) {
+  .database-view {
+    gap: 1.5rem;
+  }
+  
+  .card {
+    padding: 1rem;
+  }
+  
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  
+  .card-header h2 {
+    font-size: 1.25rem;
+  }
+  
+  .filter-controls {
+    flex-direction: column;
+    align-items: flex-start;
+    width: 100%;
+  }
+  
+  .filter-hint {
+    font-size: 0.8rem;
+  }
+  
+  .grid-table-row .grid-table-cell:nth-child(1) { width: 60px; }
+  .grid-table-row .grid-table-cell:nth-child(2) { width: 90px; }
+  .grid-table-row .grid-table-cell:nth-child(3) { width: 60px; }
+  .grid-table-row .grid-table-cell:nth-child(4) { min-width: 120px; }
+  .grid-table-row .grid-table-cell:nth-child(5) { width: 90px; }
+  .grid-table-row .grid-table-cell:nth-child(6) { width: 90px; }
+  .grid-table-row .grid-table-cell:nth-child(7) { min-width: 120px; }
+  .grid-table-row .grid-table-cell:nth-child(8) { width: 90px; }
+  .grid-table-row .grid-table-cell:nth-child(9) { width: 90px; }
+  .grid-table-row .grid-table-cell:nth-child(10) { width: 60px; }
+  
+  .grid-table-header .grid-table-cell:nth-child(1) { width: 60px; }
+  .grid-table-header .grid-table-cell:nth-child(2) { width: 90px; }
+  .grid-table-header .grid-table-cell:nth-child(3) { width: 60px; }
+  .grid-table-header .grid-table-cell:nth-child(4) { min-width: 120px; }
+  .grid-table-header .grid-table-cell:nth-child(5) { width: 90px; }
+  .grid-table-header .grid-table-cell:nth-child(6) { width: 90px; }
+  .grid-table-header .grid-table-cell:nth-child(7) { min-width: 120px; }
+  .grid-table-header .grid-table-cell:nth-child(8) { width: 90px; }
+  .grid-table-header .grid-table-cell:nth-child(9) { width: 90px; }
+  
+  .grid-table-cell {
+    padding: 0.5rem;
+    font-size: 0.8rem;
+  }
+  
+  .grid-table-header .grid-table-cell {
+    padding: 0.5rem;
+  }
+  
+  .header-label {
+    font-size: 0.75rem;
+    margin-bottom: 0.2rem;
+  }
+  
+  .header-filter-input {
+    font-size: 0.75rem;
+    padding: 0.35rem;
+  }
+  
+  .cell-content {
+    font-size: 0.8rem;
+    padding: 0.5rem;
+  }
+  
+  .cell-input {
+    font-size: 0.8rem;
+    padding: 0.4rem;
+  }
+  
+  .cell-select {
+    font-size: 0.8rem;
+    padding: 0.4rem;
+  }
+  
+  .save-button,
+  .cancel-button {
+    width: 28px;
+    height: 28px;
+    font-size: 1rem;
+  }
+  
+  .stats-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+  
+  .pagination {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem;
+  }
+  
+  .pagination button {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.9rem;
+  }
+  
+  .pagination span {
+    font-size: 0.9rem;
+    width: 100%;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .database-view {
+    gap: 1rem;
+  }
+  
+  .card {
+    padding: 0.75rem;
+    border-radius: 8px;
+  }
+  
+  .card-header h2 {
+    font-size: 1.1rem;
+  }
+  
+  .grid-table-row .grid-table-cell:nth-child(1) { width: 50px; }
+  .grid-table-row .grid-table-cell:nth-child(2) { width: 80px; }
+  .grid-table-row .grid-table-cell:nth-child(3) { width: 50px; }
+  .grid-table-row .grid-table-cell:nth-child(4) { min-width: 100px; }
+  .grid-table-row .grid-table-cell:nth-child(5) { width: 80px; }
+  .grid-table-row .grid-table-cell:nth-child(6) { width: 80px; }
+  .grid-table-row .grid-table-cell:nth-child(7) { min-width: 100px; }
+  .grid-table-row .grid-table-cell:nth-child(8) { width: 80px; }
+  .grid-table-row .grid-table-cell:nth-child(9) { width: 80px; }
+  .grid-table-row .grid-table-cell:nth-child(10) { width: 50px; }
+  
+  .grid-table-header .grid-table-cell:nth-child(1) { width: 50px; }
+  .grid-table-header .grid-table-cell:nth-child(2) { width: 80px; }
+  .grid-table-header .grid-table-cell:nth-child(3) { width: 50px; }
+  .grid-table-header .grid-table-cell:nth-child(4) { min-width: 100px; }
+  .grid-table-header .grid-table-cell:nth-child(5) { width: 80px; }
+  .grid-table-header .grid-table-cell:nth-child(6) { width: 80px; }
+  .grid-table-header .grid-table-cell:nth-child(7) { min-width: 100px; }
+  .grid-table-header .grid-table-cell:nth-child(8) { width: 80px; }
+  .grid-table-header .grid-table-cell:nth-child(9) { width: 80px; }
+  
+  .grid-table-cell {
+    padding: 0.4rem;
+    font-size: 0.75rem;
+    height: 2rem;
+    min-height: 2rem;
+    max-height: 2rem;
+  }
+  
+  .grid-table-header .grid-table-cell {
+    padding: 0.4rem;
+    gap: 0.3rem;
+  }
+  
+  .header-label {
+    font-size: 0.7rem;
+  }
+  
+  .header-filter-input {
+    font-size: 0.7rem;
+    padding: 0.3rem;
+  }
+  
+  .cell-content {
+    font-size: 0.75rem;
+    padding: 0.4rem;
+    max-height: 2rem;
+  }
+  
+  .cell-input {
+    font-size: 0.75rem;
+    padding: 0.3rem;
+  }
+  
+  .cell-select {
+    font-size: 0.75rem;
+    padding: 0.3rem;
+  }
+  
+  .save-button,
+  .cancel-button {
+    width: 24px;
+    height: 24px;
+    font-size: 0.9rem;
+  }
+  
+  .action-cell {
+    padding: 0.3rem;
+    gap: 0.3rem;
+  }
+  
+  .filter-hint {
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+  
+  .button {
+    padding: 0.6rem 1.2rem;
+    font-size: 0.9rem;
+  }
+  
+  .sort-arrows {
+    font-size: 0.55rem;
+  }
 }
