@@ -50,7 +50,7 @@
 }
 
 /* Фиксированные ширины для колонок */
-.grid-table-row .grid-table-cell:nth-child(1) { width: 100px; flex-grow: 0; flex-shrink: 0; min-height: 3.5rem; }
+.grid-table-row .grid-table-cell:nth-child(1) { width: 100px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(2) { width: 120px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(3) { width: 80px; flex-grow: 0; flex-shrink: 0; }
 .grid-table-row .grid-table-cell:nth-child(4) { flex: 1 1 200px; min-width: 200px; }
@@ -81,9 +81,34 @@
   min-height: auto;
   height: auto;
   max-height: none;
-  /* Убеждаемся, что ячейка не сжимается */
   min-width: 0;
   overflow: visible;
+}
+
+/* Ячейки заголовка с возможностью ресайза */
+.grid-table-header .grid-table-cell.header-cell-resizable {
+  position: relative;
+}
+
+/* Ручка изменения ширины колонки (справа у заголовка) */
+.column-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 10;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.column-resize-handle:hover {
+  background: rgba(17, 67, 192, 0.12);
+}
+
+.column-resize-handle:active {
+  background: rgba(17, 67, 192, 0.2);
 }
 
 /* Фиксированные ширины для колонок заголовка - должны совпадать со строками */
@@ -422,6 +447,32 @@
   margin-bottom: 1.5rem;
 }
 
+.db-view-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+}
+
+.db-view-tab {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--primary-color, #2563eb);
+  background: #fff;
+  color: var(--primary-color, #2563eb);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: background 0.2s, color 0.2s;
+}
+
+.db-view-tab:hover {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.db-view-tab.active {
+  background: var(--primary-color, #2563eb);
+  color: #fff;
+}
+
 .stats-section {
   margin-top: 2rem;
   padding-top: 2rem;
@@ -462,6 +513,80 @@
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.columns-menu-wrapper {
+  position: relative;
+}
+
+.columns-toggle {
+  margin-left: 0.25rem;
+}
+
+.columns-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 0.25rem;
+  min-width: 200px;
+  padding: 0.5rem;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+}
+
+.columns-dropdown-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid #eee;
+}
+
+.columns-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  cursor: pointer;
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.columns-dropdown-item:hover {
+  background: #f5f5f5;
+  border-radius: 4px;
+}
+
+.columns-dropdown-item input {
+  cursor: pointer;
+}
+
+.columns-dropdown-divider {
+  height: 0;
+  margin: 0.5rem 0;
+  border: none;
+  border-top: 1px solid #eee;
+}
+
+.columns-dropdown-action {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.5rem;
+  text-align: left;
+  background: none;
+  border: none;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: #333;
+  border-radius: 4px;
+}
+
+.columns-dropdown-action:hover {
+  background: #f5f5f5;
 }
 
 .filter-hint {

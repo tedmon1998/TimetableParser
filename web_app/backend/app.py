@@ -6,9 +6,10 @@ import glob
 import shutil
 import threading
 import time
+import csv
 from datetime import datetime
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, execute_values
 
 app = Flask(__name__)
 CORS(app)
@@ -25,8 +26,19 @@ DB_CONFIG = {
 # Глобальные переменные для отслеживания прогресса
 script_status = {
     'parse_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
-    'clean_audiences': {'running': False, 'progress': 0, 'message': '', 'error': None}
+    'clean_audiences': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'process_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
+
+# Разрешённые таблицы для просмотра записей
+ALLOWED_TABLES = ('timetable_cleaned', 'timetable_teacher')
+
+def get_table_param():
+    """Возвращает имя таблицы из query param (timetable_cleaned или timetable_teacher)."""
+    table = request.args.get('table', '').strip()
+    if table in ALLOWED_TABLES:
+        return table
+    return 'timetable_cleaned'
 
 def get_project_root():
     """Возвращает корневую директорию проекта (где находятся скрипты parse_timetable_excel.py и clean_audiences.py)"""
@@ -210,6 +222,139 @@ def run_clean_audiences():
     finally:
         script_status['clean_audiences']['running'] = False
 
+def load_teacher_csv_to_db():
+    """Создаёт таблицу timetable_teacher при необходимости и загружает в неё output/timetable_teacher.csv"""
+    csv_path = os.path.join(get_project_root(), 'output', 'timetable_teacher.csv')
+    if not os.path.isfile(csv_path):
+        raise FileNotFoundError(f'Файл не найден: {csv_path}. Сначала запустите process_timetable.py.')
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor()
+    create_sql = """
+    CREATE TABLE IF NOT EXISTS timetable_teacher (
+        id SERIAL PRIMARY KEY,
+        fio TEXT,
+        pair_number INTEGER,
+        day_of_week VARCHAR(50),
+        group_name VARCHAR(50),
+        audience VARCHAR(50),
+        department TEXT,
+        week_type VARCHAR(50),
+        subgroup INTEGER,
+        num_subgroups INTEGER,
+        is_external BOOLEAN,
+        is_remote BOOLEAN,
+        subject_name TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+    cursor.execute(create_sql)
+    conn.commit()
+    cursor.execute("TRUNCATE TABLE timetable_teacher")
+    conn.commit()
+    rows_to_insert = []
+    with open(csv_path, 'r', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            def to_int(v):
+                if v is None or str(v).strip() == '':
+                    return None
+                try:
+                    return int(v)
+                except (ValueError, TypeError):
+                    return None
+            def to_bool(v):
+                if v is None or str(v).strip() == '':
+                    return False
+                s = str(v).lower()
+                return s in ('true', '1', 'yes', 't')
+            rows_to_insert.append((
+                row.get('fio') or None,
+                to_int(row.get('pair_number')),
+                row.get('day_of_week') or None,
+                (row.get('group_name') or row.get('group') or '').strip() or None,
+                row.get('audience') or None,
+                row.get('department') or None,
+                (row.get('week_type') or row.get('week') or '').strip() or None,
+                to_int(row.get('subgroup')),
+                to_int(row.get('num_subgroups')),
+                to_bool(row.get('is_external')),
+                to_bool(row.get('is_remote')),
+                row.get('subject_name') or None,
+            ))
+    if rows_to_insert:
+        insert_sql = """
+        INSERT INTO timetable_teacher (
+            fio, pair_number, day_of_week, group_name, audience, department,
+            week_type, subgroup, num_subgroups, is_external, is_remote, subject_name
+        ) VALUES %s
+        """
+        execute_values(cursor, insert_sql, rows_to_insert)
+        conn.commit()
+    cursor.close()
+    conn.close()
+    return len(rows_to_insert)
+
+def run_process_timetable():
+    """Запускает process_timetable.py и загружает результат в timetable_teacher"""
+    script_status['process_timetable']['running'] = True
+    script_status['process_timetable']['progress'] = 0
+    script_status['process_timetable']['message'] = 'Начало парсинга занятости преподавателей...'
+    script_status['process_timetable']['error'] = None
+    try:
+        project_root = get_project_root()
+        script_path = os.path.join(project_root, 'process_timetable.py')
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"Скрипт не найден: {script_path}")
+        script_status['process_timetable']['progress'] = 10
+        script_status['process_timetable']['message'] = 'Запуск process_timetable.py...'
+        process = subprocess.Popen(
+            ['python', script_path],
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        script_status['process_timetable']['progress'] = 40
+        script_status['process_timetable']['message'] = 'Обработка файла занятости...'
+        output_lines = []
+        while True:
+            out = process.stdout.readline()
+            if out == '' and process.poll() is not None:
+                break
+            if out:
+                line = out.strip()
+                if line:
+                    output_lines.append(line)
+                    script_status['process_timetable']['progress'] = min(40 + min(len(output_lines) * 2, 50), 90)
+                    script_status['process_timetable']['message'] = f'Обработано строк: {len(output_lines)}'
+        return_code = process.wait()
+        stderr_output = process.stderr.read()
+        if stderr_output:
+            print(f"Stderr process_timetable: {stderr_output}")
+        if return_code != 0:
+            error_msg = stderr_output if stderr_output else f'Код возврата: {return_code}'
+            script_status['process_timetable']['error'] = error_msg
+            script_status['process_timetable']['message'] = 'Ошибка при выполнении скрипта'
+            script_status['process_timetable']['progress'] = 0
+        else:
+            script_status['process_timetable']['progress'] = 92
+            script_status['process_timetable']['message'] = 'Загрузка в БД (timetable_teacher)...'
+            try:
+                n = load_teacher_csv_to_db()
+                script_status['process_timetable']['progress'] = 100
+                script_status['process_timetable']['message'] = f'Готово. Загружено записей: {n}'
+            except Exception as e:
+                script_status['process_timetable']['error'] = str(e)
+                script_status['process_timetable']['message'] = f'Ошибка загрузки в БД: {str(e)}'
+                script_status['process_timetable']['progress'] = 0
+    except Exception as e:
+        script_status['process_timetable']['error'] = str(e)
+        script_status['process_timetable']['message'] = f'Ошибка: {str(e)}'
+        script_status['process_timetable']['progress'] = 0
+    finally:
+        script_status['process_timetable']['running'] = False
+
 @app.route('/api/status/<script_name>', methods=['GET'])
 def get_status(script_name):
     """Возвращает статус выполнения скрипта"""
@@ -241,40 +386,47 @@ def run_clean():
     
     return jsonify({'message': 'Script started'})
 
+@app.route('/api/run/process_timetable', methods=['POST'])
+def run_process_timetable_route():
+    """Запускает process_timetable.py (занятость преподавателей) и загружает в timetable_teacher"""
+    if script_status['process_timetable']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_process_timetable)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
 @app.route('/api/db/stats', methods=['GET'])
 def get_db_stats():
-    """Возвращает статистику из базы данных"""
+    """Возвращает статистику из базы данных (таблица: timetable_cleaned или timetable_teacher)"""
     try:
+        table = get_table_param()
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Общее количество записей
-        cursor.execute("SELECT COUNT(*) as total FROM timetable_cleaned")
+        cursor.execute(f"SELECT COUNT(*) as total FROM {table}")
         total = cursor.fetchone()['total']
         
-        # Количество по дням недели
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT day_of_week, COUNT(*) as count 
-            FROM timetable_cleaned 
+            FROM {table} 
             GROUP BY day_of_week 
             ORDER BY day_of_week
         """)
         by_day = cursor.fetchall()
         
-        # Количество по типам занятий
-        cursor.execute("""
-            SELECT lecture_type, COUNT(*) as count 
-            FROM timetable_cleaned 
-            GROUP BY lecture_type 
-            ORDER BY lecture_type
-        """)
-        by_type = cursor.fetchall()
+        if table == 'timetable_cleaned':
+            cursor.execute("""
+                SELECT lecture_type, COUNT(*) as count 
+                FROM timetable_cleaned 
+                GROUP BY lecture_type 
+                ORDER BY lecture_type
+            """)
+            by_type = cursor.fetchall()
+        else:
+            by_type = []
         
-        # Последнее обновление
-        cursor.execute("""
-            SELECT MAX(created_at) as last_update 
-            FROM timetable_cleaned
-        """)
+        cursor.execute(f"SELECT MAX(created_at) as last_update FROM {table}")
         last_update = cursor.fetchone()['last_update']
         
         cursor.close()
@@ -291,13 +443,13 @@ def get_db_stats():
 
 @app.route('/api/db/records', methods=['GET'])
 def get_db_records():
-    """Возвращает записи из базы данных с пагинацией и фильтрами"""
+    """Возвращает записи из базы данных с пагинацией и фильтрами (table=timetable_cleaned или timetable_teacher)"""
     try:
+        table = get_table_param()
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
         offset = (page - 1) * limit
         
-        # Получаем фильтры из query параметров
         filters = {
             'day_of_week': request.args.get('day_of_week', '').strip(),
             'pair_number': request.args.get('pair_number', '').strip(),
@@ -340,8 +492,8 @@ def get_db_records():
             where_conditions.append("subject_name ILIKE %s")
             query_params.append(f"%{filters['subject_name']}%")
         
-        # Фильтр по типу занятия
-        if filters['lecture_type']:
+        # Фильтр по типу занятия (только для timetable_cleaned)
+        if table == 'timetable_cleaned' and filters['lecture_type']:
             where_conditions.append("lecture_type ILIKE %s")
             query_params.append(f"%{filters['lecture_type']}%")
         
@@ -372,13 +524,13 @@ def get_db_records():
             where_conditions.append("week_type ILIKE %s")
             query_params.append(f"%{filters['week_type']}%")
         
-        # Фильтр по институту
-        if filters['institute']:
+        # Фильтр по институту (только для timetable_cleaned)
+        if table == 'timetable_cleaned' and filters['institute']:
             where_conditions.append("institute ILIKE %s")
             query_params.append(f"%{filters['institute']}%")
         
-        # Фильтр по курсу
-        if filters['course']:
+        # Фильтр по курсу (только для timetable_cleaned)
+        if table == 'timetable_cleaned' and filters['course']:
             where_conditions.append("course ILIKE %s")
             query_params.append(f"%{filters['course']}%")
         
@@ -400,32 +552,31 @@ def get_db_records():
         if sort_order not in ['ASC', 'DESC']:
             sort_order = 'DESC'
         
-        # Запрос для получения записей (явно указываем все нужные поля)
-        query = f"""
-            SELECT 
-                id,
-                day_of_week,
-                pair_number,
-                subject_name,
-                lecture_type,
-                audience,
-                fio,
-                teacher,
-                group_name,
-                week_type,
-                subgroup,
-                institute,
-                course,
-                direction,
-                department,
-                is_external,
-                is_remote,
-                num_subgroups
-            FROM timetable_cleaned 
-            {where_clause}
-            ORDER BY {sort_by} {sort_order}
-            LIMIT %s OFFSET %s
-        """
+        if table == 'timetable_teacher':
+            sort_by_allowed = ['id', 'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio', 'group_name', 'week_type']
+            if sort_by not in sort_by_allowed:
+                sort_by = 'id'
+            query = f"""
+                SELECT id, day_of_week, pair_number, subject_name, audience, fio,
+                    fio AS teacher, group_name, week_type, subgroup,
+                    NULL::TEXT AS institute, NULL::TEXT AS course, NULL::TEXT AS direction,
+                    department, is_external, is_remote, num_subgroups
+                FROM timetable_teacher
+                {where_clause}
+                ORDER BY {sort_by} {sort_order}
+                LIMIT %s OFFSET %s
+            """
+        else:
+            query = f"""
+                SELECT id, day_of_week, pair_number, subject_name, lecture_type, audience,
+                    fio, teacher, group_name, week_type, subgroup,
+                    institute, course, direction, department,
+                    is_external, is_remote, num_subgroups
+                FROM timetable_cleaned
+                {where_clause}
+                ORDER BY {sort_by} {sort_order}
+                LIMIT %s OFFSET %s
+            """
         query_params.extend([limit, offset])
         
         cursor.execute(query, query_params)
@@ -450,8 +601,7 @@ def get_db_records():
             
             records_list.append(record_dict)
         
-        # Запрос для подсчета общего количества (с учетом фильтров)
-        count_query = f"SELECT COUNT(*) as total FROM timetable_cleaned {where_clause}"
+        count_query = f"SELECT COUNT(*) as total FROM {table} {where_clause}"
         count_params = query_params[:-2]  # Убираем LIMIT и OFFSET
         cursor.execute(count_query, count_params)
         total = cursor.fetchone()['total']
@@ -471,71 +621,75 @@ def get_db_records():
 
 @app.route('/api/db/clear', methods=['POST'])
 def clear_database():
-    """Очищает базу данных"""
+    """Очищает выбранную таблицу (table=timetable_cleaned или timetable_teacher)"""
     try:
+        table = get_table_param()
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        cursor.execute("TRUNCATE TABLE timetable_cleaned")
+        cursor.execute(f"TRUNCATE TABLE {table}")
         conn.commit()
         cursor.close()
         conn.close()
-        return jsonify({'message': 'Database cleared successfully'})
+        return jsonify({'message': f'Table {table} cleared successfully'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def _allowed_update_fields(table):
+    """Разрешённые поля для обновления в зависимости от таблицы."""
+    if table == 'timetable_teacher':
+        return [
+            'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio',
+            'group_name', 'week_type', 'subgroup', 'department',
+            'is_external', 'is_remote', 'num_subgroups'
+        ]
+    return [
+        'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
+        'audience', 'fio', 'teacher', 'group_name', 'week_type',
+        'subgroup', 'institute', 'course', 'direction', 'department',
+        'is_external', 'is_remote', 'num_subgroups'
+    ]
+
 @app.route('/api/db/records/<int:record_id>', methods=['PUT'])
 def update_record(record_id):
-    """Обновляет запись в базе данных"""
+    """Обновляет запись в выбранной таблице (table=...)."""
     try:
+        table = get_table_param()
         data = request.get_json()
         
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
-        # Получаем список разрешенных полей для обновления
-        allowed_fields = [
-            'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
-            'audience', 'fio', 'teacher', 'group_name', 'week_type',
-            'subgroup', 'institute', 'course', 'direction', 'department',
-            'is_external', 'is_remote', 'num_subgroups'
-        ]
+        allowed_fields = _allowed_update_fields(table)
+        # Для timetable_teacher teacher не существует — маппим на fio
+        if table == 'timetable_teacher' and 'teacher' in data:
+            data = dict(data)
+            data['fio'] = data.get('fio') or data.get('teacher')
         
-        # Формируем список полей для обновления
         update_fields = []
         update_values = []
         
         for field in allowed_fields:
-            if field in data:
-                update_fields.append(f"{field} = %s")
-                # Обрабатываем пустые строки как NULL
-                value = data[field]
-                if value == '' or value is None:
+            if field not in data:
+                continue
+            value = data[field]
+            if value == '' or value is None:
+                update_values.append(None)
+            elif field in ['pair_number', 'subgroup', 'num_subgroups']:
+                try:
+                    update_values.append(int(value) if value is not None else None)
+                except (ValueError, TypeError):
                     update_values.append(None)
-                elif field in ['pair_number', 'subgroup', 'num_subgroups']:
-                    # Для числовых полей пытаемся преобразовать
-                    try:
-                        update_values.append(int(value) if value is not None else None)
-                    except (ValueError, TypeError):
-                        update_values.append(None)
-                elif field in ['is_external', 'is_remote']:
-                    # Для булевых полей
-                    update_values.append(bool(value) if value is not None else None)
-                else:
-                    # Для строковых полей
-                    update_values.append(str(value) if value is not None else None)
+            elif field in ['is_external', 'is_remote']:
+                update_values.append(bool(value) if value is not None else None)
+            else:
+                update_values.append(str(value) if value is not None else None)
+            update_fields.append(f"{field} = %s")
         
         if not update_fields:
             return jsonify({'error': 'No fields to update'}), 400
         
-        # Добавляем ID в конец для WHERE условия
         update_values.append(record_id)
-        
-        # Формируем SQL запрос
-        update_query = f"""
-            UPDATE timetable_cleaned 
-            SET {', '.join(update_fields)}
-            WHERE id = %s
-        """
+        update_query = f"UPDATE {table} SET {', '.join(update_fields)} WHERE id = %s"
         
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -548,72 +702,82 @@ def update_record(record_id):
             conn.close()
             return jsonify({'error': 'Record not found'}), 404
         
-        # Получаем обновленную запись
-        cursor.execute("SELECT * FROM timetable_cleaned WHERE id = %s", (record_id,))
+        if table == 'timetable_teacher':
+            cursor.execute(
+                """SELECT id, day_of_week, pair_number, subject_name, audience, fio,
+                    fio AS teacher, group_name, week_type, subgroup,
+                    NULL::TEXT AS institute, NULL::TEXT AS course, NULL::TEXT AS direction,
+                    department, is_external, is_remote, num_subgroups
+                FROM timetable_teacher WHERE id = %s""",
+                (record_id,)
+            )
+        else:
+            cursor.execute("SELECT * FROM timetable_cleaned WHERE id = %s", (record_id,))
         updated_record = cursor.fetchone()
-        
         cursor.close()
         conn.close()
         
         if updated_record:
-            # Преобразуем в словарь
-            record_dict = dict(updated_record)
-            return jsonify({'message': 'Record updated successfully', 'record': record_dict})
-        else:
-            return jsonify({'error': 'Record not found'}), 404
-            
+            return jsonify({'message': 'Record updated successfully', 'record': dict(updated_record)})
+        return jsonify({'error': 'Record not found'}), 404
     except Exception as e:
         import traceback
-        error_trace = traceback.format_exc()
-        print(f"Error updating record {record_id}: {error_trace}")
+        print(f"Error updating record {record_id}: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
+
+def _allowed_insert_fields(table):
+    """Разрешённые поля для вставки в зависимости от таблицы."""
+    if table == 'timetable_teacher':
+        return [
+            'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio',
+            'group_name', 'week_type', 'subgroup', 'department',
+            'is_external', 'is_remote', 'num_subgroups'
+        ]
+    return [
+        'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
+        'audience', 'fio', 'teacher', 'group_name', 'week_type',
+        'subgroup', 'institute', 'course', 'direction', 'department',
+        'is_external', 'is_remote', 'num_subgroups'
+    ]
 
 @app.route('/api/db/records', methods=['POST'])
 def create_record():
-    """Создает новую запись в базе данных"""
+    """Создаёт новую запись в выбранной таблице (table=...)."""
     try:
+        table = get_table_param()
         data = request.get_json()
         
         if not data:
             return jsonify({'error': 'No data provided'}), 400
         
-        # Получаем параметры позиционирования (если есть)
         reference_id = data.get('_reference_id')
-        position = data.get('_position')  # 'before' or 'after'
-        
-        # Удаляем служебные поля из данных
+        position = data.get('_position')
         record_data = {k: v for k, v in data.items() if not k.startswith('_')}
+        if table == 'timetable_teacher' and 'teacher' in record_data:
+            record_data['fio'] = record_data.get('fio') or record_data.get('teacher')
         
-        # Получаем список разрешенных полей
-        allowed_fields = [
-            'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
-            'audience', 'fio', 'teacher', 'group_name', 'week_type',
-            'subgroup', 'institute', 'course', 'direction', 'department',
-            'is_external', 'is_remote', 'num_subgroups'
-        ]
-        
-        # Формируем списки полей и значений для INSERT
+        allowed_fields = _allowed_insert_fields(table)
         insert_fields = []
         insert_values = []
         placeholders = []
         
         for field in allowed_fields:
-            if field in record_data:
-                insert_fields.append(field)
-                placeholders.append('%s')
-                value = record_data[field]
-                
-                if value == '' or value is None:
+            if field not in record_data:
+                continue
+            value = record_data[field]
+            insert_fields.append(field)
+            placeholders.append('%s')
+            if value == '' or value is None:
+                insert_values.append(None)
+            elif field in ['pair_number', 'subgroup', 'num_subgroups']:
+                try:
+                    insert_values.append(int(value) if value is not None else None)
+                except (ValueError, TypeError):
                     insert_values.append(None)
-                elif field in ['pair_number', 'subgroup', 'num_subgroups']:
-                    try:
-                        insert_values.append(int(value) if value is not None else None)
-                    except (ValueError, TypeError):
-                        insert_values.append(None)
-                elif field in ['is_external', 'is_remote']:
-                    insert_values.append(bool(value) if value is not None else None)
-                else:
-                    insert_values.append(str(value) if value is not None else None)
+            elif field in ['is_external', 'is_remote']:
+                insert_values.append(bool(value) if value is not None else None)
+            else:
+                insert_values.append(str(value) if value is not None else None)
         
         if not insert_fields:
             return jsonify({'error': 'No valid fields provided'}), 400
@@ -621,9 +785,8 @@ def create_record():
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Создаем запись
         insert_query = f"""
-            INSERT INTO timetable_cleaned ({', '.join(insert_fields)})
+            INSERT INTO {table} ({', '.join(insert_fields)})
             VALUES ({', '.join(placeholders)})
             RETURNING *
         """
@@ -631,92 +794,72 @@ def create_record():
         new_record = cursor.fetchone()
         new_id = new_record['id']
         
-        # Если указана позиция относительно другой записи, используем специальную логику
-        if reference_id and position:
-            # Получаем ID целевой записи
-            cursor.execute("SELECT id FROM timetable_cleaned WHERE id = %s", (reference_id,))
+        final_id = new_id
+        if reference_id and position and table == 'timetable_cleaned':
+            cursor.execute(f"SELECT id FROM {table} WHERE id = %s", (reference_id,))
             ref_record = cursor.fetchone()
-            
-            if not ref_record:
-                cursor.close()
-                conn.close()
-                return jsonify({'error': 'Reference record not found'}), 404
-            
-            ref_id = ref_record['id']
-            
-            # Если нужно создать "выше", используем временный большой ID для перестановки
-            if position == 'before':
-                # Находим максимальный ID в таблице
-                cursor.execute("SELECT MAX(id) as max_id FROM timetable_cleaned")
-                max_id_result = cursor.fetchone()
-                max_id = max_id_result['max_id'] if max_id_result and max_id_result['max_id'] else new_id
-                temp_id = max_id + 1000000  # Временный очень большой ID
-                
-                # Переставляем ID: новая запись -> temp, целевая -> новая, temp -> целевая
-                cursor.execute("UPDATE timetable_cleaned SET id = %s WHERE id = %s", (temp_id, new_id))
-                cursor.execute("UPDATE timetable_cleaned SET id = %s WHERE id = %s", (new_id, ref_id))
-                cursor.execute("UPDATE timetable_cleaned SET id = %s WHERE id = %s", (ref_id, temp_id))
-                final_id = new_id
-            else:
-                # Для "after" запись уже создана с большим ID, ничего не делаем
-                final_id = new_id
-        else:
-            final_id = new_id
-        
+            if ref_record:
+                ref_id = ref_record['id']
+                if position == 'before':
+                    cursor.execute(f"SELECT MAX(id) as max_id FROM {table}")
+                    max_id_result = cursor.fetchone()
+                    max_id = max_id_result['max_id'] if max_id_result and max_id_result['max_id'] else new_id
+                    temp_id = max_id + 1000000
+                    cursor.execute(f"UPDATE {table} SET id = %s WHERE id = %s", (temp_id, new_id))
+                    cursor.execute(f"UPDATE {table} SET id = %s WHERE id = %s", (new_id, ref_id))
+                    cursor.execute(f"UPDATE {table} SET id = %s WHERE id = %s", (ref_id, temp_id))
+                    final_id = ref_id
+                else:
+                    final_id = new_id
         conn.commit()
         
-        # Получаем финальную версию записи
-        cursor.execute("SELECT * FROM timetable_cleaned WHERE id = %s", (final_id,))
+        if table == 'timetable_teacher':
+            cursor.execute(
+                """SELECT id, day_of_week, pair_number, subject_name, audience, fio,
+                    fio AS teacher, group_name, week_type, subgroup,
+                    NULL::TEXT AS institute, NULL::TEXT AS course, NULL::TEXT AS direction,
+                    department, is_external, is_remote, num_subgroups
+                FROM timetable_teacher WHERE id = %s""",
+                (final_id,)
+            )
+        else:
+            cursor.execute(f"SELECT * FROM {table} WHERE id = %s", (final_id,))
         final_record = cursor.fetchone()
-        
         cursor.close()
         conn.close()
         
         if final_record:
-            record_dict = dict(final_record)
-            return jsonify({'message': 'Record created successfully', 'record': record_dict}), 201
-        else:
-            return jsonify({'error': 'Failed to create record'}), 500
-            
+            return jsonify({'message': 'Record created successfully', 'record': dict(final_record)}), 201
+        return jsonify({'error': 'Failed to create record'}), 500
     except Exception as e:
         import traceback
-        error_trace = traceback.format_exc()
-        print(f"Error creating record: {error_trace}")
+        print(f"Error creating record: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/db/records/<int:record_id>', methods=['DELETE'])
 def delete_record(record_id):
-    """Удаляет запись из базы данных"""
+    """Удаляет запись из выбранной таблицы (table=...)."""
     try:
+        table = get_table_param()
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # Проверяем существование записи
-        cursor.execute("SELECT id FROM timetable_cleaned WHERE id = %s", (record_id,))
+        cursor.execute(f"SELECT id FROM {table} WHERE id = %s", (record_id,))
         record = cursor.fetchone()
-        
         if not record:
             cursor.close()
             conn.close()
             return jsonify({'error': 'Record not found'}), 404
-        
-        # Удаляем запись
-        cursor.execute("DELETE FROM timetable_cleaned WHERE id = %s", (record_id,))
+        cursor.execute(f"DELETE FROM {table} WHERE id = %s", (record_id,))
         rows_affected = cursor.rowcount
         conn.commit()
-        
         cursor.close()
         conn.close()
-        
         if rows_affected > 0:
             return jsonify({'message': 'Record deleted successfully'}), 200
-        else:
-            return jsonify({'error': 'Failed to delete record'}), 500
-            
+        return jsonify({'error': 'Failed to delete record'}), 500
     except Exception as e:
         import traceback
-        error_trace = traceback.format_exc()
-        print(f"Error deleting record {record_id}: {error_trace}")
+        print(f"Error deleting record {record_id}: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':

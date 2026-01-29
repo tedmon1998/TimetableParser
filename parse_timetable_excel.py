@@ -47,31 +47,28 @@ def parse_pair_number(pair_str):
         return []
 
 def parse_week_type(text):
-    """Определяет тип недели по наличию '/' или '//'
-    Возвращает список типов недель для разных частей текста"""
+    """Определяет тип недели по наличию '/' или '//' (разделитель недель).
+    Не считаем «/» в «п/г» (подгруппа) — только « // » или « / » с пробелами."""
     if not text or not isinstance(text, str):
         return ['обе недели']
     
     text = text.strip()
-    week_types = []
     
-    # Если есть "//" - значит одна пара по числителю или знаменателю
+    # Если есть "//" (разделитель числитель/знаменатель)
     if '//' in text:
         parts = text.split('//')
         if len(parts) == 2:
-            # Если до // есть текст - числитель, если после - знаменатель
             if parts[0].strip() and not parts[1].strip():
                 return ['числитель']
             elif parts[1].strip() and not parts[0].strip():
                 return ['знаменатель']
             elif parts[0].strip() and parts[1].strip():
-                # Обе части заполнены - значит разные пары
                 return ['числитель', 'знаменатель']
         return ['обе недели']
     
-    # Если есть "/" (одиночный) - значит разные пары по числителю и знаменателю
-    if '/' in text and '//' not in text:
-        parts = text.split('/')
+    # Только « / » с пробелами — разделитель недель (не «п/г» и не «№/п»)
+    if ' / ' in text:
+        parts = text.split(' / ', 1)
         if len(parts) == 2:
             if parts[0].strip() and parts[1].strip():
                 return ['числитель', 'знаменатель']
@@ -100,7 +97,7 @@ def parse_lecture_type(text):
         return 'практика'
 
 def extract_audience(text):
-    """Извлекает аудиторию из текста"""
+    """Извлекает аудиторию из текста. Перед вызовом текст нормализуют: «). » -> «), »."""
     if not text or not isinstance(text, str):
         return ''
     
@@ -179,7 +176,7 @@ def extract_subject_name(text):
             # Убираем "/" (одиночные)
             part = re.sub(r'\s*/\s*', ' ', part)
             
-            # Разделяем по запятым и берем части, которые не являются аудиториями
+            # Разделяем по запятым (перед вызовом текст нормализуют: «). » -> «), »)
             sub_parts = re.split(r'[,;]', part)
             for sub_part in sub_parts:
                 sub_part = sub_part.strip()
@@ -226,8 +223,7 @@ def extract_subject_name(text):
         # Убираем "/" (одиночные)
         text = re.sub(r'\s*/\s*', ' ', text)
         
-        # Убираем информацию об аудитории
-        # Разделяем по запятым и берем части, которые не являются аудиториями
+        # Разделяем по запятым
         parts = re.split(r'[,;]', text)
         subject_parts = []
         
@@ -318,7 +314,8 @@ def find_header_row(ws):
                 if 'пара' in value:
                     has_pair = True
         
-        if has_discipline and has_teacher:
+        # Достаточно «дисциплина» + («преподаватель» или «пара») — колонка преподавателя может отсутствовать
+        if has_discipline and (has_teacher or has_pair):
             return row_idx
     
     return None
@@ -613,7 +610,8 @@ def find_schedule_tables(ws, header_row):
                         end_col = teacher_col + 1
                         break
                 
-                # Если не нашли преподавателя, ищем до следующей дисциплины или до конца диапазона
+                # Если не нашли преподавателя, граница блока — до следующей колонки «д/н» (или следующей дисциплины)
+                next_day_col = min([d for d in day_cols if d > disc_col and d < dir_end_col], default=None)
                 if end_col == disc_col + 1:
                     next_disc = None
                     for next_disc_col in disc_cols_in_range:
@@ -621,9 +619,9 @@ def find_schedule_tables(ws, header_row):
                             next_disc = next_disc_col
                             break
                     if next_disc:
-                        end_col = next_disc
+                        end_col = min(next_disc, next_day_col) if next_day_col else next_disc
                     else:
-                        end_col = min(dir_end_col, ws.max_column + 1)
+                        end_col = min(dir_end_col, next_day_col or ws.max_column + 1, ws.max_column + 1)
                 
                 # Находим колонки для этой таблицы
                 table_pair_col = None
@@ -659,8 +657,9 @@ def find_schedule_tables(ws, header_row):
                     'pair_col': table_pair_col,
                     'day_col': table_day_col,
                     'header_row': header_row,
-                    'direction_start_col': dir_start_col,  # Начало диапазона направления
-                    'direction_end_col': dir_end_col  # Конец диапазона направления
+                    'direction_start_col': dir_start_col,
+                    'direction_end_col': dir_end_col,
+                    'next_day_col': next_day_col,  # следующая колонка «д/н» — граница блока дисциплины
                 })
         
         return tables
@@ -692,31 +691,24 @@ def find_schedule_tables(ws, header_row):
                 # Если это первая дисциплина, начинаем с 1
                 start_col = 1
         
-        # Находим конец таблицы (колонка "преподаватель" справа от дисциплины)
+        # Находим конец таблицы: колонка «преподаватель» или (если её нет) до следующей колонки «д/н»
+        next_day_col = min([d for d in day_cols if d > disc_col], default=None)
         end_col = disc_col + 1
         for teacher_col in teacher_cols:
             if teacher_col > disc_col:
                 end_col = teacher_col + 1
                 break
         
-        # Если не нашли преподавателя справа, ищем до следующей дисциплины или до конца
         if end_col == disc_col + 1:
-            # Ищем следующую дисциплину
             next_disc = None
             for next_disc_col in discipline_cols:
                 if next_disc_col > disc_col:
                     next_disc = next_disc_col
                     break
             if next_disc:
-                end_col = next_disc
+                end_col = min(next_disc, next_day_col) if next_day_col else next_disc
             else:
-                # Ищем преподавателя в любом месте после дисциплины
-                for teacher_col in teacher_cols:
-                    if teacher_col > disc_col:
-                        end_col = teacher_col + 1
-                        break
-                if end_col == disc_col + 1:
-                    end_col = ws.max_column + 1
+                end_col = min(next_day_col or ws.max_column + 1, ws.max_column + 1)
         
         # Находим колонки для этой таблицы
         # КРИТИЧНО: колонка "д/н" может быть ДО начала таблицы (в первой колонке),
@@ -753,7 +745,8 @@ def find_schedule_tables(ws, header_row):
             'teacher_col': table_teacher_col,
             'pair_col': table_pair_col,
             'day_col': table_day_col,
-            'header_row': header_row
+            'header_row': header_row,
+            'next_day_col': next_day_col,
         })
     
     return tables
@@ -861,9 +854,11 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             if not pair_numbers:
                 continue
             
-            # Получаем дисциплину (ОБЯЗАТЕЛЬНО) - сырой текст всех ячеек от "дисциплина" до "преподаватель"
-            # Находим конец блока дисциплин (до преподавателя, не включая его)
-            discipline_end_col = teacher_col if teacher_col and teacher_col > disc_col else end_col
+            # Получаем дисциплину: от колонки «дисциплина» до «преподаватель» или до следующей колонки «д/н»
+            discipline_end_col = (
+                teacher_col if teacher_col and teacher_col > disc_col
+                else (table.get('next_day_col') or end_col)
+            )
             
             # Собираем сырой текст всех ячеек от дисциплины до преподавателя
             discipline_parts = []
@@ -880,14 +875,15 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                 continue
             
             # Объединяем все ячейки дисциплины в один сырой текст (через пробел)
-            # Это обязательное поле - сырой текст блока дисциплины
             raw_discipline = ' '.join(discipline_parts).strip()
             
-            # Если после объединения текст пустой, пропускаем
+            # Нормализация: "(лек). У708" -> "(лек), У708", "(пр). " -> "(пр), " и т.д., чтобы аудитория и тип занятия парсились
+            raw_discipline = raw_discipline.replace('). ', '), ')
+            
             if not raw_discipline:
                 continue
             
-            # Опционально: извлекаем дополнительные данные (если не ломает обязательное)
+            # Опционально: извлекаем дополнительные данные
             # Преподаватель
             teacher_fio = ''
             if teacher_col and teacher_col <= len(row):
@@ -969,11 +965,11 @@ def save_results_to_csv(results, output_file):
     for result in results:
         all_fields.update(result.keys())
     
-    # Определяем порядок полей (приоритетные сначала)
+    # Определяем порядок полей (приоритетные сначала); колонку week не используем, только week_type
     priority_fields = [
         'day_of_week', 'pair_number', 'subject_name', 
         'teacher', 'fio', 'audience', 'lecture_type', 
-        'week_type', 'week', 'group', 'group_name',
+        'week_type', 'group', 'group_name',
         'subgroup', 'num_subgroups', 'is_external', 
         'is_remote', 'department', 'institute', 
         'course', 'direction'
@@ -1001,16 +997,16 @@ def save_results_to_csv(results, output_file):
         writer.writeheader()
         
         for result in results:
-            # Создаем строку со всеми полями
             row = {}
             for field in fieldnames:
                 value = result.get(field, '')
-                # Преобразуем None в пустую строку
                 if value is None:
                     value = ''
-                # Преобразуем булевы значения
                 elif isinstance(value, bool):
                     value = 'True' if value else 'False'
+                # week_type: если пусто — пишем «обе недели»
+                if field == 'week_type' and not value:
+                    value = 'обе недели'
                 row[field] = value
             writer.writerow(row)
     
@@ -1025,10 +1021,10 @@ def save_results_to_excel(results, output_file):
     ws = wb.active
     ws.title = "Расписание"
     
-    # Заголовки (точно как в CSV)
+    # Заголовки (колонку week убрали, только week_type)
     headers = [
         'fio', 'pair_number', 'day_of_week', 'group', 'audience', 'department',
-        'week', 'subgroup', 'num_subgroups', 'is_external', 'is_remote', 'subject_name'
+        'week_type', 'subgroup', 'num_subgroups', 'is_external', 'is_remote', 'subject_name'
     ]
     
     # Записываем заголовки
@@ -1039,6 +1035,8 @@ def save_results_to_excel(results, output_file):
     
     # Записываем данные
     for row_num, result in enumerate(results, 2):
+        # week_type: если пусто — «обе недели»
+        wt = result.get('week_type', '') or 'обе недели'
         # Маппинг полей
         values = {
             'fio': result.get('teacher', ''),
@@ -1046,8 +1044,8 @@ def save_results_to_excel(results, output_file):
             'day_of_week': result.get('day_of_week', ''),
             'group': result.get('group', ''),
             'audience': result.get('audience', ''),
-            'department': result.get('department', ''),  # Может быть пустым, если не извлекали
-            'week': result.get('week_type', ''),
+            'department': result.get('department', ''),
+            'week_type': wt,
             'subgroup': result.get('subgroup', ''),
             'num_subgroups': result.get('num_subgroups', ''),  # Может быть пустым
             'is_external': result.get('is_external', False),  # Может быть пустым

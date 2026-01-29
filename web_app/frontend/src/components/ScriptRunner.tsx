@@ -22,6 +22,12 @@ const ScriptRunner: React.FC = () => {
     message: '',
     error: null
   });
+  const [processTimetableStatus, setProcessTimetableStatus] = useState<ScriptStatus>({
+    running: false,
+    progress: 0,
+    message: '',
+    error: null
+  });
 
   const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -33,10 +39,13 @@ const ScriptRunner: React.FC = () => {
       if (cleanStatus.running) {
         fetchStatus('clean_audiences', setCleanStatus);
       }
+      if (processTimetableStatus.running) {
+        fetchStatus('process_timetable', setProcessTimetableStatus);
+      }
     }, 500);
 
     return () => clearInterval(interval);
-  }, [parseStatus.running, cleanStatus.running]);
+  }, [parseStatus.running, cleanStatus.running, processTimetableStatus.running]);
 
   const fetchStatus = async (scriptName: string, setStatus: React.Dispatch<React.SetStateAction<ScriptStatus>>) => {
     try {
@@ -47,8 +56,10 @@ const ScriptRunner: React.FC = () => {
     }
   };
 
-  const runScript = async (scriptName: 'parse_timetable' | 'clean_audiences') => {
-    const setStatus = scriptName === 'parse_timetable' ? setParseStatus : setCleanStatus;
+  const runScript = async (scriptName: 'parse_timetable' | 'clean_audiences' | 'process_timetable') => {
+    const setStatus = scriptName === 'parse_timetable' ? setParseStatus
+      : scriptName === 'clean_audiences' ? setCleanStatus
+      : setProcessTimetableStatus;
     
     setStatus({
       running: true,
@@ -57,8 +68,9 @@ const ScriptRunner: React.FC = () => {
       error: null
     });
 
+    const runUrl = scriptName === 'process_timetable' ? `${API_BASE}/run/process_timetable` : `${API_BASE}/run/${scriptName}`;
     try {
-      await axios.post(`${API_BASE}/run/${scriptName}`);
+      await axios.post(runUrl);
       // Начинаем опрос статуса
       const statusInterval = setInterval(async () => {
         try {
@@ -162,6 +174,43 @@ const ScriptRunner: React.FC = () => {
         {!cleanStatus.running && cleanStatus.progress === 100 && !cleanStatus.error && (
           <div className="message success">
             {cleanStatus.message || 'Скрипт выполнен успешно! База данных обновлена.'}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Занятость преподавателей (process_timetable.py)</h2>
+        <p className="description">
+          Парсит файл занятости преподавателей из input, формирует timetable_teacher.csv и загружает в БД
+        </p>
+        <button
+          className="button"
+          onClick={() => runScript('process_timetable')}
+          disabled={processTimetableStatus.running}
+        >
+          {processTimetableStatus.running ? 'Выполняется...' : 'Запустить парсинг занятости'}
+        </button>
+        {processTimetableStatus.running && (
+          <div className="progress-container">
+            <div className="progress-bar">
+              <div
+                className="progress-bar-fill"
+                style={{ width: `${processTimetableStatus.progress}%` }}
+              >
+                {processTimetableStatus.progress}%
+              </div>
+            </div>
+            <p className="progress-message">{processTimetableStatus.message}</p>
+          </div>
+        )}
+        {processTimetableStatus.error && (
+          <div className="message error">
+            <strong>Ошибка:</strong> {processTimetableStatus.error}
+          </div>
+        )}
+        {!processTimetableStatus.running && processTimetableStatus.progress === 100 && !processTimetableStatus.error && (
+          <div className="message success">
+            {processTimetableStatus.message || 'Парсинг занятости завершён. База обновлена.'}
           </div>
         )}
       </div>

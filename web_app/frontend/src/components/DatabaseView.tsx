@@ -48,9 +48,38 @@ interface Filters {
   course: string;
 }
 
+// Порядок и метки колонок таблицы (ключ поля → подпись)
+const COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience', 'fio', 'group_name', 'week_type'] as const;
+type ColumnKey = typeof COLUMN_KEYS[number];
+const COLUMN_LABELS: Record<ColumnKey, string> = {
+  id: 'ID',
+  day_of_week: 'День',
+  pair_number: 'Пара',
+  subject_name: 'Предмет',
+  lecture_type: 'Тип',
+  audience: 'Аудитория',
+  fio: 'Преподаватель',
+  group_name: 'Группа',
+  week_type: 'Неделя'
+};
+const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
+  id: 'ID (не фильтруется)',
+  day_of_week: 'Фильтр по дню недели (понедельник, вторник...)',
+  pair_number: 'Фильтр по номеру пары (1, 2, 3...)',
+  subject_name: 'Фильтр по предмету (Математика, Физика...)',
+  lecture_type: 'Фильтр по типу занятия (лекция, практика...)',
+  audience: 'Фильтр по аудитории (У804, А539...)',
+  fio: 'Фильтр по преподавателю (Иванов И.И...)',
+  group_name: 'Фильтр по группе (606-22, 606-21...)',
+  week_type: 'Фильтр по типу недели (числитель, знаменатель...)'
+};
+
+export type DbTableType = 'timetable_cleaned' | 'timetable_teacher';
+
 const DatabaseView: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
+  const [activeTable, setActiveTable] = useState<DbTableType>('timetable_cleaned');
   const [filters, setFilters] = useState<Filters>({
     day_of_week: '',
     pair_number: '',
@@ -102,6 +131,75 @@ const DatabaseView: React.FC = () => {
     position: 'before' | 'after';
   } | null>(null);
 
+  // Ширины колонок (индекс 0..8), сохраняем в localStorage
+  const DEFAULT_COLUMN_WIDTHS = [100, 120, 80, 200, 120, 120, 200, 120, 120];
+  const COLUMN_WIDTHS_KEY = 'timetable_db_column_widths';
+  const [columnWidths, setColumnWidths] = useState<number[]>(() => {
+    try {
+      const saved = localStorage.getItem(COLUMN_WIDTHS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as number[];
+        if (Array.isArray(parsed) && parsed.length === 9) return parsed;
+      }
+    } catch (_) {}
+    return [...DEFAULT_COLUMN_WIDTHS];
+  });
+  const [resizingCol, setResizingCol] = useState<number | null>(null);
+  const resizeStartX = useRef(0);
+  const resizeStartWidth = useRef(0);
+
+  // Видимость колонок (сохраняем в localStorage)
+  const VISIBLE_COLUMNS_KEY = 'timetable_db_visible_columns';
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(VISIBLE_COLUMNS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Record<string, boolean>;
+        const out: Record<string, boolean> = {};
+        COLUMN_KEYS.forEach(k => { out[k] = parsed[k] !== false; });
+        return out;
+      }
+    } catch (_) {}
+    return COLUMN_KEYS.reduce<Record<string, boolean>>((acc, k) => ({ ...acc, [k]: true }), {});
+  });
+  // Колонки, скрытые по типу таблицы: спаршенное расписание — без «Преподаватель», занятость — без «Предмет» и «Тип»
+  const columnsHiddenByTable = useMemo((): string[] => {
+    if (activeTable === 'timetable_cleaned') return ['fio'];
+    if (activeTable === 'timetable_teacher') return ['subject_name', 'lecture_type'];
+    return [];
+  }, [activeTable]);
+  const visibleColumnKeys = useMemo(
+    () => COLUMN_KEYS.filter(k => visibleColumns[k] !== false && !columnsHiddenByTable.includes(k)),
+    [visibleColumns, columnsHiddenByTable]
+  );
+  const toggleColumnVisibility = useCallback((key: string) => {
+    setVisibleColumns(prev => {
+      const next = { ...prev, [key]: !prev[key] };
+      try {
+        localStorage.setItem(VISIBLE_COLUMNS_KEY, JSON.stringify(next));
+      } catch (_) {}
+      return next;
+    });
+  }, []);
+  const [showColumnsMenu, setShowColumnsMenu] = useState(false);
+  const columnsMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (showColumnsMenu && columnsMenuRef.current && !columnsMenuRef.current.contains(e.target as Node)) {
+        setShowColumnsMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showColumnsMenu]);
+
+  const resetColumnWidths = useCallback(() => {
+    setColumnWidths([...DEFAULT_COLUMN_WIDTHS]);
+    try {
+      localStorage.removeItem(COLUMN_WIDTHS_KEY);
+    } catch (_) {}
+  }, []);
+
   // Используем useDebounce для оптимизации запросов (800мс задержка)
   const debouncedFilters = useDebounce<Filters>(filters, 800);
 
@@ -111,6 +209,11 @@ const DatabaseView: React.FC = () => {
   // Восстанавливаем состояние из URL при загрузке
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+
+    const tableParam = params.get('table');
+    if (tableParam === 'timetable_teacher' || tableParam === 'timetable_cleaned') {
+      setActiveTable(tableParam);
+    }
 
     // Восстанавливаем фильтры
     const restoredFilters: Filters = {
@@ -163,6 +266,13 @@ const DatabaseView: React.FC = () => {
     window.history.pushState({}, '', `${window.location.pathname}?${params.toString()}`);
   };
 
+  // Обновляем URL при переключении таблицы
+  const setTable = useCallback((table: DbTableType) => {
+    setActiveTable(table);
+    setCurrentPage(1);
+    updateURL({ table, page: 1 });
+  }, [updateURL]);
+
   // Обновляем URL при изменении фильтров (с debounce, только после инициализации)
   useEffect(() => {
     if (!isInitialized) return;
@@ -182,6 +292,12 @@ const DatabaseView: React.FC = () => {
     updateURL({ page: currentPage });
   }, [currentPage, isInitialized]);
 
+  // Синхронизируем activeTable в URL
+  useEffect(() => {
+    if (!isInitialized) return;
+    updateURL({ table: activeTable });
+  }, [activeTable, isInitialized]);
+
   // Обновляем URL при изменении состояния показа статистики (только после инициализации)
   useEffect(() => {
     if (!isInitialized) return;
@@ -192,7 +308,10 @@ const DatabaseView: React.FC = () => {
   useEffect(() => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
-
+      const tableParam = params.get('table');
+      if (tableParam === 'timetable_teacher' || tableParam === 'timetable_cleaned') {
+        setActiveTable(tableParam);
+      }
       const restoredFilters: Filters = {
         day_of_week: params.get('day_of_week') || '',
         pair_number: params.get('pair_number') || '',
@@ -224,19 +343,18 @@ const DatabaseView: React.FC = () => {
 
   // Мемоизируем параметры запроса для оптимизации (используем debounced фильтры)
   const recordsQueryParams = useMemo(() => {
-    const params: any = { page: currentPage, limit: 20 }; // Уменьшили до 20 для ускорения
+    const params: any = { page: currentPage, limit: 20, table: activeTable };
     Object.keys(debouncedFilters).forEach(key => {
       if (debouncedFilters[key as keyof Filters]) {
         params[key] = debouncedFilters[key as keyof Filters];
       }
     });
-    // Добавляем параметры сортировки
     if (sortColumn) {
       params.sort_by = sortColumn;
       params.sort_order = sortDirection;
     }
     return params;
-  }, [currentPage, debouncedFilters, sortColumn, sortDirection]);
+  }, [currentPage, debouncedFilters, sortColumn, sortDirection, activeTable]);
   
   // Маппинг названий колонок на поля базы данных для сортировки
   const columnToSortField: Record<string, string> = useMemo(() => ({
@@ -270,17 +388,17 @@ const DatabaseView: React.FC = () => {
     setCurrentPage(1); // Сбрасываем на первую страницу при сортировке
   }, [sortColumn, sortDirection, columnToSortField, updateURL]);
 
-  // Запрос статистики с React Query
+  // Запрос статистики с React Query (с учётом выбранной таблицы)
   const { data: stats, isLoading: statsLoading } = useQuery<DatabaseStats>({
-    queryKey: ['db-stats'],
+    queryKey: ['db-stats', activeTable],
     queryFn: async () => {
-      const response = await axios.get(`${API_BASE}/db/stats`);
+      const response = await axios.get(`${API_BASE}/db/stats`, { params: { table: activeTable } });
       return response.data;
     },
-    refetchInterval: 60000, // Обновляем каждую минуту
+    refetchInterval: 60000,
   });
 
-  // Запрос записей с React Query и debounce для фильтров
+  // Запрос записей с React Query (params уже содержат table: activeTable)
   const { data: recordsData, isLoading: recordsLoading, error: recordsError } = useQuery({
     queryKey: ['db-records', recordsQueryParams],
     queryFn: async () => {
@@ -532,17 +650,17 @@ const DatabaseView: React.FC = () => {
   }, [handleFilterChange]);
 
   const clearDatabase = async () => {
-    if (!window.confirm('Вы уверены, что хотите очистить базу данных? Это действие нельзя отменить.')) {
+    const tableLabel = activeTable === 'timetable_teacher' ? 'Занятость преподавателей' : 'Спаршенное расписание';
+    if (!window.confirm(`Вы уверены, что хотите очистить таблицу «${tableLabel}»? Это действие нельзя отменить.`)) {
       return;
     }
 
     try {
-      await axios.post(`${API_BASE}/db/clear`);
+      await axios.post(`${API_BASE}/db/clear`, {}, { params: { table: activeTable } });
       setCurrentPage(1);
-      // Инвалидируем кеш React Query для обновления данных
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
-      alert('База данных успешно очищена');
+      alert('Таблица успешно очищена');
     } catch (err: any) {
       setError(err.response?.data?.error || 'Ошибка при очистке базы данных');
     }
@@ -627,9 +745,8 @@ const DatabaseView: React.FC = () => {
         return;
       }
       
-      await axios.put(`${API_BASE}/db/records/${recordId}`, dataToSend);
+      await axios.put(`${API_BASE}/db/records/${recordId}`, dataToSend, { params: { table: activeTable } });
       
-      // Инвалидируем кеш для обновления данных
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
       
@@ -665,10 +782,8 @@ const DatabaseView: React.FC = () => {
         _position: position
       };
       
-      // Создаем новую запись
-      await axios.post(`${API_BASE}/db/records`, dataToSend);
+      await axios.post(`${API_BASE}/db/records`, dataToSend, { params: { table: activeTable } });
       
-      // Инвалидируем кеш для обновления данных
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
       
@@ -707,10 +822,8 @@ const DatabaseView: React.FC = () => {
         _position: position
       };
       
-      // Создаем новую запись
-      await axios.post(`${API_BASE}/db/records`, emptyRecord);
+      await axios.post(`${API_BASE}/db/records`, emptyRecord, { params: { table: activeTable } });
       
-      // Инвалидируем кеш для обновления данных
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
       
@@ -731,9 +844,8 @@ const DatabaseView: React.FC = () => {
     }
     
     try {
-      await axios.delete(`${API_BASE}/db/records/${recordId}`);
+      await axios.delete(`${API_BASE}/db/records/${recordId}`, { params: { table: activeTable } });
       
-      // Инвалидируем кеш для обновления данных
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
       
@@ -767,21 +879,66 @@ const DatabaseView: React.FC = () => {
   };
   
   // Закрытие контекстного меню при клике вне его
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
-    const handleClickOutside = () => {
-      setContextMenu(null);
-    };
-    
+    const handleClose = () => setContextMenu(null);
+
     if (contextMenu) {
-      document.addEventListener('click', handleClickOutside);
-      document.addEventListener('contextmenu', handleClickOutside);
+      document.addEventListener('click', handleClose);
+      document.addEventListener('contextmenu', handleClose);
+      window.addEventListener('scroll', handleClose, true);
+      const tableEl = tableContainerRef.current;
+      if (tableEl) tableEl.addEventListener('scroll', handleClose);
+      return () => {
+        document.removeEventListener('click', handleClose);
+        document.removeEventListener('contextmenu', handleClose);
+        window.removeEventListener('scroll', handleClose, true);
+        if (tableEl) tableEl.removeEventListener('scroll', handleClose);
+      };
     }
-    
-    return () => {
-      document.removeEventListener('click', handleClickOutside);
-      document.removeEventListener('contextmenu', handleClickOutside);
-    };
   }, [contextMenu]);
+
+  // Изменение ширины колонки перетаскиванием
+  const handleResizeStart = useCallback((e: React.MouseEvent, colIndex: number) => {
+    e.preventDefault();
+    setResizingCol(colIndex);
+    resizeStartX.current = e.clientX;
+    resizeStartWidth.current = columnWidths[colIndex];
+  }, [columnWidths]);
+
+  useEffect(() => {
+    if (resizingCol === null) return;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    const onMove = (e: MouseEvent) => {
+      const delta = e.clientX - resizeStartX.current;
+      const newW = Math.max(60, Math.min(600, resizeStartWidth.current + delta));
+      setColumnWidths(prev => {
+        const next = [...prev];
+        next[resizingCol] = newW;
+        return next;
+      });
+    };
+    const onUp = () => setResizingCol(null);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, [resizingCol]); // columnWidths in onUp will be stale; save on next effect cleanup or in a ref - see below
+
+  // Сохраняем ширины в localStorage при изменении (после окончания ресайза)
+  useEffect(() => {
+    if (resizingCol === null) {
+      try {
+        localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
+      } catch (_) {}
+    }
+  }, [columnWidths, resizingCol]);
 
   return (
     <div className="database-view">
@@ -867,6 +1024,22 @@ const DatabaseView: React.FC = () => {
       <div className="card">
         <div className="card-header">
           <div>
+            <div className="db-view-tabs">
+              <button
+                type="button"
+                className={`db-view-tab ${activeTable === 'timetable_cleaned' ? 'active' : ''}`}
+                onClick={() => setTable('timetable_cleaned')}
+              >
+                Спаршенное расписание
+              </button>
+              <button
+                type="button"
+                className={`db-view-tab ${activeTable === 'timetable_teacher' ? 'active' : ''}`}
+                onClick={() => setTable('timetable_teacher')}
+              >
+                Занятость преподавателей
+              </button>
+            </div>
             <h2>Записи в базе данных</h2>
             {totalRecords > 0 && (
               <p className="records-count">
@@ -879,15 +1052,46 @@ const DatabaseView: React.FC = () => {
             <div className="filter-hint">
               💡 Кликните на ячейку для копирования, двойной клик по строке для редактирования
             </div>
-            {hasActiveFilters() && (
+            <div className="columns-menu-wrapper" ref={columnsMenuRef}>
               <button
-                className="button"
-                onClick={clearFilters}
-                style={{ marginLeft: '0.5rem' }}
+                type="button"
+                className="button columns-toggle"
+                onClick={() => setShowColumnsMenu(v => !v)}
+                title="Показать или скрыть колонки"
               >
-                Очистить фильтры
+                Колонки
               </button>
-            )}
+              {showColumnsMenu && (
+                <div className="columns-dropdown">
+                  <div className="columns-dropdown-title">Видимость колонок</div>
+                  {COLUMN_KEYS.map(key => (
+                    <label key={key} className="columns-dropdown-item">
+                      <input
+                        type="checkbox"
+                        checked={visibleColumns[key] !== false}
+                        onChange={() => toggleColumnVisibility(key)}
+                      />
+                      <span>{COLUMN_LABELS[key]}</span>
+                    </label>
+                  ))}
+                  <div className="columns-dropdown-divider" />
+                  <button
+                    type="button"
+                    className="columns-dropdown-action"
+                    onClick={() => { resetColumnWidths(); setShowColumnsMenu(false); }}
+                  >
+                    Сбросить ширины колонок
+                  </button>
+                  <button
+                    type="button"
+                    className="columns-dropdown-action"
+                    onClick={() => { clearFilters(); setShowColumnsMenu(false); }}
+                  >
+                    Очистить фильтры
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -895,627 +1099,181 @@ const DatabaseView: React.FC = () => {
         {/* Таблица всегда отображается, даже если нет данных */}
         {(
           <>
-            <div className="table-container">
+            <div className="table-container" ref={tableContainerRef}>
               <div className="grid-table">
                 <div className="grid-table-header">
-                  <div className="grid-table-cell">
-                    <div 
-                      className="header-label header-sortable"
-                      onClick={() => handleSort('ID')}
-                      title="Нажмите для сортировки"
-                    >
-                      ID
-                      <span className="sort-arrows">
-                        <span className={`sort-arrow ${sortColumn === 'ID' && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                        <span className={`sort-arrow ${sortColumn === 'ID' && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                      </span>
-                    </div>
-                    <input
-                      type="text"
-                      className="header-filter-input"
-                      value=""
-                      placeholder="ID (не фильтруется)"
-                      title="ID не фильтруется"
-                      disabled
-                    />
-                  </div>
-                  <div className="grid-table-cell">
-                    <div 
-                      className="header-label header-sortable"
-                      onClick={() => handleSort('День')}
-                      title="Нажмите для сортировки"
-                    >
-                      День
-                      <span className="sort-arrows">
-                        <span className={`sort-arrow ${sortColumn === 'День' && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                        <span className={`sort-arrow ${sortColumn === 'День' && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                      </span>
-                    </div>
-                    <input
-                      key="filter-day_of_week"
-                      ref={(el) => { filterRefs.current['day_of_week'] = el; }}
-                      type="text"
-                      className="header-filter-input"
-                      value={getFilterValue('День')}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleColumnFilterChange('День', e.target.value);
-                      }}
-                      onKeyDown={(e) => {
-                        e.stopPropagation();
-                      }}
-                      onKeyUp={(e) => {
-                        e.stopPropagation();
-                      }}
-                      onFocus={(e) => {
-                        e.stopPropagation();
-                        // Сохраняем, что это поле в фокусе
-                        focusedFieldRef.current = 'day_of_week';
-                        const input = e.target as HTMLInputElement;
-                        cursorPositionRef.current['day_of_week'] = input.selectionStart || 0;
-                      }}
-                      onBlur={(e) => {
-                        // НЕ останавливаем blur, но предотвращаем потерю фокуса из-за других событий
-                        e.stopPropagation();
-                        // Очищаем фокус только если это действительно blur (не перерендер)
-                        setTimeout(() => {
-                          if (document.activeElement !== e.target) {
-                            focusedFieldRef.current = null;
-                          }
-                        }, 100);
-                      }}
-                      onMouseDown={(e) => {
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                      }}
-                      placeholder="Фильтр по дню недели (понедельник, вторник...)"
-                      title="Введите день недели для поиска"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="grid-table-cell">
-                    <div 
-                      className="header-label header-sortable"
-                      onClick={() => handleSort('Пара')}
-                      title="Нажмите для сортировки"
-                    >
-                      Пара
-                      <span className="sort-arrows">
-                        <span className={`sort-arrow ${sortColumn === 'Пара' && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                        <span className={`sort-arrow ${sortColumn === 'Пара' && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                      </span>
-                    </div>
-                    <input
-                      key="filter-pair_number"
-                      ref={(el) => { filterRefs.current['pair_number'] = el; }}
-                      type="text"
-                      className="header-filter-input"
-                      value={getFilterValue('Пара')}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleColumnFilterChange('Пара', e.target.value);
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      onKeyUp={(e) => e.stopPropagation()}
-                      onFocus={(e) => {
-                        e.stopPropagation();
-                        focusedFieldRef.current = 'pair_number';
-                        const input = e.target as HTMLInputElement;
-                        cursorPositionRef.current['pair_number'] = input.selectionStart || 0;
-                      }}
-                      onBlur={(e) => {
-                        e.stopPropagation();
-                        setTimeout(() => {
-                          if (document.activeElement !== e.target) {
-                            focusedFieldRef.current = null;
-                          }
-                        }, 100);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Фильтр по номеру пары (1, 2, 3...)"
-                      title="Введите номер пары для поиска"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="grid-table-cell">
-                    <div className="header-label">Предмет</div>
-                    <input
-                      key="filter-subject_name"
-                      ref={(el) => { filterRefs.current['subject_name'] = el; }}
-                      type="text"
-                      className="header-filter-input"
-                      value={getFilterValue('Предмет')}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleColumnFilterChange('Предмет', e.target.value);
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      onKeyUp={(e) => e.stopPropagation()}
-                      onFocus={(e) => {
-                        e.stopPropagation();
-                        focusedFieldRef.current = 'subject_name';
-                        const input = e.target as HTMLInputElement;
-                        cursorPositionRef.current['subject_name'] = input.selectionStart || 0;
-                      }}
-                      onBlur={(e) => {
-                        e.stopPropagation();
-                        setTimeout(() => {
-                          if (document.activeElement !== e.target) {
-                            focusedFieldRef.current = null;
-                          }
-                        }, 100);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Фильтр по предмету (Математика, Физика...)"
-                      title="Введите название предмета для поиска"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="grid-table-cell">
-                    <div 
-                      className="header-label header-sortable"
-                      onClick={() => handleSort('Тип')}
-                      title="Нажмите для сортировки"
-                    >
-                      Тип
-                      <span className="sort-arrows">
-                        <span className={`sort-arrow ${sortColumn === 'Тип' && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                        <span className={`sort-arrow ${sortColumn === 'Тип' && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                      </span>
-                    </div>
-                    <input
-                      key="filter-lecture_type"
-                      ref={(el) => { filterRefs.current['lecture_type'] = el; }}
-                      type="text"
-                      className="header-filter-input"
-                      value={getFilterValue('Тип')}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleColumnFilterChange('Тип', e.target.value);
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      onKeyUp={(e) => e.stopPropagation()}
-                      onFocus={(e) => {
-                        e.stopPropagation();
-                        focusedFieldRef.current = 'lecture_type';
-                        const input = e.target as HTMLInputElement;
-                        cursorPositionRef.current['lecture_type'] = input.selectionStart || 0;
-                      }}
-                      onBlur={(e) => {
-                        e.stopPropagation();
-                        setTimeout(() => {
-                          if (document.activeElement !== e.target) {
-                            focusedFieldRef.current = null;
-                          }
-                        }, 100);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Фильтр по типу занятия (лекция, практика...)"
-                      title="Введите тип занятия для поиска"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="grid-table-cell">
-                    <div 
-                      className="header-label header-sortable"
-                      onClick={() => handleSort('Аудитория')}
-                      title="Нажмите для сортировки"
-                    >
-                      Аудитория
-                      <span className="sort-arrows">
-                        <span className={`sort-arrow ${sortColumn === 'Аудитория' && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                        <span className={`sort-arrow ${sortColumn === 'Аудитория' && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                      </span>
-                    </div>
-                    <input
-                      key="filter-audience"
-                      ref={(el) => { filterRefs.current['audience'] = el; }}
-                      type="text"
-                      className="header-filter-input"
-                      value={getFilterValue('Аудитория')}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleColumnFilterChange('Аудитория', e.target.value);
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      onKeyUp={(e) => e.stopPropagation()}
-                      onFocus={(e) => {
-                        e.stopPropagation();
-                        focusedFieldRef.current = 'audience';
-                        const input = e.target as HTMLInputElement;
-                        cursorPositionRef.current['audience'] = input.selectionStart || 0;
-                      }}
-                      onBlur={(e) => {
-                        e.stopPropagation();
-                        setTimeout(() => {
-                          if (document.activeElement !== e.target) {
-                            focusedFieldRef.current = null;
-                          }
-                        }, 100);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Фильтр по аудитории (У804, А539...)"
-                      title="Введите номер аудитории для поиска"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="grid-table-cell">
-                    <div 
-                      className="header-label header-sortable"
-                      onClick={() => handleSort('Преподаватель')}
-                      title="Нажмите для сортировки"
-                    >
-                      Преподаватель
-                      <span className="sort-arrows">
-                        <span className={`sort-arrow ${sortColumn === 'Преподаватель' && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                        <span className={`sort-arrow ${sortColumn === 'Преподаватель' && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                      </span>
-                    </div>
-                    <input
-                      key="filter-fio"
-                      ref={(el) => { filterRefs.current['fio'] = el; }}
-                      type="text"
-                      className="header-filter-input"
-                      value={getFilterValue('Преподаватель')}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleColumnFilterChange('Преподаватель', e.target.value);
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      onKeyUp={(e) => e.stopPropagation()}
-                      onFocus={(e) => {
-                        e.stopPropagation();
-                        focusedFieldRef.current = 'fio';
-                        const input = e.target as HTMLInputElement;
-                        cursorPositionRef.current['fio'] = input.selectionStart || 0;
-                      }}
-                      onBlur={(e) => {
-                        e.stopPropagation();
-                        setTimeout(() => {
-                          if (document.activeElement !== e.target) {
-                            focusedFieldRef.current = null;
-                          }
-                        }, 100);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Фильтр по преподавателю (Иванов И.И...)"
-                      title="Введите ФИО преподавателя для поиска"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="grid-table-cell">
-                    <div 
-                      className="header-label header-sortable"
-                      onClick={() => handleSort('Группа')}
-                      title="Нажмите для сортировки"
-                    >
-                      Группа
-                      <span className="sort-arrows">
-                        <span className={`sort-arrow ${sortColumn === 'Группа' && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                        <span className={`sort-arrow ${sortColumn === 'Группа' && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                      </span>
-                    </div>
-                    <input
-                      key="filter-group_name"
-                      ref={(el) => { filterRefs.current['group_name'] = el; }}
-                      type="text"
-                      className="header-filter-input"
-                      value={getFilterValue('Группа')}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleColumnFilterChange('Группа', e.target.value);
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      onKeyUp={(e) => e.stopPropagation()}
-                      onFocus={(e) => {
-                        e.stopPropagation();
-                        focusedFieldRef.current = 'group_name';
-                        const input = e.target as HTMLInputElement;
-                        cursorPositionRef.current['group_name'] = input.selectionStart || 0;
-                      }}
-                      onBlur={(e) => {
-                        e.stopPropagation();
-                        setTimeout(() => {
-                          if (document.activeElement !== e.target) {
-                            focusedFieldRef.current = null;
-                          }
-                        }, 100);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Фильтр по группе (606-22, 606-21...)"
-                      title="Введите номер группы для поиска"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div className="grid-table-cell">
-                    <div 
-                      className="header-label header-sortable"
-                      onClick={() => handleSort('Неделя')}
-                      title="Нажмите для сортировки"
-                    >
-                      Неделя
-                      <span className="sort-arrows">
-                        <span className={`sort-arrow ${sortColumn === 'Неделя' && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                        <span className={`sort-arrow ${sortColumn === 'Неделя' && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                      </span>
-                    </div>
-                    <input
-                      key="filter-week_type"
-                      ref={(el) => { filterRefs.current['week_type'] = el; }}
-                      type="text"
-                      className="header-filter-input"
-                      value={getFilterValue('Неделя')}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        handleColumnFilterChange('Неделя', e.target.value);
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                      onKeyUp={(e) => e.stopPropagation()}
-                      onFocus={(e) => {
-                        e.stopPropagation();
-                        focusedFieldRef.current = 'week_type';
-                        const input = e.target as HTMLInputElement;
-                        cursorPositionRef.current['week_type'] = input.selectionStart || 0;
-                      }}
-                      onBlur={(e) => {
-                        e.stopPropagation();
-                        setTimeout(() => {
-                          if (document.activeElement !== e.target) {
-                            focusedFieldRef.current = null;
-                          }
-                        }, 100);
-                      }}
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                      placeholder="Фильтр по типу недели (числитель, знаменатель...)"
-                      title="Введите тип недели для поиска"
-                      autoComplete="off"
-                    />
-                  </div>
+                  {visibleColumnKeys.map((key) => {
+                    const colIndex = COLUMN_KEYS.indexOf(key);
+                    const label = COLUMN_LABELS[key];
+                    const w = columnWidths[colIndex];
+                    const filterable = key !== 'id';
+                    return (
+                      <div
+                        key={key}
+                        className="grid-table-cell header-cell-resizable"
+                        style={{ width: w, minWidth: w, maxWidth: w }}
+                      >
+                        <div
+                          className={key === 'id' ? 'header-label' : 'header-label header-sortable'}
+                          onClick={filterable ? () => handleSort(label) : undefined}
+                          title={filterable ? 'Нажмите для сортировки' : undefined}
+                        >
+                          {label}
+                          {filterable && (
+                            <span className="sort-arrows">
+                              <span className={`sort-arrow ${sortColumn === label && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
+                              <span className={`sort-arrow ${sortColumn === label && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
+                            </span>
+                          )}
+                        </div>
+                        {key === 'id' ? (
+                          <input
+                            type="text"
+                            className="header-filter-input"
+                            value=""
+                            placeholder={COLUMN_PLACEHOLDERS.id}
+                            title="ID не фильтруется"
+                            disabled
+                          />
+                        ) : (
+                          <input
+                            key={`filter-${key}`}
+                            ref={(el) => { filterRefs.current[key] = el; }}
+                            type="text"
+                            className="header-filter-input"
+                            value={getFilterValue(label)}
+                            onChange={(e) => { e.stopPropagation(); handleColumnFilterChange(label, e.target.value); }}
+                            onKeyDown={(e) => e.stopPropagation()}
+                            onKeyUp={(e) => e.stopPropagation()}
+                            onFocus={(e) => {
+                              e.stopPropagation();
+                              focusedFieldRef.current = key;
+                              const input = e.target as HTMLInputElement;
+                              cursorPositionRef.current[key] = input.selectionStart || 0;
+                            }}
+                            onBlur={(e) => {
+                              e.stopPropagation();
+                              setTimeout(() => {
+                                if (document.activeElement !== e.target) focusedFieldRef.current = null;
+                              }, 100);
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
+                            placeholder={COLUMN_PLACEHOLDERS[key] || ''}
+                            title={`Поиск по колонке ${label}`}
+                            autoComplete="off"
+                          />
+                        )}
+                        <div className="column-resize-handle" onMouseDown={(e) => handleResizeStart(e, colIndex)} title="Изменить ширину" />
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="grid-table-body">
                   {loading ? (
-                    // Skeleton loader только для тела таблицы
                     [...Array(10)].map((_, index) => (
                       <div key={index} className="grid-table-row skeleton-row">
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
-                        <div className="grid-table-cell"><div className="skeleton-cell"></div></div>
+                        {visibleColumnKeys.map((k) => {
+                          const colIndex = COLUMN_KEYS.indexOf(k);
+                          const w = columnWidths[colIndex];
+                          return <div key={k} className="grid-table-cell" style={{ width: w, minWidth: w, maxWidth: w }}><div className="skeleton-cell"></div></div>;
+                        })}
                       </div>
                     ))
                   ) : (
                     records.map((record: DatabaseRecord) => {
                       const isEditing = editingRecordId === record.id;
                       const currentRecord = isEditing ? { ...record, ...editedValues } : record;
-                      
-                      // Безопасное получение значений с обработкой null/undefined
-                      const getValue = (value: any): string => {
-                        if (value === null || value === undefined || value === '') {
-                          return '';
-                        }
-                        return String(value);
-                      };
-
+                      const getValue = (value: any): string => (value === null || value === undefined || value === '' ? '' : String(value));
                       const cellId = `cell-${record.id}`;
-                      
-                      // Функция для рендеринга редактируемой ячейки
-                      const renderEditableCell = (
-                        field: keyof DatabaseRecord,
-                        cellIndex: number,
-                        displayValue: string
-                      ) => {
+                      const renderEditableCell = (field: keyof DatabaseRecord, cellIndex: number, displayValue: string) => {
                         const uniqueCellId = `${cellId}-${cellIndex}`;
                         const isExpanded = expandedCell?.id === uniqueCellId;
                         const expandDirection = expandedCell?.direction || 'right';
                         const expandWidth = expandedCell?.width || 0;
-                        
-                        // Специальная обработка ячейки ID при редактировании
+                        const width = columnWidths[cellIndex];
                         if (isEditing && field === 'id') {
                           return (
-                            <div 
-                              key={cellIndex}
-                              className="grid-table-cell id-cell-with-actions"
-                            >
+                            <div key={cellIndex} className="grid-table-cell id-cell-with-actions" style={{ width, minWidth: width, maxWidth: width }}>
                               <div className="id-actions">
-                                <button
-                                  className="save-button"
-                                  onClick={() => saveRecord(record.id)}
-                                  title="Сохранить изменения"
-                                >
-                                  ✓
-                                </button>
-                                <button
-                                  className="cancel-button"
-                                  onClick={cancelEditing}
-                                  title="Отменить изменения"
-                                >
-                                  ✕
-                                </button>
+                                <button className="save-button" onClick={() => saveRecord(record.id)} title="Сохранить">✓</button>
+                                <button className="cancel-button" onClick={cancelEditing} title="Отменить">✕</button>
                               </div>
                               <div className="id-value">{displayValue}</div>
                             </div>
                           );
                         }
-                        
                         if (isEditing && field !== 'id') {
-                          // Редактируемая ячейка
-                          const isNumericField = field === 'pair_number' || field === 'subgroup' || field === 'num_subgroups';
-                          
-                          // Выпадающие списки для определенных полей
                           if (field === 'day_of_week') {
                             return (
-                              <div 
-                                key={cellIndex}
-                                className="grid-table-cell editable-cell"
-                              >
-                                <select
-                                  className="cell-select"
-                                  value={getValue(currentRecord[field])}
-                                  onChange={(e) => handleFieldChange(field, e.target.value || null)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onFocus={(e) => e.stopPropagation()}
-                                >
+                              <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                                <select className="cell-select" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value || null)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()}>
                                   <option value="">-</option>
-                                  <option value="понедельник">понедельник</option>
-                                  <option value="вторник">вторник</option>
-                                  <option value="среда">среда</option>
-                                  <option value="четверг">четверг</option>
-                                  <option value="пятница">пятница</option>
-                                  <option value="суббота">суббота</option>
-                                  <option value="воскресенье">воскресенье</option>
+                                  {['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'].map(d => <option key={d} value={d}>{d}</option>)}
                                 </select>
                               </div>
                             );
                           }
-                          
                           if (field === 'pair_number') {
                             return (
-                              <div 
-                                key={cellIndex}
-                                className="grid-table-cell editable-cell"
-                              >
-                                <select
-                                  className="cell-select"
-                                  value={getValue(currentRecord[field])}
-                                  onChange={(e) => handleFieldChange(field, e.target.value === '' ? null : Number(e.target.value))}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onFocus={(e) => e.stopPropagation()}
-                                >
+                              <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                                <select className="cell-select" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value === '' ? null : Number(e.target.value))} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()}>
                                   <option value="">-</option>
-                                  {[1, 2, 3, 4, 5, 6, 7, 8].map(num => (
-                                    <option key={num} value={num}>{num}</option>
-                                  ))}
+                                  {[1, 2, 3, 4, 5, 6, 7, 8].map(num => <option key={num} value={num}>{num}</option>)}
                                 </select>
                               </div>
                             );
                           }
-                          
                           if (field === 'lecture_type') {
                             return (
-                              <div 
-                                key={cellIndex}
-                                className="grid-table-cell editable-cell"
-                              >
-                                <select
-                                  className="cell-select"
-                                  value={getValue(currentRecord[field])}
-                                  onChange={(e) => handleFieldChange(field, e.target.value || null)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onFocus={(e) => e.stopPropagation()}
-                                >
+                              <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                                <select className="cell-select" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value || null)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()}>
                                   <option value="">-</option>
-                                  <option value="лекция">лекция</option>
-                                  <option value="практика">практика</option>
-                                  <option value="лабораторная">лабораторная</option>
-                                  <option value="семинар">семинар</option>
+                                  {['лекция', 'практика', 'лабораторная', 'семинар'].map(t => <option key={t} value={t}>{t}</option>)}
                                 </select>
                               </div>
                             );
                           }
-                          
                           if (field === 'week_type') {
                             return (
-                              <div 
-                                key={cellIndex}
-                                className="grid-table-cell editable-cell"
-                              >
-                                <select
-                                  className="cell-select"
-                                  value={getValue(currentRecord[field])}
-                                  onChange={(e) => handleFieldChange(field, e.target.value || null)}
-                                  onClick={(e) => e.stopPropagation()}
-                                  onFocus={(e) => e.stopPropagation()}
-                                >
+                              <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                                <select className="cell-select" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value || null)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()}>
                                   <option value="">-</option>
-                                  <option value="числитель">числитель</option>
-                                  <option value="знаменатель">знаменатель</option>
-                                  <option value="обе недели">обе недели</option>
+                                  {['числитель', 'знаменатель', 'обе недели'].map(t => <option key={t} value={t}>{t}</option>)}
                                 </select>
                               </div>
                             );
                           }
-                          
-                          // Обычное текстовое поле для остальных полей
                           return (
-                            <div 
-                              key={cellIndex}
-                              className="grid-table-cell editable-cell"
-                            >
-                              <input
-                                type="text"
-                                className="cell-input"
-                                value={getValue(currentRecord[field])}
-                                onChange={(e) => handleFieldChange(field, e.target.value)}
-                                onClick={(e) => e.stopPropagation()}
-                                onFocus={(e) => e.stopPropagation()}
-                              />
-                            </div>
-                          );
-                        } else {
-                          // Обычная ячейка
-                          return (
-                            <div 
-                              key={cellIndex}
-                              className={`grid-table-cell expandable-cell ${copiedCellId === uniqueCellId ? 'cell-copied' : ''}`}
-                              onMouseEnter={(e) => handleCellMouseEnter(e, uniqueCellId)}
-                              onMouseLeave={handleCellMouseLeave}
-                              onDoubleClick={() => !isEditing && startEditing(record)}
-                              onClick={(e) => {
-                                // Копируем значение при клике
-                                const textToCopy = displayValue || '-';
-                                if (textToCopy !== '-') {
-                                  copyToClipboard(textToCopy, uniqueCellId);
-                                }
-                                e.stopPropagation();
-                              }}
-                              title="Кликните для копирования, двойной клик для редактирования"
-                            >
-                              <div 
-                                className="cell-content"
-                                data-expanded={isExpanded}
-                                data-direction={expandDirection}
-                                style={isExpanded ? {
-                                  width: `${expandWidth}px`,
-                                  minWidth: `${expandWidth}px`,
-                                  ...(expandDirection === 'left' ? { right: 0, left: 'auto' } : { left: 0, right: 'auto' })
-                                } : {}}
-                              >
-                                {displayValue || '-'}
-                              </div>
+                            <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                              <input type="text" className="cell-input" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()} />
                             </div>
                           );
                         }
+                        return (
+                          <div
+                            key={cellIndex}
+                            className={`grid-table-cell expandable-cell ${copiedCellId === uniqueCellId ? 'cell-copied' : ''}`}
+                            style={{ width, minWidth: width, maxWidth: width }}
+                            onMouseEnter={(e) => handleCellMouseEnter(e, uniqueCellId)}
+                            onMouseLeave={handleCellMouseLeave}
+                            onDoubleClick={() => !isEditing && startEditing(record)}
+                            onClick={(e) => { if (displayValue && displayValue !== '-') copyToClipboard(displayValue, uniqueCellId); e.stopPropagation(); }}
+                            title="Клик — копировать, двойной клик — редактировать"
+                          >
+                            <div className="cell-content" data-expanded={isExpanded} data-direction={expandDirection} style={isExpanded ? { width: `${expandWidth}px`, minWidth: `${expandWidth}px`, ...(expandDirection === 'left' ? { right: 0, left: 'auto' } : { left: 0, right: 'auto' }) } : {}}>
+                              {displayValue || '-'}
+                            </div>
+                          </div>
+                        );
                       };
-                      
                       return (
-                        <div 
-                          key={record.id} 
-                          className={`grid-table-row ${isEditing ? 'editing-row' : ''}`}
-                          onContextMenu={(e) => !isEditing && handleRowContextMenu(e, record)}
-                        >
-                          {renderEditableCell('id', 0, String(record.id || '-'))}
-                          {renderEditableCell('day_of_week', 1, getValue(currentRecord.day_of_week))}
-                          {renderEditableCell('pair_number', 2, getValue(currentRecord.pair_number))}
-                          {renderEditableCell('subject_name', 3, getValue(currentRecord.subject_name))}
-                          {renderEditableCell('lecture_type', 4, getValue(currentRecord.lecture_type))}
-                          {renderEditableCell('audience', 5, getValue(currentRecord.audience))}
-                          {renderEditableCell('fio', 6, getValue(currentRecord.fio || currentRecord.teacher))}
-                          {renderEditableCell('group_name', 7, getValue(currentRecord.group_name))}
-                          {renderEditableCell('week_type', 8, getValue(currentRecord.week_type))}
+                        <div key={record.id} className={`grid-table-row ${isEditing ? 'editing-row' : ''}`} onContextMenu={(e) => !isEditing && handleRowContextMenu(e, record)}>
+                          {visibleColumnKeys.map((key) => {
+                            const colIndex = COLUMN_KEYS.indexOf(key);
+                            const displayValue = key === 'fio' ? getValue(currentRecord.fio || currentRecord.teacher) : getValue((currentRecord as any)[key]);
+                            return renderEditableCell(key as keyof DatabaseRecord, colIndex, displayValue);
+                          })}
                         </div>
                       );
                     })
@@ -1523,6 +1281,8 @@ const DatabaseView: React.FC = () => {
                 </div>
               </div>
             </div>
+          </>
+        )}
 
             {records.length === 0 && !loading && (
               <div className="message info">
@@ -1551,8 +1311,6 @@ const DatabaseView: React.FC = () => {
                 </button>
               </div>
             )}
-          </>
-        )}
       </div>
 
       {/* Toast уведомления */}
@@ -1594,6 +1352,19 @@ const DatabaseView: React.FC = () => {
             onClick={() => deleteRecord(contextMenu.recordId)}
           >
             Удалить запись
+          </button>
+          <div className="context-menu-divider"></div>
+          <button
+            className="context-menu-item"
+            onClick={() => { resetColumnWidths(); setContextMenu(null); }}
+          >
+            Сбросить ширины колонок
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={() => { clearFilters(); setContextMenu(null); }}
+          >
+            Очистить фильтры
           </button>
           <div className="context-menu-divider"></div>
           <button
