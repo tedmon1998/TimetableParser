@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
+import json
 import subprocess
 import os
 import glob
@@ -27,7 +28,8 @@ DB_CONFIG = {
 script_status = {
     'parse_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'clean_audiences': {'running': False, 'progress': 0, 'message': '', 'error': None},
-    'process_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None}
+    'process_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'fetch_teachers': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
 
 # Разрешённые таблицы для просмотра записей
@@ -48,6 +50,33 @@ def get_project_root():
     parent_dir = os.path.dirname(current_dir)  # web_app
     project_root = os.path.dirname(parent_dir)  # корень проекта (H:\Project\TimetableParser)
     return project_root
+
+# --- Преподаватели (info/teacher_all.json) ---
+TEACHER_KEYS = ['fio', 'post_name', 'post_struct', 'all_staj', 'staj_spec', 'phone', 'predmet']
+TEACHER_FILE = os.path.join(get_project_root(), 'info', 'teacher_all.json')
+
+def read_teachers():
+    """Читает список преподавателей из info/teacher_all.json."""
+    if not os.path.isfile(TEACHER_FILE):
+        return []
+    with open(TEACHER_FILE, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        return []
+    # Нормализуем каждую запись: все ключи должны быть строками
+    out = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        row = {k: (item.get(k) or '') if isinstance(item.get(k), str) else str(item.get(k) or '') for k in TEACHER_KEYS}
+        out.append(row)
+    return out
+
+def save_teachers(teachers):
+    """Сохраняет список преподавателей в info/teacher_all.json (UTF-8, без escape)."""
+    os.makedirs(os.path.dirname(TEACHER_FILE), exist_ok=True)
+    with open(TEACHER_FILE, 'w', encoding='utf-8') as f:
+        json.dump(teachers, f, ensure_ascii=False, indent=2)
 
 def cleanup_output_files():
     """Удаляет все файлы в output/timetable"""
@@ -396,6 +425,66 @@ def run_process_timetable_route():
     thread.start()
     return jsonify({'message': 'Script started'})
 
+
+def run_fetch_teachers():
+    """Запускает get_teacher_data.py — сбор преподавателей с сайта СурГУ в info/teacher_all.json."""
+    script_status['fetch_teachers']['running'] = True
+    script_status['fetch_teachers']['progress'] = 0
+    script_status['fetch_teachers']['message'] = 'Сбор преподавателей с сайта...'
+    script_status['fetch_teachers']['error'] = None
+    try:
+        project_root = get_project_root()
+        script_path = os.path.join(project_root, 'get_teacher_data.py')
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f'Скрипт не найден: {script_path}')
+        process = subprocess.Popen(
+            ['python', script_path],
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        output_lines = []
+        while True:
+            out = process.stdout.readline()
+            if out == '' and process.poll() is not None:
+                break
+            if out:
+                line = out.strip()
+                if line.isdigit():
+                    i = int(line)
+                    script_status['fetch_teachers']['progress'] = min(90, 10 + (i * 80 // 1000))
+                    script_status['fetch_teachers']['message'] = f'Обработано страниц: {i}'
+            output_lines.append(out)
+        return_code = process.wait()
+        stderr_output = process.stderr.read()
+        if return_code == 0:
+            script_status['fetch_teachers']['progress'] = 100
+            script_status['fetch_teachers']['message'] = 'Готово. Данные сохранены в info/teacher_all.json'
+        else:
+            script_status['fetch_teachers']['error'] = stderr_output or f'Код возврата: {return_code}'
+            script_status['fetch_teachers']['message'] = 'Ошибка при сборе с сайта'
+            script_status['fetch_teachers']['progress'] = 0
+    except Exception as e:
+        script_status['fetch_teachers']['error'] = str(e)
+        script_status['fetch_teachers']['message'] = str(e)
+        script_status['fetch_teachers']['progress'] = 0
+    finally:
+        script_status['fetch_teachers']['running'] = False
+
+
+@app.route('/api/run/fetch_teachers', methods=['POST'])
+def run_fetch_teachers_route():
+    """Запускает get_teacher_data.py (сбор преподавателей с сайта)."""
+    if script_status['fetch_teachers']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_fetch_teachers)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
 @app.route('/api/db/stats', methods=['GET'])
 def get_db_stats():
     """Возвращает статистику из базы данных (таблица: timetable_cleaned или timetable_teacher)"""
@@ -459,6 +548,7 @@ def get_db_records():
             'fio': request.args.get('fio', '').strip(),
             'teacher': request.args.get('teacher', '').strip(),
             'group_name': request.args.get('group_name', '').strip(),
+            'subgroup': request.args.get('subgroup', '').strip(),
             'week_type': request.args.get('week_type', '').strip(),
             'institute': request.args.get('institute', '').strip(),
             'course': request.args.get('course', '').strip(),
@@ -519,6 +609,16 @@ def get_db_records():
             where_conditions.append("group_name ILIKE %s")
             query_params.append(f"%{filters['group_name']}%")
         
+        # Фильтр по подгруппе
+        if filters['subgroup']:
+            try:
+                sub_num = int(filters['subgroup'])
+                where_conditions.append("subgroup = %s")
+                query_params.append(sub_num)
+            except ValueError:
+                where_conditions.append("CAST(subgroup AS TEXT) ILIKE %s")
+                query_params.append(f"%{filters['subgroup']}%")
+        
         # Фильтр по типу недели
         if filters['week_type']:
             where_conditions.append("week_type ILIKE %s")
@@ -545,7 +645,7 @@ def get_db_records():
         
         # Валидация параметров сортировки
         allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 
-                              'audience', 'fio', 'teacher', 'group_name', 'week_type']
+                              'audience', 'fio', 'teacher', 'group_name', 'subgroup', 'course', 'week_type']
         if sort_by not in allowed_sort_fields:
             sort_by = 'id'
         
@@ -553,7 +653,7 @@ def get_db_records():
             sort_order = 'DESC'
         
         if table == 'timetable_teacher':
-            sort_by_allowed = ['id', 'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio', 'group_name', 'week_type']
+            sort_by_allowed = ['id', 'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio', 'group_name', 'subgroup', 'course', 'week_type']
             if sort_by not in sort_by_allowed:
                 sort_by = 'id'
             query = f"""
@@ -861,6 +961,254 @@ def delete_record(record_id):
         import traceback
         print(f"Error deleting record {record_id}: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
+
+
+# --- API преподавателей (info/teacher_all.json) ---
+@app.route('/api/teachers', methods=['GET'])
+def get_teachers():
+    """Список преподавателей с пагинацией и фильтром по ФИО."""
+    try:
+        teachers = read_teachers()
+        fio_filter = (request.args.get('fio') or '').strip().lower()
+        if fio_filter:
+            teachers = [t for t in teachers if fio_filter in (t.get('fio') or '').lower()]
+        total = len(teachers)
+        page = max(1, int(request.args.get('page', 1)))
+        limit = max(1, min(100, int(request.args.get('limit', 50))))
+        offset = (page - 1) * limit
+        page_list = teachers[offset:offset + limit]
+        # Добавляем глобальный индекс для PUT/DELETE
+        for i, t in enumerate(page_list):
+            t['_index'] = offset + i
+        pages = (total + limit - 1) // limit if total > 0 else 0
+        return jsonify({
+            'teachers': page_list,
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': pages
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/teachers', methods=['POST'])
+def add_teacher():
+    """Добавить одного преподавателя (для дубликата или пустой записи)."""
+    try:
+        data = request.get_json() or {}
+        teacher = {k: (data.get(k) or '') if k in data else '' for k in TEACHER_KEYS}
+        for k in TEACHER_KEYS:
+            val = teacher.get(k)
+            teacher[k] = '' if val is None else str(val).strip()
+        teachers = read_teachers()
+        teachers.append(teacher)
+        save_teachers(teachers)
+        return jsonify({'message': 'OK', 'total': len(teachers)}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/teachers/<int:index>', methods=['PUT'])
+def update_teacher(index):
+    """Обновить преподавателя по индексу (0-based)."""
+    try:
+        teachers = read_teachers()
+        if index < 0 or index >= len(teachers):
+            return jsonify({'error': 'Index out of range'}), 404
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        for key in TEACHER_KEYS:
+            if key in data:
+                val = data[key]
+                teachers[index][key] = '' if val is None else str(val).strip()
+        save_teachers(teachers)
+        return jsonify({'message': 'OK', 'teacher': teachers[index]})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/teachers/bulk', methods=['POST'])
+def bulk_add_teachers():
+    """Добавить преподавателей из списка строк (каждая строка — ФИО). Дубликаты по ФИО пропускаются."""
+    try:
+        data = request.get_json()
+        lines = (data.get('lines') or '').strip()
+        if not lines:
+            return jsonify({'error': 'lines is required'}), 400
+        teachers = read_teachers()
+        existing_fios = {(t.get('fio') or '').strip().lower() for t in teachers}
+        added = 0
+        skipped = 0
+        for line in lines.split('\n'):
+            fio = line.strip()
+            if not fio:
+                continue
+            key = fio.lower()
+            if key in existing_fios:
+                skipped += 1
+                continue
+            existing_fios.add(key)
+            teachers.append({k: fio if k == 'fio' else '' for k in TEACHER_KEYS})
+            added += 1
+        save_teachers(teachers)
+        return jsonify({
+            'message': 'OK',
+            'added': added,
+            'skipped_duplicates': skipped,
+            'total': len(teachers)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/teachers/<int:index>', methods=['DELETE'])
+def delete_teacher(index):
+    """Удалить преподавателя по индексу (0-based)."""
+    try:
+        teachers = read_teachers()
+        if index < 0 or index >= len(teachers):
+            return jsonify({'error': 'Index out of range'}), 404
+        teachers.pop(index)
+        save_teachers(teachers)
+        return jsonify({'message': 'OK', 'total': len(teachers)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# --- Дисциплины (info/discipline.json) ---
+DISCIPLINE_FILE = os.path.join(get_project_root(), 'info', 'discipline.json')
+
+
+def read_disciplines():
+    """Читает список названий дисциплин из info/discipline.json (массив строк)."""
+    if not os.path.isfile(DISCIPLINE_FILE):
+        return []
+    with open(DISCIPLINE_FILE, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+    if not isinstance(data, list):
+        return []
+    return [str(x).strip() for x in data if x is not None and str(x).strip()]
+
+
+def save_disciplines(disciplines):
+    """Сохраняет список дисциплин в info/discipline.json (UTF-8)."""
+    os.makedirs(os.path.dirname(DISCIPLINE_FILE), exist_ok=True)
+    with open(DISCIPLINE_FILE, 'w', encoding='utf-8') as f:
+        json.dump(disciplines, f, ensure_ascii=False, indent=2)
+
+
+@app.route('/api/disciplines', methods=['GET'])
+def get_disciplines():
+    """Список дисциплин с пагинацией и фильтром по названию."""
+    try:
+        disciplines = read_disciplines()
+        name_filter = (request.args.get('name') or '').strip().lower()
+        if name_filter:
+            disciplines = [d for d in disciplines if name_filter in d.lower()]
+        total = len(disciplines)
+        page = max(1, int(request.args.get('page', 1)))
+        limit = max(1, min(100, int(request.args.get('limit', 50))))
+        offset = (page - 1) * limit
+        page_list = disciplines[offset:offset + limit]
+        # Добавляем глобальный индекс для PUT/DELETE
+        result = [{'name': d, '_index': offset + i} for i, d in enumerate(page_list)]
+        pages = (total + limit - 1) // limit if total > 0 else 0
+        return jsonify({
+            'disciplines': result,
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': pages
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/disciplines', methods=['POST'])
+def add_discipline():
+    """Добавить одну дисциплину. Тело: { "name": "..." }."""
+    try:
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'name is required'}), 400
+        disciplines = read_disciplines()
+        if name.lower() in [d.lower() for d in disciplines]:
+            return jsonify({'error': 'Duplicate discipline', 'total': len(disciplines)}), 400
+        disciplines.append(name)
+        save_disciplines(disciplines)
+        return jsonify({'message': 'OK', 'total': len(disciplines)}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/disciplines/bulk', methods=['POST'])
+def bulk_add_disciplines():
+    """Добавить дисциплины из списка строк (каждая строка — название). Дубликаты пропускаются."""
+    try:
+        data = request.get_json()
+        lines = (data.get('lines') or '').strip()
+        if not lines:
+            return jsonify({'error': 'lines is required'}), 400
+        disciplines = read_disciplines()
+        existing = {d.strip().lower() for d in disciplines}
+        added = 0
+        skipped = 0
+        for line in lines.split('\n'):
+            name = line.strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key in existing:
+                skipped += 1
+                continue
+            existing.add(key)
+            disciplines.append(name)
+            added += 1
+        save_disciplines(disciplines)
+        return jsonify({
+            'message': 'OK',
+            'added': added,
+            'skipped_duplicates': skipped,
+            'total': len(disciplines)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/disciplines/<int:index>', methods=['PUT'])
+def update_discipline(index):
+    """Обновить дисциплину по индексу (0-based). Тело: { "name": "..." }."""
+    try:
+        disciplines = read_disciplines()
+        if index < 0 or index >= len(disciplines):
+            return jsonify({'error': 'Index out of range'}), 404
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        if not name:
+            return jsonify({'error': 'name is required'}), 400
+        disciplines[index] = name
+        save_disciplines(disciplines)
+        return jsonify({'message': 'OK', 'name': name})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/disciplines/<int:index>', methods=['DELETE'])
+def delete_discipline(index):
+    """Удалить дисциплину по индексу (0-based)."""
+    try:
+        disciplines = read_disciplines()
+        if index < 0 or index >= len(disciplines):
+            return jsonify({'error': 'Index out of range'}), 404
+        disciplines.pop(index)
+        save_disciplines(disciplines)
+        return jsonify({'message': 'OK', 'total': len(disciplines)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000, host='0.0.0.0')

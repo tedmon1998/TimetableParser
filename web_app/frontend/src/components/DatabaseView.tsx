@@ -43,13 +43,14 @@ interface Filters {
   fio: string;
   teacher: string;
   group_name: string;
+  subgroup: string;
   week_type: string;
   institute: string;
   course: string;
 }
 
-// Порядок и метки колонок таблицы (ключ поля → подпись)
-const COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience', 'fio', 'group_name', 'week_type'] as const;
+// Порядок и метки колонок таблицы (ключ поля → подпись). Подгруппа и Курс по умолчанию скрыты.
+const COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience', 'fio', 'group_name', 'subgroup', 'course', 'week_type'] as const;
 type ColumnKey = typeof COLUMN_KEYS[number];
 const COLUMN_LABELS: Record<ColumnKey, string> = {
   id: 'ID',
@@ -60,6 +61,8 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   audience: 'Аудитория',
   fio: 'Преподаватель',
   group_name: 'Группа',
+  subgroup: 'Подгруппа',
+  course: 'Курс',
   week_type: 'Неделя'
 };
 const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
@@ -71,6 +74,8 @@ const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
   audience: 'Фильтр по аудитории (У804, А539...)',
   fio: 'Фильтр по преподавателю (Иванов И.И...)',
   group_name: 'Фильтр по группе (606-22, 606-21...)',
+  subgroup: 'Фильтр по подгруппе (1, 2...)',
+  course: 'Фильтр по курсу (1, 2, 3...)',
   week_type: 'Фильтр по типу недели (числитель, знаменатель...)'
 };
 
@@ -89,6 +94,7 @@ const DatabaseView: React.FC = () => {
     fio: '',
     teacher: '',
     group_name: '',
+    subgroup: '',
     week_type: '',
     institute: '',
     course: ''
@@ -131,15 +137,15 @@ const DatabaseView: React.FC = () => {
     position: 'before' | 'after';
   } | null>(null);
 
-  // Ширины колонок (индекс 0..8), сохраняем в localStorage
-  const DEFAULT_COLUMN_WIDTHS = [100, 120, 80, 200, 120, 120, 200, 120, 120];
+  // Ширины колонок (id, день, пара, предмет, тип, аудитория, преподаватель, группа, подгруппа, курс, неделя)
+  const DEFAULT_COLUMN_WIDTHS = [100, 120, 80, 200, 120, 120, 200, 120, 90, 80, 120];
   const COLUMN_WIDTHS_KEY = 'timetable_db_column_widths';
   const [columnWidths, setColumnWidths] = useState<number[]>(() => {
     try {
       const saved = localStorage.getItem(COLUMN_WIDTHS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as number[];
-        if (Array.isArray(parsed) && parsed.length === 9) return parsed;
+        if (Array.isArray(parsed) && parsed.length === COLUMN_KEYS.length) return parsed;
       }
     } catch (_) {}
     return [...DEFAULT_COLUMN_WIDTHS];
@@ -148,8 +154,9 @@ const DatabaseView: React.FC = () => {
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
 
-  // Видимость колонок (сохраняем в localStorage)
+  // Видимость колонок (сохраняем в localStorage). Подгруппа и Курс по умолчанию скрыты.
   const VISIBLE_COLUMNS_KEY = 'timetable_db_visible_columns';
+  const HIDDEN_BY_DEFAULT_KEYS = ['subgroup', 'course'];
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
     try {
       const saved = localStorage.getItem(VISIBLE_COLUMNS_KEY);
@@ -160,7 +167,10 @@ const DatabaseView: React.FC = () => {
         return out;
       }
     } catch (_) {}
-    return COLUMN_KEYS.reduce<Record<string, boolean>>((acc, k) => ({ ...acc, [k]: true }), {});
+    return COLUMN_KEYS.reduce<Record<string, boolean>>((acc, k) => ({
+      ...acc,
+      [k]: HIDDEN_BY_DEFAULT_KEYS.includes(k) ? false : true
+    }), {});
   });
   // Колонки, скрытые по типу таблицы: спаршенное расписание — без «Преподаватель», занятость — без «Предмет» и «Тип»
   const columnsHiddenByTable = useMemo((): string[] => {
@@ -225,6 +235,7 @@ const DatabaseView: React.FC = () => {
       fio: params.get('fio') || '',
       teacher: params.get('teacher') || '',
       group_name: params.get('group_name') || '',
+      subgroup: params.get('subgroup') || '',
       week_type: params.get('week_type') || '',
       institute: params.get('institute') || '',
       course: params.get('course') || ''
@@ -321,6 +332,7 @@ const DatabaseView: React.FC = () => {
         fio: params.get('fio') || '',
         teacher: params.get('teacher') || '',
         group_name: params.get('group_name') || '',
+        subgroup: params.get('subgroup') || '',
         week_type: params.get('week_type') || '',
         institute: params.get('institute') || '',
         course: params.get('course') || ''
@@ -341,21 +353,6 @@ const DatabaseView: React.FC = () => {
 
   // Убрали логику закрытия фильтров - они теперь всегда видны
 
-  // Мемоизируем параметры запроса для оптимизации (используем debounced фильтры)
-  const recordsQueryParams = useMemo(() => {
-    const params: any = { page: currentPage, limit: 20, table: activeTable };
-    Object.keys(debouncedFilters).forEach(key => {
-      if (debouncedFilters[key as keyof Filters]) {
-        params[key] = debouncedFilters[key as keyof Filters];
-      }
-    });
-    if (sortColumn) {
-      params.sort_by = sortColumn;
-      params.sort_order = sortDirection;
-    }
-    return params;
-  }, [currentPage, debouncedFilters, sortColumn, sortDirection, activeTable]);
-  
   // Маппинг названий колонок на поля базы данных для сортировки
   const columnToSortField: Record<string, string> = useMemo(() => ({
     'ID': 'id',
@@ -366,8 +363,26 @@ const DatabaseView: React.FC = () => {
     'Аудитория': 'audience',
     'Преподаватель': 'fio',
     'Группа': 'group_name',
+    'Подгруппа': 'subgroup',
+    'Курс': 'course',
     'Неделя': 'week_type'
   }), []);
+
+  // Мемоизируем параметры запроса для оптимизации (используем debounced фильтры)
+  const recordsQueryParams = useMemo(() => {
+    const params: any = { page: currentPage, limit: 20, table: activeTable };
+    Object.keys(debouncedFilters).forEach(key => {
+      if (debouncedFilters[key as keyof Filters]) {
+        params[key] = debouncedFilters[key as keyof Filters];
+      }
+    });
+    if (sortColumn) {
+      const sortField = columnToSortField[sortColumn] || sortColumn;
+      params.sort_by = sortField;
+      params.sort_order = sortDirection;
+    }
+    return params;
+  }, [currentPage, debouncedFilters, sortColumn, sortDirection, activeTable, columnToSortField]);
   
   // Обработчик клика на заголовок для сортировки
   const handleSort = useCallback((column: string) => {
@@ -539,6 +554,7 @@ const DatabaseView: React.FC = () => {
       fio: '',
       teacher: '',
       group_name: '',
+      subgroup: '',
       week_type: '',
       institute: '',
       course: ''
@@ -569,6 +585,8 @@ const DatabaseView: React.FC = () => {
     'Аудитория': 'audience',
     'Преподаватель': 'fio',
     'Группа': 'group_name',
+    'Подгруппа': 'subgroup',
+    'Курс': 'course',
     'Неделя': 'week_type'
   };
 
@@ -1246,7 +1264,7 @@ const DatabaseView: React.FC = () => {
                           }
                           return (
                             <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
-                              <input type="text" className="cell-input" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()} />
+                              <input type="text" className="cell-input" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(String(field), e.target.value)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()} />
                             </div>
                           );
                         }

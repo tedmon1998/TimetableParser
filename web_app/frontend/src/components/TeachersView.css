@@ -1,0 +1,111 @@
+.teachers-view {
+  padding: 1rem;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Дополнить с сайта */
+.teachers-fetch-site {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #f0f4ff;
+  border-radius: 8px;
+  border: 1px solid #c8d4f0;
+}
+
+.teachers-fetch-site h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.teachers-fetch-hint {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.teachers-fetch-btn {
+  padding: 0.5rem 1.25rem;
+  font-size: 1rem;
+  background: var(--primary-color, #1143c0);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.teachers-fetch-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.teachers-fetch-btn:disabled {
+  opacity: 0.8;
+  cursor: wait;
+}
+
+.teachers-fetch-error {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.9rem;
+  color: #c00;
+}
+
+/* Блок добавления по списку */
+.teachers-bulk {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--card-bg, #f8f9fa);
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.teachers-bulk h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+  color: #333;
+}
+
+.teachers-bulk-hint {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
+.teachers-bulk-textarea {
+  width: 100%;
+  max-width: 600px;
+  min-height: 120px;
+  padding: 0.75rem;
+  font-family: inherit;
+  font-size: 0.95rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.teachers-bulk-textarea:focus {
+  outline: none;
+  border-color: var(--primary-color, #1143c0);
+  box-shadow: 0 0 0 2px rgba(17, 67, 192, 0.15);
+}
+
+.teachers-bulk-btn {
+  margin-top: 0.75rem;
+  padding: 0.5rem 1.25rem;
+  font-size: 1rem;
+  background: var(--primary-color, #1143c0);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.teachers-bulk-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.teachers-bulk-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}

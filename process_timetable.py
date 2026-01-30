@@ -2,7 +2,13 @@ import csv
 import json
 import re
 import os
+import glob
 from collections import defaultdict
+
+try:
+    from openpyxl import load_workbook
+except ImportError:
+    load_workbook = None
 
 # Маппинг дней недели
 DAYS_MAPPING = {
@@ -32,23 +38,35 @@ WEEK_MAPPING = {
 }
 
 
+def _normalize_list_delimiter(s):
+    """Нормализует разделители списка: точка, точка с запятой, Unicode-запятые → обычная запятая.
+    "502-21.502-22" или "403-41.407-41" → разбиваются как разные записи."""
+    if not s:
+        return s
+    s = str(s)
+    for char in ('.', ';', '\uFF0C', '\u201A', '，', '\u060C', '\u3001', '\uFE50', '\uFE51'):
+        s = s.replace(char, ',')
+    return s
+
+
 def parse_week_split_string(s):
     """
     Парсит строку с числителем/знаменателем/обе недели. Подходит и для групп, и для аудиторий.
     Возвращает список кортежей (значение, week_type), где week_type: 'numerator'|'denominator'|'both'.
+    Запятая или точка с запятой без слэша даёт несколько записей: "501-33,501-34,501-35" → три записи.
 
     Примеры:
     - "А515/А436" -> [('А515', 'numerator'), ('А436', 'denominator')]
     - "605-41/" -> [('605-41', 'numerator')]  только числитель
     - "601-31" -> [('601-31', 'both')]  одна запись, обе недели
-    - "501-53,501-54" -> [('501-53', 'both'), ('501-54', 'both')]  две записи, обе в обе недели
+    - "501-33,501-34,501-35" -> [('501-33', 'both'), ('501-34', 'both'), ('501-35', 'both')]  три записи
     - "301-51/607-51,607-52" -> [('301-51', 'numerator'), ('607-51', 'denominator'), ('607-52', 'both')]
     - "501-51б/501-54б" -> [('501-51б', 'numerator'), ('501-54б', 'denominator')]
     - "/601-51м" -> [('601-51м', 'denominator')]
     """
     if not s or not s.strip():
         return []
-    s = s.strip()
+    s = _normalize_list_delimiter(s.strip())
     # Только слэш в конце: "X/" → числитель
     if s.endswith('/'):
         val = s[:-1].strip()
@@ -119,21 +137,30 @@ def parse_group_string(group_str):
     for group_value, week_type in parsed:
         if not group_value:
             continue
-        base_group = group_value
-        subgroups = []
-        match = re.search(r'^(.+?)([абвгдежзиклнопрстуфхцчшщэюя]+)$', group_value, re.IGNORECASE)
-        if match:
-            potential_base = match.group(1)
-            potential_subgroups = match.group(2).lower()
-            valid_subgroups = [c for c in potential_subgroups if c in subgroup_letters]
-            if valid_subgroups and len(valid_subgroups) == len(potential_subgroups):
-                base_group = potential_base
-                subgroups = valid_subgroups
-        if subgroups:
-            for subgroup in subgroups:
-                groups.append({'group': base_group, 'week': week_type, 'subgroup': subgroup})
+        # Если внутри значения осталась запятая или точка (502-21.502-22, Unicode и т.п.) — разбиваем вручную
+        if ',' in group_value or '.' in group_value or '\uFF0C' in group_value or '，' in group_value:
+            group_value = _normalize_list_delimiter(group_value)
+            parts = [p.strip() for p in group_value.split(',') if p.strip()]
         else:
-            groups.append({'group': base_group, 'week': week_type, 'subgroup': None})
+            parts = [group_value]
+        for part in parts:
+            if not part:
+                continue
+            base_group = part
+            subgroups = []
+            match = re.search(r'^(.+?)([абвгдежзиклнопрстуфхцчшщэюя]+)$', part, re.IGNORECASE)
+            if match:
+                potential_base = match.group(1)
+                potential_subgroups = match.group(2).lower()
+                valid_subgroups = [c for c in potential_subgroups if c in subgroup_letters]
+                if valid_subgroups and len(valid_subgroups) == len(potential_subgroups):
+                    base_group = potential_base
+                    subgroups = valid_subgroups
+            if subgroups:
+                for subgroup in subgroups:
+                    groups.append({'group': base_group, 'week': week_type, 'subgroup': subgroup})
+            else:
+                groups.append({'group': base_group, 'week': week_type, 'subgroup': None})
     return groups
 
 def count_subgroups(groups_list):
@@ -200,104 +227,123 @@ def load_teacher_names(teacher_file='info/teacher_all.json'):
     
     return name_mapping
 
-def process_csv_file(input_file, teacher_name_mapping=None):
-    """Обрабатывает CSV файл и создает структурированные данные"""
+def _iter_rows_from_excel(path, min_cols=17):
+    """Читает Excel-файл и выдаёт строки как списки строк (как csv.reader). Первая строка — заголовок."""
+    if load_workbook is None:
+        raise ImportError("Для чтения Excel установите openpyxl: pip install openpyxl")
+    wb = load_workbook(path, read_only=True, data_only=True)
+    ws = wb.active
+    for row in ws.iter_rows(values_only=True):
+        cells = [str(c).strip() if c is not None else '' for c in (row or [])]
+        if len(cells) < min_cols:
+            cells.extend([''] * (min_cols - len(cells)))
+        yield cells
+    wb.close()
+
+
+def _iter_rows_from_csv(path):
+    """Читает CSV-файл и выдаёт строки. Первая строка — заголовок."""
+    with open(path, 'r', encoding='utf-8-sig') as f:
+        reader = csv.reader(f)
+        for row in reader:
+            yield row
+
+
+def _iter_data_rows(input_file):
+    """Возвращает итератор по строкам данных (без заголовка). Каждая строка — list строк. Поддерживает .xlsx, .xls, .csv."""
+    path_lower = input_file.lower()
+    if path_lower.endswith('.xlsx') or path_lower.endswith('.xls'):
+        it = _iter_rows_from_excel(input_file)
+    else:
+        it = _iter_rows_from_csv(input_file)
+    header = next(it, None)
+    return it
+
+
+def process_timetable_file(input_file, teacher_name_mapping=None):
+    """Обрабатывает файл с занятостью преподавателей (Excel .xlsx/.xls или CSV) и создает структурированные данные."""
     if teacher_name_mapping is None:
         teacher_name_mapping = {}
     
     results = []
-    external_teachers = {}  # Словарь для хранения информации о внешних преподавателях
-    missing_teachers = set()  # Множество преподавателей без полного ФИО
+    external_teachers = {}
+    missing_teachers = set()
     
-    # Сначала проходим по файлу и собираем информацию о внешних преподавателях
-    with open(input_file, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        header = next(reader)  # Пропускаем заголовок
-        
-        for row in reader:
-            if len(row) < 16:
-                continue
-                
-            teacher_fio = row[0].strip() if row[0] else ''
-            if not teacher_fio or teacher_fio == 'вакансия':
-                continue
-            
-            # Проверяем, является ли преподаватель внешним
-            is_external = 'внешний' in (row[16].lower() if len(row) > 16 and row[16] else '')
-            if is_external:
-                external_teachers[teacher_fio] = True
+    def row_iter():
+        return _iter_data_rows(input_file)
     
-    # Теперь обрабатываем файл и создаем записи
-    with open(input_file, 'r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        header = next(reader)  # Пропускаем заголовок
-        
-        for row in reader:
-            if len(row) < 16:
-                continue
-                
-            teacher_fio = row[0].strip() if row[0] else ''
-            department = row[1].strip() if row[1] else ''
-            pair_number = row[2].strip() if row[2] else ''
-            is_external = external_teachers.get(teacher_fio, False)
-            
-            if not teacher_fio or teacher_fio == 'вакансия':
-                continue
-            
-            # Обрабатываем каждый день недели
-            for day_col, day_name in DAYS_MAPPING.items():
-                if day_col >= len(row):
-                    continue
-                    
-                groups_str = row[day_col].strip() if row[day_col] else ''
-                audience_col = AUDIENCE_COLUMNS[day_col]
-                audience_str = row[audience_col].strip() if audience_col < len(row) and row[audience_col] else ''
-                
-                if not groups_str:
-                    continue
-                
-                # Парсим аудиторию так же, как группы: "А515/А436" → числитель А515, знаменатель А436
-                audiences_parsed = parse_week_split_string(audience_str)
-                audience_by_week = {}
-                first_audience = ''
-                for val, wtype in audiences_parsed:
-                    if wtype not in audience_by_week:
-                        audience_by_week[wtype] = val
-                    if not first_audience:
-                        first_audience = val
-                # Парсим группы (числитель/знаменатель/обе недели + подгруппы)
-                groups_list = parse_group_string(groups_str)
-                
-                if not groups_list:
-                    continue
-                
-                num_subgroups = count_subgroups(groups_list)
-                
-                for group_info in groups_list:
-                    normalized_short_fio = normalize_short_fio(teacher_fio)
-                    full_fio = teacher_name_mapping.get(normalized_short_fio, teacher_fio)
-                    if full_fio == teacher_fio and teacher_name_mapping:
-                        missing_teachers.add(teacher_fio)
-                    week_ru = WEEK_MAPPING.get(group_info['week'], group_info['week'])
-                    # Аудитория по типу недели: числитель/знаменатель/обе
-                    audience_value = audience_by_week.get(group_info['week']) or first_audience or ''
-                    is_remote = audience_value.lower() == 'эоидот' if audience_value else False
-                    result_entry = {
-                        'fio': full_fio,
-                        'pair_number': pair_number,
-                        'day_of_week': day_name,
-                        'group': group_info['group'],
-                        'audience': audience_value,
-                        'department': department,
-                        'week': week_ru,
-                        'subgroup': group_info['subgroup'] if group_info['subgroup'] else '',
-                        'num_subgroups': num_subgroups,
-                        'is_external': is_external,
-                        'is_remote': is_remote,
-                        'subject_name': ''
-                    }
-                    results.append(result_entry)
+    # Первый проход: собираем внешних преподавателей
+    for row in row_iter():
+        if len(row) < 17:
+            continue
+        teacher_fio = (row[0] or '').strip()
+        if not teacher_fio or teacher_fio == 'вакансия':
+            continue
+        is_external = 'внешний' in (row[16].lower() if row[16] else '')
+        if is_external:
+            external_teachers[teacher_fio] = True
     
+    # Второй проход: создаём записи
+    for row in row_iter():
+        if len(row) < 16:
+            continue
+        teacher_fio = (row[0] or '').strip()
+        department = (row[1] or '').strip()
+        pair_number = (row[2] or '').strip()
+        is_external = external_teachers.get(teacher_fio, False)
+        if not teacher_fio or teacher_fio == 'вакансия':
+            continue
+        for day_col, day_name in DAYS_MAPPING.items():
+            if day_col >= len(row):
+                continue
+            groups_str = _normalize_list_delimiter((row[day_col] or '').strip())
+            audience_col = AUDIENCE_COLUMNS[day_col]
+            audience_str = (row[audience_col] or '').strip() if audience_col < len(row) else ''
+            if not groups_str:
+                continue
+            audiences_parsed = parse_week_split_string(audience_str)
+            # Список аудиторий по типу недели: каждая "501-33,501-34,501-35" → отдельная запись
+            audience_list_by_week = {}
+            first_audience = ''
+            for val, wtype in audiences_parsed:
+                if wtype not in audience_list_by_week:
+                    audience_list_by_week[wtype] = []
+                audience_list_by_week[wtype].append(val)
+                if not first_audience:
+                    first_audience = val
+            groups_list = parse_group_string(groups_str)
+            if not groups_list:
+                continue
+            num_subgroups = count_subgroups(groups_list)
+            # Индекс в рамках одной недели для сопоставления группа ↔ аудитория
+            index_by_week = {}
+            for group_info in groups_list:
+                w = group_info['week']
+                idx = index_by_week.get(w, 0)
+                index_by_week[w] = idx + 1
+                aud_list = audience_list_by_week.get(w) or audience_list_by_week.get('both') or []
+                audience_value = (aud_list[idx] if idx < len(aud_list) else (aud_list[-1] if aud_list else first_audience or ''))
+                normalized_short_fio = normalize_short_fio(teacher_fio)
+                full_fio = teacher_name_mapping.get(normalized_short_fio, teacher_fio)
+                if full_fio == teacher_fio and teacher_name_mapping:
+                    missing_teachers.add(teacher_fio)
+                week_ru = WEEK_MAPPING.get(group_info['week'], group_info['week'])
+                is_remote = audience_value.lower() == 'эоидот' if audience_value else False
+                result_entry = {
+                    'fio': full_fio,
+                    'pair_number': pair_number,
+                    'day_of_week': day_name,
+                    'group': group_info['group'],
+                    'audience': audience_value,
+                    'department': department,
+                    'week': week_ru,
+                    'subgroup': group_info['subgroup'] or '',
+                    'num_subgroups': num_subgroups,
+                    'is_external': is_external,
+                    'is_remote': is_remote,
+                    'subject_name': ''
+                }
+                results.append(result_entry)
     return results, missing_teachers
 
 def save_to_csv(data, output_file):
@@ -397,31 +443,32 @@ def save_missing_teachers(missing_teachers, output_file='missing_teachers.csv'):
     print(f"Сохранено {len(missing_teachers)} преподавателей без полного ФИО в {output_file}")
 
 def main():
-    # Ищем CSV файл с расписанием
-    import glob
-    import os
-    
     # Создаем папки, если их нет
     os.makedirs('input', exist_ok=True)
     os.makedirs('output', exist_ok=True)
     
-    # Ищем файлы, начинающиеся с "Zanyatost prepodavateley" в папке input
-    csv_files = glob.glob("input/Zanyatost prepodavateley*.csv")
-    
-    if not csv_files:
-        print("Не найден CSV файл с расписанием. Ожидается файл вида 'input/Zanyatost prepodavateley*.csv'")
-        return
-    
-    input_file = csv_files[0]
-    print(f"Обрабатываем файл: {input_file}")
+    # Ищем файл занятости: сначала Excel, затем CSV
+    xlsx_files = glob.glob("input/Zanyatost prepodavateley*.xlsx")
+    if not xlsx_files:
+        xlsx_files = glob.glob("input/Zanyatost prepodavateley*.xls")
+    if xlsx_files:
+        input_file = xlsx_files[0]
+        print(f"Обрабатываем файл (Excel): {input_file}")
+    else:
+        csv_files = glob.glob("input/Zanyatost prepodavateley*.csv")
+        if not csv_files:
+            print("Не найден файл с расписанием. Ожидается 'input/Zanyatost prepodavateley*.xlsx' или 'input/Zanyatost prepodavateley*.csv'")
+            return
+        input_file = csv_files[0]
+        print(f"Обрабатываем файл (CSV): {input_file}")
     
     # Загружаем маппинг ФИО преподавателей
     teacher_name_mapping = load_teacher_names()
     if teacher_name_mapping:
         print(f"Загружено {len(teacher_name_mapping)} полных ФИО преподавателей")
     
-    # Обрабатываем файл
-    results, missing_teachers = process_csv_file(input_file, teacher_name_mapping)
+    # Обрабатываем файл (Excel или CSV)
+    results, missing_teachers = process_timetable_file(input_file, teacher_name_mapping)
     
     print(f"Обработано записей: {len(results)}")
     

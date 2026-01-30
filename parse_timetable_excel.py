@@ -26,6 +26,15 @@ def is_audience(text):
             return True
     return False
 
+def split_group_string(group_str):
+    """Разбивает строку групп по запятой, точке, точке с запятой: '502-21.502-22' или '501-33,501-34' -> отдельные группы."""
+    if not group_str or not str(group_str).strip():
+        return ['']
+    s = str(group_str).replace('.', ',').replace(';', ',').replace('\uFF0C', ',').strip()
+    parts = [p.strip() for p in s.split(',') if p.strip()]
+    return parts if parts else [s]
+
+
 def parse_pair_number(pair_str):
     """Парсит номер пары, может быть диапазон типа '1-2'"""
     if not pair_str:
@@ -45,6 +54,20 @@ def parse_pair_number(pair_str):
         return [int(pair_str)]
     except:
         return []
+
+def extract_subgroups_from_text(text):
+    """Извлекает номера подгрупп из текста дисциплины (п/г 1, подгруппа 2 и т.д.). Возвращает отсортированный список int или []."""
+    if not text:
+        return []
+    text = str(text)
+    subgroups = []
+    for pattern in (r'п/г\s*(\d+)', r'подгруппа\s*(\d+)'):
+        for m in re.findall(pattern, text, re.IGNORECASE):
+            n = int(m)
+            if n not in subgroups:
+                subgroups.append(n)
+    return sorted(subgroups)
+
 
 def parse_week_type(text):
     """Определяет тип недели по наличию '/' или '//' (разделитель недель).
@@ -457,9 +480,8 @@ def extract_schedule_metadata(ws, start_col, end_col):
                     value_lower = value.lower()
                     
                     # Проверяем соседние ячейки для контекста
-                    # Ищем группу (обычно рядом с текстом "группа" или формат "606-51")
-                    if re.match(r'^\d{3}-\d{2}', value):
-                        # Проверяем, есть ли рядом слово "группа"
+                    # Ищем группу (формат 606-51, 502-21.502-22, 501-33,501-34 — точка/запятая = несколько групп)
+                    if re.match(r'^\d{3}-\d{2}', value) or re.search(r'\d{3}-\d{2}[.,;]\d{3}-\d{2}', value):
                         if col_idx < len(row):
                             next_cell = row[col_idx]
                             if next_cell.value and 'группа' in str(next_cell.value).lower():
@@ -906,30 +928,37 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             if not week_types:
                 week_types = ['обе недели']
             
-            # Создаем записи для каждой пары (если пара 1-2, то две записи)
+            # Одна запись на каждую группу: "501-33,501-34", "502-21.502-22" -> отдельные записи
+            group_values = split_group_string(metadata.get('group') or '')
+            # Подгруппы из текста дисциплины (п/г 1, подгруппа 2) — одна запись на подгруппу или одна без подгруппы
+            subgroups_list = extract_subgroups_from_text(raw_discipline)
+            num_subgroups = len(subgroups_list) if subgroups_list else 0
+            if not subgroups_list:
+                subgroups_list = [None]  # одна запись без номера подгруппы
+            
             for pair_num in pair_numbers:
-                # Если есть разделение по неделям, создаем отдельные записи
                 for week_type in week_types:
-                    result_entry = {
-                        # ОБЯЗАТЕЛЬНЫЕ поля (100%)
-                        'day_of_week': day_of_week,
-                        'pair_number': pair_num,
-                        'subject_name': raw_discipline,  # Сырой текст, как есть
-                        
-                        # Опциональные поля
-                        'teacher': teacher_fio,
-                        'audience': audience,
-                        'lecture_type': lecture_type,
-                        'week_type': week_type,
-                        'is_remote': is_remote,
-                        'is_external': False,
-                        'department': '',
-                        'group': metadata['group'],
-                        'institute': metadata['institute'],
-                        'course': metadata['course'],
-                        'direction': metadata['direction']
-                    }
-                    results.append(result_entry)
+                    for group_val in group_values:
+                        for subgroup_num in subgroups_list:
+                            result_entry = {
+                                'day_of_week': day_of_week,
+                                'pair_number': pair_num,
+                                'subject_name': raw_discipline,
+                                'teacher': teacher_fio,
+                                'audience': audience,
+                                'lecture_type': lecture_type,
+                                'week_type': week_type,
+                                'is_remote': is_remote,
+                                'is_external': False,
+                                'department': '',
+                                'group': group_val,
+                                'institute': metadata['institute'],
+                                'course': metadata['course'],
+                                'direction': metadata['direction'],
+                                'subgroup': subgroup_num,
+                                'num_subgroups': num_subgroups
+                            }
+                            results.append(result_entry)
     
     return results
 

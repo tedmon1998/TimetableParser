@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './App.css';
 import ScriptRunner from './components/ScriptRunner';
 import DatabaseView from './components/DatabaseView';
+import TeachersView from './components/TeachersView';
+import DisciplinesView from './components/DisciplinesView';
 import logoImage from '../assets/SurSU.png';
 
 // Создаем QueryClient с настройками для оптимизации
@@ -20,14 +22,14 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-  // Восстанавливаем активную вкладку из URL при загрузке
-  const getInitialTab = (): 'scripts' | 'database' => {
+  type TabType = 'scripts' | 'database' | 'teachers' | 'disciplines';
+  const getInitialTab = (): TabType => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
-    return (tab === 'scripts' || tab === 'database') ? tab : 'scripts';
+    return (tab === 'scripts' || tab === 'database' || tab === 'teachers' || tab === 'disciplines') ? tab : 'scripts';
   };
 
-  const [activeTab, setActiveTab] = useState<'scripts' | 'database'>(getInitialTab);
+  const [activeTab, setActiveTab] = useState<TabType>(getInitialTab);
 
   // Устанавливаем параметр tab в URL при первой загрузке, если его нет
   useEffect(() => {
@@ -39,7 +41,7 @@ function App() {
   }, []);
 
   // Обновляем URL при изменении вкладки
-  const handleTabChange = (tab: 'scripts' | 'database') => {
+  const handleTabChange = (tab: TabType) => {
     setActiveTab(tab);
     const params = new URLSearchParams(window.location.search);
     params.set('tab', tab);
@@ -78,11 +80,25 @@ function App() {
             >
               База данных
             </button>
+            <button
+              className={activeTab === 'teachers' ? 'active' : ''}
+              onClick={() => handleTabChange('teachers')}
+            >
+              Преподаватели
+            </button>
+            <button
+              className={activeTab === 'disciplines' ? 'active' : ''}
+              onClick={() => handleTabChange('disciplines')}
+            >
+              Дисциплины
+            </button>
           </nav>
         </header>
         <main className="App-main">
           {activeTab === 'scripts' && <ScriptRunner />}
           {activeTab === 'database' && <DatabaseView />}
+          {activeTab === 'teachers' && <TeachersView />}
+          {activeTab === 'disciplines' && <DisciplinesView />}
         </main>
       </div>
     </QueryClientProvider>

@@ -43,6 +43,6 @@ for i in range(0, 1000):
         mass.append(objectData)
 import os
 os.makedirs('info', exist_ok=True)
-with open("info/teacher_all.json", "w") as json_file:
-    json.dump(mass, json_file)
+with open("info/teacher_all.json", "w", encoding="utf-8") as json_file:
+    json.dump(mass, json_file, ensure_ascii=False, indent=2)
 

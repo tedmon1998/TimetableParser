@@ -619,6 +619,15 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
     
     return results
 
+def _split_group_value(group_str):
+    """Разбивает '501-33,501-34,501-35' или '502-21.502-22', '403-41.407-41' на отдельные группы. Возвращает список строк."""
+    if not group_str or not str(group_str).strip():
+        return ['']
+    s = str(group_str).replace('.', ',').replace(';', ',').replace('\uFF0C', ',').strip()
+    parts = [p.strip() for p in s.split(',') if p.strip()]
+    return parts if parts else [s]
+
+
 def process_csv_file(input_file, output_file, valid_audiences):
     """Обрабатывает CSV файл и создает очищенную версию"""
     results = []
@@ -628,42 +637,39 @@ def process_csv_file(input_file, output_file, valid_audiences):
         fieldnames = reader.fieldnames
         
         for row in reader:
+            group_raw = row.get('group_name', '') or row.get('group', '') or ''
+            group_parts = _split_group_value(group_raw)
             subject_name = row.get('subject_name', '')
             teacher_fio = row.get('fio', '') or row.get('teacher', '')
-            
-            # Проверяем, есть ли уже week_type в исходной строке
             existing_week_type = row.get('week_type', '') or row.get('week', '')
-            
-            # Обрабатываем текст дисциплины - получаем список записей
-            # Передаем existing_week_type, чтобы обработать только соответствующую часть
             processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type)
             
-            # Создаем отдельную запись для каждой дисциплины/аудитории
-            for processed in processed_list:
-                new_row = row.copy()
-                new_row['audience'] = processed['audience']
-                new_row['subject_name'] = processed['subject_name']
-                new_row['lecture_type'] = processed['lecture_type']
-                # Добавляем преподавателя и тип недели, если они есть
-                if 'teacher' in processed:
-                    new_row['fio'] = processed['teacher']
-                    if 'teacher' in new_row:
-                        new_row['teacher'] = processed['teacher']
-                if 'week_type' in processed:
-                    new_row['week_type'] = processed['week_type']
-                elif 'week' in new_row and not new_row.get('week_type'):
-                    # Если week_type не был создан, используем значение из исходного поля week
-                    new_row['week_type'] = new_row.get('week', '')
-                if 'subgroup' in processed:
-                    new_row['subgroup'] = processed['subgroup']
-                # Убеждаемся, что group_name есть, даже если оно называется group
-                if 'group' in new_row and not new_row.get('group_name'):
-                    new_row['group_name'] = new_row.get('group', '')
-                # Удаляем старые поля, если они есть
-                new_row.pop('audience_numerator', None)
-                new_row.pop('audience_denominator', None)
+            # Для каждой группы — отдельные записи (501-33,501-34,501-35 -> три записи)
+            for group_val in group_parts:
+                row_with_group = row.copy()
+                row_with_group['group'] = group_val
+                row_with_group['group_name'] = group_val
                 
-                results.append(new_row)
+                for processed in processed_list:
+                    new_row = row_with_group.copy()
+                    new_row['audience'] = processed['audience']
+                    new_row['subject_name'] = processed['subject_name']
+                    new_row['lecture_type'] = processed['lecture_type']
+                    if 'teacher' in processed:
+                        new_row['fio'] = processed['teacher']
+                        if 'teacher' in new_row:
+                            new_row['teacher'] = processed['teacher']
+                    if 'week_type' in processed:
+                        new_row['week_type'] = processed['week_type']
+                    elif 'week' in new_row and not new_row.get('week_type'):
+                        new_row['week_type'] = new_row.get('week', '')
+                    if 'subgroup' in processed:
+                        new_row['subgroup'] = processed['subgroup']
+                    if 'group' in new_row and not new_row.get('group_name'):
+                        new_row['group_name'] = new_row.get('group', '')
+                    new_row.pop('audience_numerator', None)
+                    new_row.pop('audience_denominator', None)
+                    results.append(new_row)
     
     # Определяем новые заголовки
     new_fieldnames = []
