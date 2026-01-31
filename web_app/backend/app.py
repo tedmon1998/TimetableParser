@@ -594,17 +594,25 @@ def get_db_records():
             where_conditions.append("audience ILIKE %s")
             query_params.append(f"%{filters['audience']}%")
         
-        # Фильтр по ФИО преподавателя
+        # Фильтр по ФИО преподавателя (timetable_teacher имеет только fio, timetable_cleaned — fio и teacher)
         if filters['fio']:
-            where_conditions.append("(fio ILIKE %s OR teacher ILIKE %s)")
-            query_params.append(f"%{filters['fio']}%")
-            query_params.append(f"%{filters['fio']}%")
+            if table == 'timetable_teacher':
+                where_conditions.append("fio ILIKE %s")
+                query_params.append(f"%{filters['fio']}%")
+            else:
+                where_conditions.append("(fio ILIKE %s OR teacher ILIKE %s)")
+                query_params.append(f"%{filters['fio']}%")
+                query_params.append(f"%{filters['fio']}%")
         
-        # Фильтр по преподавателю (альтернативное поле)
+        # Фильтр по преподавателю (альтернативное поле; для timetable_teacher ищем по fio)
         if filters['teacher']:
-            where_conditions.append("(teacher ILIKE %s OR fio ILIKE %s)")
-            query_params.append(f"%{filters['teacher']}%")
-            query_params.append(f"%{filters['teacher']}%")
+            if table == 'timetable_teacher':
+                where_conditions.append("fio ILIKE %s")
+                query_params.append(f"%{filters['teacher']}%")
+            else:
+                where_conditions.append("(teacher ILIKE %s OR fio ILIKE %s)")
+                query_params.append(f"%{filters['teacher']}%")
+                query_params.append(f"%{filters['teacher']}%")
         
         # Фильтр по группе
         if filters['group_name']:

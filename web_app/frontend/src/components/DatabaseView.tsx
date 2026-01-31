@@ -667,13 +667,14 @@ const DatabaseView: React.FC = () => {
     return Object.values(filters).some(value => value.trim() !== '');
   };
 
-  // Маппинг названий колонок на поля фильтров
+  // Маппинг названий колонок на поля фильтров (должны совпадать с COLUMN_LABELS)
   const columnToFilterMap: Record<string, keyof Filters | null> = {
     'ID': null, // ID не фильтруется
     'День': 'day_of_week',
     'Пара': 'pair_number',
     'Предмет': 'subject_name',
     'Тип': 'lecture_type',
+    'Ауд.': 'audience',
     'Аудитория': 'audience',
     'Преподаватель': 'fio',
     'Группа': 'group_name',

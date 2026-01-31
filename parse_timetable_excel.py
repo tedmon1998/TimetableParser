@@ -942,12 +942,16 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             
             # Одна запись на каждую группу: "501-33,501-34", "502-21.502-22" -> отдельные записи
             group_values = split_group_string(metadata.get('group') or '')
-            # Подгруппы из текста дисциплины (п/г 1, подгруппа 2) — одна запись на подгруппу или одна без подгруппы
+            # Подгруппы из текста дисциплины (п/г 1, подгруппа 2)
             subgroups_list = extract_subgroups_from_text(raw_discipline)
             num_subgroups = len(subgroups_list) if subgroups_list else 0
             if not subgroups_list:
                 subgroups_list = [None]  # одна запись без номера подгруппы
-            
+            # Если в одной ячейке несколько подгрупп (п/г 1 и п/г 2) — один общий текст и одни аудитории:
+            # не создаём по записи на каждую подгруппу (дубли), а одну запись с subgroup=None и num_subgroups=N
+            elif len(subgroups_list) > 1:
+                subgroups_list = [None]
+
             for pair_num in pair_numbers:
                 for week_type in week_types:
                     for group_val in group_values:
