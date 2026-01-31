@@ -552,6 +552,8 @@ def get_db_records():
             'week_type': request.args.get('week_type', '').strip(),
             'institute': request.args.get('institute', '').strip(),
             'course': request.args.get('course', '').strip(),
+            'direction': request.args.get('direction', '').strip(),
+            'profile': request.args.get('profile', '').strip(),
         }
         
         conn = psycopg2.connect(**DB_CONFIG)
@@ -634,6 +636,16 @@ def get_db_records():
             where_conditions.append("course ILIKE %s")
             query_params.append(f"%{filters['course']}%")
         
+        # Фильтр по направлению (только для timetable_cleaned)
+        if table == 'timetable_cleaned' and filters['direction']:
+            where_conditions.append("direction ILIKE %s")
+            query_params.append(f"%{filters['direction']}%")
+        
+        # Фильтр по профилю (только для timetable_cleaned)
+        if table == 'timetable_cleaned' and filters['profile']:
+            where_conditions.append("profile ILIKE %s")
+            query_params.append(f"%{filters['profile']}%")
+        
         # Формируем SQL запрос
         where_clause = ""
         if where_conditions:
@@ -645,7 +657,8 @@ def get_db_records():
         
         # Валидация параметров сортировки
         allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 
-                              'audience', 'fio', 'teacher', 'group_name', 'subgroup', 'course', 'week_type']
+                              'audience', 'fio', 'teacher', 'group_name', 'subgroup', 'course', 
+                              'institute', 'direction', 'profile', 'week_type']
         if sort_by not in allowed_sort_fields:
             sort_by = 'id'
         
@@ -1211,4 +1224,4 @@ def delete_discipline(index):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000, host='0.0.0.0')
+    app.run(debug=True, port=5001, host='0.0.0.0')

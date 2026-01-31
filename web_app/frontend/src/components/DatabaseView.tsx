@@ -47,10 +47,12 @@ interface Filters {
   week_type: string;
   institute: string;
   course: string;
+  direction: string;
+  profile: string;
 }
 
 // Порядок и метки колонок таблицы (ключ поля → подпись). Подгруппа и Курс по умолчанию скрыты.
-const COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience', 'fio', 'group_name', 'subgroup', 'course', 'week_type'] as const;
+const COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience', 'fio', 'group_name', 'subgroup', 'course', 'institute', 'direction', 'profile', 'week_type'] as const;
 type ColumnKey = typeof COLUMN_KEYS[number];
 const COLUMN_LABELS: Record<ColumnKey, string> = {
   id: 'ID',
@@ -63,6 +65,9 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   group_name: 'Группа',
   subgroup: 'Подгруппа',
   course: 'Курс',
+  institute: 'Институт',
+  direction: 'Направление',
+  profile: 'Профиль',
   week_type: 'Неделя'
 };
 const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
@@ -76,6 +81,9 @@ const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
   group_name: 'Фильтр по группе (606-22, 606-21...)',
   subgroup: 'Фильтр по подгруппе (1, 2...)',
   course: 'Фильтр по курсу (1, 2, 3...)',
+  institute: 'Фильтр по институту',
+  direction: 'Фильтр по направлению',
+  profile: 'Фильтр по профилю',
   week_type: 'Фильтр по типу недели (числитель, знаменатель...)'
 };
 
@@ -97,11 +105,13 @@ const DatabaseView: React.FC = () => {
     subgroup: '',
     week_type: '',
     institute: '',
-    course: ''
+    course: '',
+    direction: '',
+    profile: ''
   });
   const [showStats, setShowStats] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
-  
+
   // Состояние для сортировки
   const [sortColumn, setSortColumn] = useState<string | null>(null);
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
@@ -112,7 +122,7 @@ const DatabaseView: React.FC = () => {
   // Сохраняем состояние фокуса для восстановления после перерендера
   const focusedFieldRef = useRef<string | null>(null);
   const cursorPositionRef = useRef<{ [key: string]: number }>({});
-  
+
   // Состояние для раскрытых ячеек
   const [expandedCell, setExpandedCell] = useState<{
     id: string;
@@ -125,10 +135,10 @@ const DatabaseView: React.FC = () => {
   const [editedValues, setEditedValues] = useState<Partial<DatabaseRecord>>({});
   const [originalValues, setOriginalValues] = useState<Partial<DatabaseRecord>>({});
   const [copiedCellId, setCopiedCellId] = useState<string | null>(null);
-  
+
   // Состояние для toast уведомлений
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
-  
+
   // Состояние для контекстного меню
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -137,8 +147,8 @@ const DatabaseView: React.FC = () => {
     position: 'before' | 'after';
   } | null>(null);
 
-  // Ширины колонок (id, день, пара, предмет, тип, аудитория, преподаватель, группа, подгруппа, курс, неделя)
-  const DEFAULT_COLUMN_WIDTHS = [100, 120, 80, 200, 120, 120, 200, 120, 90, 80, 120];
+  // Ширины колонок (id, день, пара, предмет, тип, аудитория, преподаватель, группа, подгруппа, курс, институт, направление, профиль, неделя)
+  const DEFAULT_COLUMN_WIDTHS = [100, 120, 80, 200, 120, 120, 200, 120, 90, 80, 150, 180, 150, 120];
   const COLUMN_WIDTHS_KEY = 'timetable_db_column_widths';
   const [columnWidths, setColumnWidths] = useState<number[]>(() => {
     try {
@@ -147,7 +157,7 @@ const DatabaseView: React.FC = () => {
         const parsed = JSON.parse(saved) as number[];
         if (Array.isArray(parsed) && parsed.length === COLUMN_KEYS.length) return parsed;
       }
-    } catch (_) {}
+    } catch (_) { }
     return [...DEFAULT_COLUMN_WIDTHS];
   });
   const [resizingCol, setResizingCol] = useState<number | null>(null);
@@ -166,7 +176,7 @@ const DatabaseView: React.FC = () => {
         COLUMN_KEYS.forEach(k => { out[k] = parsed[k] !== false; });
         return out;
       }
-    } catch (_) {}
+    } catch (_) { }
     return COLUMN_KEYS.reduce<Record<string, boolean>>((acc, k) => ({
       ...acc,
       [k]: HIDDEN_BY_DEFAULT_KEYS.includes(k) ? false : true
@@ -187,7 +197,7 @@ const DatabaseView: React.FC = () => {
       const next = { ...prev, [key]: !prev[key] };
       try {
         localStorage.setItem(VISIBLE_COLUMNS_KEY, JSON.stringify(next));
-      } catch (_) {}
+      } catch (_) { }
       return next;
     });
   }, []);
@@ -207,7 +217,7 @@ const DatabaseView: React.FC = () => {
     setColumnWidths([...DEFAULT_COLUMN_WIDTHS]);
     try {
       localStorage.removeItem(COLUMN_WIDTHS_KEY);
-    } catch (_) {}
+    } catch (_) { }
   }, []);
 
   // Используем useDebounce для оптимизации запросов (800мс задержка)
@@ -238,7 +248,9 @@ const DatabaseView: React.FC = () => {
       subgroup: params.get('subgroup') || '',
       week_type: params.get('week_type') || '',
       institute: params.get('institute') || '',
-      course: params.get('course') || ''
+      course: params.get('course') || '',
+      direction: params.get('direction') || '',
+      profile: params.get('profile') || ''
     };
     setFilters(restoredFilters);
 
@@ -250,7 +262,7 @@ const DatabaseView: React.FC = () => {
 
     // Восстанавливаем состояние показа статистики
     setShowStats(params.get('showStats') === 'true');
-    
+
     // Восстанавливаем сортировку
     const sortBy = params.get('sort_by');
     const sortOrder = params.get('sort_order');
@@ -258,7 +270,7 @@ const DatabaseView: React.FC = () => {
       setSortColumn(sortBy);
       setSortDirection((sortOrder === 'desc' ? 'desc' : 'asc') as 'asc' | 'desc');
     }
-    
+
     setIsInitialized(true);
   }, []);
 
@@ -335,7 +347,9 @@ const DatabaseView: React.FC = () => {
         subgroup: params.get('subgroup') || '',
         week_type: params.get('week_type') || '',
         institute: params.get('institute') || '',
-        course: params.get('course') || ''
+        course: params.get('course') || '',
+        direction: params.get('direction') || '',
+        profile: params.get('profile') || ''
       };
       setFilters(restoredFilters);
 
@@ -365,6 +379,9 @@ const DatabaseView: React.FC = () => {
     'Группа': 'group_name',
     'Подгруппа': 'subgroup',
     'Курс': 'course',
+    'Институт': 'institute',
+    'Направление': 'direction',
+    'Профиль': 'profile',
     'Неделя': 'week_type'
   }), []);
 
@@ -383,12 +400,12 @@ const DatabaseView: React.FC = () => {
     }
     return params;
   }, [currentPage, debouncedFilters, sortColumn, sortDirection, activeTable, columnToSortField]);
-  
+
   // Обработчик клика на заголовок для сортировки
   const handleSort = useCallback((column: string) => {
     const sortField = columnToSortField[column];
     if (!sortField) return;
-    
+
     if (sortColumn === column) {
       // Если кликнули на ту же колонку - меняем направление
       const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
@@ -557,7 +574,9 @@ const DatabaseView: React.FC = () => {
       subgroup: '',
       week_type: '',
       institute: '',
-      course: ''
+      course: '',
+      direction: '',
+      profile: ''
     };
     setFilters(emptyFilters);
     setCurrentPage(1);
@@ -587,6 +606,9 @@ const DatabaseView: React.FC = () => {
     'Группа': 'group_name',
     'Подгруппа': 'subgroup',
     'Курс': 'course',
+    'Институт': 'institute',
+    'Направление': 'direction',
+    'Профиль': 'profile',
     'Неделя': 'week_type'
   };
 
@@ -596,7 +618,7 @@ const DatabaseView: React.FC = () => {
     const filterKey = columnToFilterMap[columnName];
     return filterKey ? filters[filterKey] : '';
   };
-  
+
   // Функция для вычисления ширины раскрытия ячейки
   const calculateCellWidth = useCallback((cellElement: HTMLElement, contentElement: HTMLElement): { width: number; direction: 'left' | 'right' } => {
     // Создаем временный элемент для измерения реальной ширины текста
@@ -616,43 +638,43 @@ const DatabaseView: React.FC = () => {
     `;
     tempElement.textContent = contentElement.textContent || '';
     document.body.appendChild(tempElement);
-    
+
     const scrollWidth = tempElement.scrollWidth;
     const padding = 1.5 * 16; // 0.75rem * 2 = 1.5rem в пикселях
     const contentWidth = scrollWidth + padding;
-    
+
     // Максимальная ширина (80vw или 800px, что меньше)
     const maxWidth = Math.min(window.innerWidth * 0.8, 800);
     const finalWidth = Math.min(contentWidth, maxWidth);
-    
+
     // Определяем направление раскрытия
     const cellRect = cellElement.getBoundingClientRect();
     const spaceRight = window.innerWidth - cellRect.right;
-    
+
     // Если места справа достаточно - раскрываем вправо, иначе влево
     const direction = spaceRight >= finalWidth ? 'right' : 'left';
-    
+
     document.body.removeChild(tempElement);
-    
+
     return { width: finalWidth, direction };
   }, []);
-  
+
   // Обработчик наведения на ячейку
   const handleCellMouseEnter = useCallback((e: React.MouseEvent<HTMLDivElement>, cellId: string) => {
     const cellElement = e.currentTarget;
     const contentElement = cellElement.querySelector('.cell-content') as HTMLElement;
-    
+
     if (!contentElement) return;
-    
+
     // Проверяем, нужна ли раскрытие (если текст обрезан)
     const isOverflowing = contentElement.scrollWidth > contentElement.clientWidth;
-    
+
     if (isOverflowing) {
       const { width, direction } = calculateCellWidth(cellElement, contentElement);
       setExpandedCell({ id: cellId, width, direction });
     }
   }, [calculateCellWidth]);
-  
+
   // Обработчик ухода мыши с ячейки
   const handleCellMouseLeave = useCallback(() => {
     setExpandedCell(null);
@@ -729,7 +751,7 @@ const DatabaseView: React.FC = () => {
   const handleFieldChange = (field: string, value: string | number | null) => {
     if (editingRecordId) {
       let processedValue: string | number | null = value === '' ? null : value;
-      
+
       // Обрабатываем числовые поля
       if (field === 'pair_number' || field === 'subgroup' || field === 'num_subgroups') {
         if (processedValue === null || processedValue === '') {
@@ -739,7 +761,7 @@ const DatabaseView: React.FC = () => {
           processedValue = isNaN(numValue) ? null : numValue;
         }
       }
-      
+
       setEditedValues(prev => ({
         ...prev,
         [field]: processedValue
@@ -756,22 +778,22 @@ const DatabaseView: React.FC = () => {
           dataToSend[key] = editedValues[key as keyof DatabaseRecord];
         }
       });
-      
+
       if (Object.keys(dataToSend).length === 0) {
         // Нет изменений
         cancelEditing();
         return;
       }
-      
+
       await axios.put(`${API_BASE}/db/records/${recordId}`, dataToSend, { params: { table: activeTable } });
-      
+
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
-      
+
       setEditingRecordId(null);
       setEditedValues({});
       setOriginalValues({});
-      
+
       // Показываем toast уведомление об успехе
       setToast({ message: 'Запись успешно сохранена', type: 'success' });
     } catch (err: any) {
@@ -780,7 +802,7 @@ const DatabaseView: React.FC = () => {
       setToast({ message: errorMessage, type: 'error' });
     }
   };
-  
+
   // Функция для создания копии записи
   const duplicateRecord = async (recordId: number, position: 'before' | 'after') => {
     try {
@@ -791,7 +813,7 @@ const DatabaseView: React.FC = () => {
         setContextMenu(null);
         return;
       }
-      
+
       // Создаем копию без ID, добавляем параметры позиционирования
       const { id, ...recordData } = record;
       const dataToSend = {
@@ -799,12 +821,12 @@ const DatabaseView: React.FC = () => {
         _reference_id: recordId,
         _position: position
       };
-      
+
       await axios.post(`${API_BASE}/db/records`, dataToSend, { params: { table: activeTable } });
-      
+
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
-      
+
       setToast({ message: 'Копия записи успешно создана', type: 'success' });
       setContextMenu(null);
     } catch (err: any) {
@@ -813,7 +835,7 @@ const DatabaseView: React.FC = () => {
       setContextMenu(null);
     }
   };
-  
+
   // Функция для создания пустой записи
   const createEmptyRecord = async (recordId: number, position: 'before' | 'after') => {
     try {
@@ -839,12 +861,12 @@ const DatabaseView: React.FC = () => {
         _reference_id: recordId,
         _position: position
       };
-      
+
       await axios.post(`${API_BASE}/db/records`, emptyRecord, { params: { table: activeTable } });
-      
+
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
-      
+
       setToast({ message: 'Пустая запись успешно создана', type: 'success' });
       setContextMenu(null);
     } catch (err: any) {
@@ -853,20 +875,20 @@ const DatabaseView: React.FC = () => {
       setContextMenu(null);
     }
   };
-  
+
   // Функция для удаления записи
   const deleteRecord = async (recordId: number) => {
     if (!window.confirm('Вы уверены, что хотите удалить эту запись?')) {
       setContextMenu(null);
       return;
     }
-    
+
     try {
       await axios.delete(`${API_BASE}/db/records/${recordId}`, { params: { table: activeTable } });
-      
+
       queryClient.invalidateQueries({ queryKey: ['db-records'] });
       queryClient.invalidateQueries({ queryKey: ['db-stats'] });
-      
+
       setToast({ message: 'Запись успешно удалена', type: 'success' });
       setContextMenu(null);
     } catch (err: any) {
@@ -875,19 +897,19 @@ const DatabaseView: React.FC = () => {
       setContextMenu(null);
     }
   };
-  
+
   // Обработчик правого клика на строке
   const handleRowContextMenu = (e: React.MouseEvent, record: DatabaseRecord) => {
     e.preventDefault();
     e.stopPropagation();
-    
+
     // Определяем позицию (до или после)
     const rowElement = e.currentTarget as HTMLElement;
     const rowRect = rowElement.getBoundingClientRect();
     const clickY = e.clientY;
     const rowCenterY = rowRect.top + rowRect.height / 2;
     const position = clickY < rowCenterY ? 'before' : 'after';
-    
+
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
@@ -895,7 +917,7 @@ const DatabaseView: React.FC = () => {
       position
     });
   };
-  
+
   // Закрытие контекстного меню при клике вне его
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
@@ -954,7 +976,7 @@ const DatabaseView: React.FC = () => {
     if (resizingCol === null) {
       try {
         localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
-      } catch (_) {}
+      } catch (_) { }
     }
   }, [columnWidths, resizingCol]);
 
@@ -1302,33 +1324,33 @@ const DatabaseView: React.FC = () => {
           </>
         )}
 
-            {records.length === 0 && !loading && (
-              <div className="message info">
-                {hasActiveFilters()
-                  ? 'Записи не найдены. Попробуйте изменить фильтры.'
-                  : 'База данных пуста. Запустите скрипты для заполнения данных.'}
-              </div>
-            )}
+        {records.length === 0 && !loading && (
+          <div className="message info">
+            {hasActiveFilters()
+              ? 'Записи не найдены. Попробуйте изменить фильтры.'
+              : 'База данных пуста. Запустите скрипты для заполнения данных.'}
+          </div>
+        )}
 
-            {totalPages > 0 && (
-              <div className="pagination">
-                <button
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1 || loading}
-                >
-                  Назад
-                </button>
-                <span>
-                  Страница {currentPage} из {totalPages}
-                </span>
-                <button
-                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                  disabled={currentPage === totalPages || loading}
-                >
-                  Вперед
-                </button>
-              </div>
-            )}
+        {totalPages > 0 && (
+          <div className="pagination">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1 || loading}
+            >
+              Назад
+            </button>
+            <span>
+              Страница {currentPage} из {totalPages}
+            </span>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages || loading}
+            >
+              Вперед
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Toast уведомления */}

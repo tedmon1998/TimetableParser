@@ -460,100 +460,114 @@ def parse_day_of_week(day_value):
     
     return None
 
-def extract_schedule_metadata(ws, start_col, end_col):
-    """Извлекает метаданные расписания (группа, институт, курс) из блока"""
+def _value_cell_right_by_two(row, label_col_1based):
+    """Возвращает значение ячейки справа через одну (если метка в A6, значение в C6). row — 0-based, label_col_1based — 1-based."""
+    value_col_0based = (label_col_1based - 1) + 2
+    if 0 <= value_col_0based < len(row) and row[value_col_0based].value:
+        return str(row[value_col_0based].value).strip()
+    return ''
+
+
+def _value_next_to_label(ws, row, row_idx, label_col_1based):
+    """Возвращает значение рядом с меткой: пробуем col+1 и col+2, с учётом merged ячеек. row_idx 1-based."""
+    for offset in (1, 2):
+        value_col_1based = label_col_1based + offset
+        try:
+            cell = ws.cell(row=row_idx, column=value_col_1based)
+        except Exception:
+            continue
+        v = get_merged_cell_value(ws, cell)
+        if v and str(v).strip():
+            return str(v).strip()
+    return ''
+
+
+def extract_schedule_metadata(ws, start_col, end_col, header_row=None):
+    """Извлекает метаданные расписания (группа, институт, курс, направление, профиль) из блока.
+    Институт/направление/профиль: метка может быть в разных строках выше заголовка; значение — в col+1 или col+2, с учётом merged ячеек.
+    Если передан header_row, ищем метки во всех строках 1..header_row-1; иначе — в строках 6-9."""
     group = ''
     institute = ''
     course = ''
     direction = ''
-    
-    # Ищем в строках 6-9 (где обычно находятся эти данные)
-    for row_idx in range(6, min(10, ws.max_row + 1)):
+    profile = ''
+    scan_end = max(end_col, 25)
+    # Диапазон строк для меток «Институт», «Направление», «Профиль»
+    if header_row is not None and header_row > 1:
+        meta_row_start, meta_row_end = 1, header_row
+    else:
+        meta_row_start, meta_row_end = 6, min(10, ws.max_row + 1)
+
+    for row_idx in range(meta_row_start, meta_row_end):
         row = ws[row_idx]
-        
-        # Ищем метки и значения в этом блоке
-        for col_idx in range(start_col, min(end_col, len(row) + 1)):
-            if col_idx <= len(row):
-                cell = row[col_idx - 1]
-                if cell.value:
-                    value = str(cell.value).strip()
-                    value_lower = value.lower()
-                    
-                    # Проверяем соседние ячейки для контекста
-                    # Ищем группу (формат 606-51, 502-21.502-22, 501-33,501-34 — точка/запятая = несколько групп)
-                    if re.match(r'^\d{3}-\d{2}', value) or re.search(r'\d{3}-\d{2}[.,;]\d{3}-\d{2}', value):
-                        if col_idx < len(row):
-                            next_cell = row[col_idx]
-                            if next_cell.value and 'группа' in str(next_cell.value).lower():
-                                group = value
-                        else:
-                            group = value
-                    
-                    # Ищем институт (обычно в строке 7, колонка 3)
-                    if row_idx == 7:
-                        # Проверяем, есть ли в этой строке метка "институт"
-                        for check_col in range(start_col, min(end_col, len(row) + 1)):
-                            if check_col <= len(row):
-                                check_cell = row[check_col - 1]
-                                if check_cell.value and 'институт' in str(check_cell.value).lower():
-                                    # Институт обычно в следующей колонке
-                                    if check_col < len(row):
-                                        inst_cell = row[check_col]
-                                        if inst_cell.value:
-                                            institute = str(inst_cell.value).strip()
-                                    break
-                        # Если не нашли по метке, ищем по ключевым словам в колонке 3
-                        if not institute and col_idx == start_col + 2:
-                            if any(inst in value_lower for inst in ['политехнический', 'медицинский', 'гуманитарный', 'экономический']):
-                                institute = value
-                    
-                    # Ищем курс (обычно в строке 7, колонка 5)
-                    if row_idx == 7:
-                        # Проверяем, есть ли в этой строке метка "курс"
-                        for check_col in range(start_col, min(end_col, len(row) + 1)):
-                            if check_col <= len(row):
-                                check_cell = row[check_col - 1]
-                                if check_cell.value:
-                                    check_value = str(check_cell.value).lower()
-                                    if 'курс' in check_value:
-                                        # Курс обычно в следующей колонке
-                                        if check_col < len(row):
-                                            course_cell = row[check_col]
-                                            if course_cell.value:
-                                                course_val = str(course_cell.value).strip()
-                                                if course_val.isdigit() and 1 <= int(course_val) <= 6:
-                                                    course = course_val
-                                        break
-                        # Если не нашли по метке, ищем число 1-6 в колонке 5
-                        if not course and col_idx == start_col + 4:
-                            if value.isdigit() and 1 <= int(value) <= 6:
-                                course = value
-                    
-                    # Ищем направление/специальность (обычно в строке 8, колонка 3)
-                    if row_idx == 8:
-                        # Проверяем колонку 3 (start_col + 2)
-                        if col_idx == start_col + 2:
-                            # Направление обычно начинается с цифр типа "09.03.01"
-                            if re.match(r'^\d{2}\.\d{2}\.\d{2}', value):
-                                direction = value
-                        # Или ищем рядом с меткой "направление"
-                        for check_col in range(start_col, min(end_col, len(row) + 1)):
-                            if check_col <= len(row):
-                                check_cell = row[check_col - 1]
-                                if check_cell.value:
-                                    check_value = str(check_cell.value).lower()
-                                    if 'направление' in check_value:
-                                        if check_col < len(row):
-                                            dir_cell = row[check_col]
-                                            if dir_cell.value:
-                                                direction = str(dir_cell.value).strip()
-                                        break
+        if not row:
+            continue
+        row = list(row) if hasattr(row, '__iter__') and not isinstance(row, dict) else row
+        row_len = len(row)
+
+        # Метки «Институт», «Направление», «Профиль» — по всему листу, значение col+1 или col+2 с merged
+        for col_idx in range(1, min(scan_end, row_len + 3)):
+            if col_idx > row_len:
+                continue
+            cell = row[col_idx - 1]
+            if not cell:
+                continue
+            raw = get_merged_cell_value(ws, cell) or getattr(cell, 'value', None)
+            if not raw:
+                continue
+            value = str(raw).strip()
+            value_lower = value.lower()
+            if 'институт' in value_lower or value_lower.strip() in ('инст.', 'инст'):
+                v = _value_next_to_label(ws, row, row_idx, col_idx)
+                if v:
+                    institute = v
+            if 'направление' in value_lower:
+                v = _value_next_to_label(ws, row, row_idx, col_idx)
+                if v:
+                    direction = v
+            if 'профиль' in value_lower:
+                v = _value_next_to_label(ws, row, row_idx, col_idx)
+                if v:
+                    profile = v
+
+        # Группа и курс — в пределах блока (start_col..end_col)
+        for col_idx in range(start_col, min(end_col, row_len + 1)):
+            if col_idx > row_len:
+                continue
+            cell = row[col_idx - 1]
+            if not cell or not getattr(cell, 'value', None):
+                continue
+            value = str(cell.value).strip()
+            value_lower = value.lower()
+            if re.match(r'^\d{3}-\d{2}', value) or re.search(r'\d{3}-\d{2}[.,;]\d{3}-\d{2}', value):
+                next_cell = row[col_idx] if col_idx < row_len else None
+                if next_cell and getattr(next_cell, 'value', None) and 'группа' in str(next_cell.value).lower():
+                    group = value
+                elif not next_cell or not getattr(next_cell, 'value', None):
+                    group = value
+            if row_idx == 7:
+                for check_col in range(start_col, min(end_col, row_len + 1)):
+                    if check_col >= row_len:
+                        continue
+                    check_cell = row[check_col - 1]
+                    if not check_cell or not getattr(check_cell, 'value', None):
+                        continue
+                    if 'курс' in str(check_cell.value).lower():
+                        next_idx = check_col
+                        if next_idx < row_len and row[next_idx].value:
+                            v = str(row[next_idx].value).strip()
+                            if v.isdigit() and 1 <= int(v) <= 6:
+                                course = v
+                        break
+                if not course and col_idx == start_col + 4 and value.isdigit() and 1 <= int(value) <= 6:
+                    course = value
     
     return {
         'group': group,
         'institute': institute,
         'course': course,
-        'direction': direction
+        'direction': direction,
+        'profile': profile
     }
 
 def find_schedule_tables(ws, header_row):
@@ -799,11 +813,9 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
         
         # Извлекаем метаданные для этого диапазона (если есть диапазон направления)
         if 'direction_start_col' in table and 'direction_end_col' in table:
-            # Извлекаем метаданные из диапазона направления
-            metadata = extract_schedule_metadata(ws, table['direction_start_col'], table['direction_end_col'])
+            metadata = extract_schedule_metadata(ws, table['direction_start_col'], table['direction_end_col'], header_row)
         else:
-            # Извлекаем метаданные из диапазона таблицы
-            metadata = extract_schedule_metadata(ws, start_col, end_col)
+            metadata = extract_schedule_metadata(ws, start_col, end_col, header_row)
         
         # Если курс не найден, используем курс из имени листа
         if not metadata['course'] and course_from_sheet:
@@ -952,9 +964,10 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                                 'is_external': False,
                                 'department': '',
                                 'group': group_val,
-                                'institute': metadata['institute'],
-                                'course': metadata['course'],
-                                'direction': metadata['direction'],
+                                'institute': metadata.get('institute', ''),
+                                'course': metadata.get('course', ''),
+                                'direction': metadata.get('direction', ''),
+                                'profile': metadata.get('profile', ''),
                                 'subgroup': subgroup_num,
                                 'num_subgroups': num_subgroups
                             }
@@ -1001,7 +1014,7 @@ def save_results_to_csv(results, output_file):
         'week_type', 'group', 'group_name',
         'subgroup', 'num_subgroups', 'is_external', 
         'is_remote', 'department', 'institute', 
-        'course', 'direction'
+        'course', 'direction', 'profile'
     ]
     
     # Формируем финальный список полей
@@ -1050,10 +1063,11 @@ def save_results_to_excel(results, output_file):
     ws = wb.active
     ws.title = "Расписание"
     
-    # Заголовки (колонку week убрали, только week_type)
+    # Заголовки (включая институт, курс, направление, профиль)
     headers = [
         'fio', 'pair_number', 'day_of_week', 'group', 'audience', 'department',
-        'week_type', 'subgroup', 'num_subgroups', 'is_external', 'is_remote', 'subject_name'
+        'week_type', 'subgroup', 'num_subgroups', 'is_external', 'is_remote',
+        'institute', 'course', 'direction', 'profile', 'subject_name'
     ]
     
     # Записываем заголовки
@@ -1076,9 +1090,13 @@ def save_results_to_excel(results, output_file):
             'department': result.get('department', ''),
             'week_type': wt,
             'subgroup': result.get('subgroup', ''),
-            'num_subgroups': result.get('num_subgroups', ''),  # Может быть пустым
-            'is_external': result.get('is_external', False),  # Может быть пустым
+            'num_subgroups': result.get('num_subgroups', ''),
+            'is_external': result.get('is_external', False),
             'is_remote': result.get('is_remote', False),
+            'institute': result.get('institute', ''),
+            'course': result.get('course', ''),
+            'direction': result.get('direction', ''),
+            'profile': result.get('profile', ''),
             'subject_name': result.get('subject_name', '')
         }
         
