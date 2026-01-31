@@ -60,10 +60,10 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   pair_number: 'Пара',
   subject_name: 'Предмет',
   lecture_type: 'Тип',
-  audience: 'Аудитория',
+  audience: 'Ауд.',
   fio: 'Преподаватель',
   group_name: 'Группа',
-  subgroup: 'Подгруппа',
+  subgroup: 'п/г',
   course: 'Курс',
   institute: 'Институт',
   direction: 'Направление',
@@ -166,7 +166,7 @@ const DatabaseView: React.FC = () => {
 
   // Видимость колонок (сохраняем в localStorage). Подгруппа и Курс по умолчанию скрыты.
   const VISIBLE_COLUMNS_KEY = 'timetable_db_visible_columns';
-  const HIDDEN_BY_DEFAULT_KEYS = ['subgroup', 'course'];
+  const HIDDEN_BY_DEFAULT_KEYS = ['subgroup', 'course', 'profile', 'direction', 'institute'];
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
     try {
       const saved = localStorage.getItem(VISIBLE_COLUMNS_KEY);
@@ -192,6 +192,7 @@ const DatabaseView: React.FC = () => {
     () => COLUMN_KEYS.filter(k => visibleColumns[k] !== false && !columnsHiddenByTable.includes(k)),
     [visibleColumns, columnsHiddenByTable]
   );
+
   const toggleColumnVisibility = useCallback((key: string) => {
     setVisibleColumns(prev => {
       const next = { ...prev, [key]: !prev[key] };
@@ -219,6 +220,25 @@ const DatabaseView: React.FC = () => {
       localStorage.removeItem(COLUMN_WIDTHS_KEY);
     } catch (_) { }
   }, []);
+
+  // При добавлении/удалении колонки (переключение видимости) — сброс ширин по умолчанию
+  const prevVisibleKeysRef = useRef(visibleColumnKeys.join(','));
+  const isFirstVisibleKeysRef = useRef(true);
+  useEffect(() => {
+    const key = visibleColumnKeys.join(',');
+    if (isFirstVisibleKeysRef.current) {
+      isFirstVisibleKeysRef.current = false;
+      prevVisibleKeysRef.current = key;
+      return;
+    }
+    if (prevVisibleKeysRef.current !== key) {
+      prevVisibleKeysRef.current = key;
+      setColumnWidths([...DEFAULT_COLUMN_WIDTHS]);
+      try {
+        localStorage.removeItem(COLUMN_WIDTHS_KEY);
+      } catch (_) { }
+    }
+  }, [visibleColumnKeys]);
 
   // Используем useDebounce для оптимизации запросов (800мс задержка)
   const debouncedFilters = useDebounce<Filters>(filters, 800);
@@ -451,6 +471,59 @@ const DatabaseView: React.FC = () => {
   const totalPages = recordsData?.pages || 1;
   const totalRecords = recordsData?.total || 0;
   const loading = recordsLoading || statsLoading;
+
+  // Веса колонок: приоритет у колонок с малым текстом (полностью видны); длинный текст — уже, частично
+  const contentWeights = useMemo((): Record<string, number> => {
+    const pxPerChar = 8;
+    const shortThreshold = 8; // макс. длина ≤ этого — «короткие», им даём полное место
+    const maxCharsLong = 16; // длинный текст — мало символов (пару слов), колонка уже
+    const longWeightFactor = 0.6; // длинные колонки получают меньший вес относительно коротких
+
+    const rawWeights: number[] = [];
+    COLUMN_KEYS.forEach((key, idx) => {
+      const labelLen = (COLUMN_LABELS[key] || '').length;
+      if (records.length > 0) {
+        const lengths = records.map(r => {
+          const val = key === 'fio' ? (r.fio ?? r.teacher ?? '') : (r as any)[key];
+          return String(val ?? '').length;
+        });
+        const maxLen = lengths.length ? Math.max(0, ...lengths) : 0;
+        let w: number;
+        if (maxLen <= shortThreshold) {
+          const targetLen = Math.max(labelLen, maxLen, 2);
+          w = Math.max(24, targetLen * pxPerChar);
+        } else {
+          const targetLen = Math.max(labelLen, Math.min(maxLen, maxCharsLong));
+          w = Math.max(24, targetLen * pxPerChar * longWeightFactor);
+        }
+        rawWeights.push(w);
+      } else {
+        const w = Math.max(24, DEFAULT_COLUMN_WIDTHS[idx] ?? labelLen * pxPerChar);
+        rawWeights.push(w);
+      }
+    });
+
+    const sorted = [...rawWeights].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)] ?? 100;
+    const cap = Math.max(median * 2, 160);
+
+    const out: Record<string, number> = {};
+    COLUMN_KEYS.forEach((key, idx) => {
+      out[key] = Math.min(rawWeights[idx], cap);
+    });
+    return out;
+  }, [records]);
+
+  // Шаблон колонок грида: ручной ресайз — в px, остальные — по весам (fr), заполняют 100%
+  const gridTemplateColumns = useMemo(() => {
+    return visibleColumnKeys.map(k => {
+      const colIndex = COLUMN_KEYS.indexOf(k);
+      const userWidth = columnWidths[colIndex];
+      const defaultWidth = DEFAULT_COLUMN_WIDTHS[colIndex];
+      const isUserResized = userWidth !== defaultWidth;
+      return isUserResized ? `${Math.max(60, Math.min(600, userWidth))}px` : `minmax(60px, ${contentWeights[k]}fr)`;
+    }).join(' ');
+  }, [visibleColumnKeys, contentWeights, columnWidths]);
 
   // Восстанавливаем фокус после обновления данных
   useLayoutEffect(() => {
@@ -944,7 +1017,10 @@ const DatabaseView: React.FC = () => {
     e.preventDefault();
     setResizingCol(colIndex);
     resizeStartX.current = e.clientX;
-    resizeStartWidth.current = columnWidths[colIndex];
+    // Берём фактическую ширину колонки из DOM, чтобы после сброса (fr) не было скачка
+    const cell = (e.target as HTMLElement).closest('.grid-table-cell');
+    const actualWidth = cell ? cell.getBoundingClientRect().width : columnWidths[colIndex];
+    resizeStartWidth.current = actualWidth;
   }, [columnWidths]);
 
   useEffect(() => {
@@ -1141,17 +1217,15 @@ const DatabaseView: React.FC = () => {
           <>
             <div className="table-container" ref={tableContainerRef}>
               <div className="grid-table">
-                <div className="grid-table-header">
+                <div className="grid-table-header" style={{ display: 'grid', width: '100%', gridTemplateColumns }}>
                   {visibleColumnKeys.map((key) => {
                     const colIndex = COLUMN_KEYS.indexOf(key);
                     const label = COLUMN_LABELS[key];
-                    const w = columnWidths[colIndex];
                     const filterable = key !== 'id';
                     return (
                       <div
                         key={key}
                         className="grid-table-cell header-cell-resizable"
-                        style={{ width: w, minWidth: w, maxWidth: w }}
                       >
                         <div
                           className={key === 'id' ? 'header-label' : 'header-label header-sortable'}
@@ -1212,12 +1286,10 @@ const DatabaseView: React.FC = () => {
                 <div className="grid-table-body">
                   {loading ? (
                     [...Array(10)].map((_, index) => (
-                      <div key={index} className="grid-table-row skeleton-row">
-                        {visibleColumnKeys.map((k) => {
-                          const colIndex = COLUMN_KEYS.indexOf(k);
-                          const w = columnWidths[colIndex];
-                          return <div key={k} className="grid-table-cell" style={{ width: w, minWidth: w, maxWidth: w }}><div className="skeleton-cell"></div></div>;
-                        })}
+                      <div key={index} className="grid-table-row skeleton-row" style={{ display: 'grid', width: '100%', gridTemplateColumns }}>
+                        {visibleColumnKeys.map((k) => (
+                          <div key={k} className="grid-table-cell"><div className="skeleton-cell"></div></div>
+                        ))}
                       </div>
                     ))
                   ) : (
@@ -1231,10 +1303,9 @@ const DatabaseView: React.FC = () => {
                         const isExpanded = expandedCell?.id === uniqueCellId;
                         const expandDirection = expandedCell?.direction || 'right';
                         const expandWidth = expandedCell?.width || 0;
-                        const width = columnWidths[cellIndex];
                         if (isEditing && field === 'id') {
                           return (
-                            <div key={cellIndex} className="grid-table-cell id-cell-with-actions" style={{ width, minWidth: width, maxWidth: width }}>
+                            <div key={cellIndex} className="grid-table-cell id-cell-with-actions">
                               <div className="id-actions">
                                 <button className="save-button" onClick={() => saveRecord(record.id)} title="Сохранить">✓</button>
                                 <button className="cancel-button" onClick={cancelEditing} title="Отменить">✕</button>
@@ -1246,7 +1317,7 @@ const DatabaseView: React.FC = () => {
                         if (isEditing && field !== 'id') {
                           if (field === 'day_of_week') {
                             return (
-                              <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                              <div key={cellIndex} className="grid-table-cell editable-cell">
                                 <select className="cell-select" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value || null)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()}>
                                   <option value="">-</option>
                                   {['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'].map(d => <option key={d} value={d}>{d}</option>)}
@@ -1256,7 +1327,7 @@ const DatabaseView: React.FC = () => {
                           }
                           if (field === 'pair_number') {
                             return (
-                              <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                              <div key={cellIndex} className="grid-table-cell editable-cell">
                                 <select className="cell-select" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value === '' ? null : Number(e.target.value))} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()}>
                                   <option value="">-</option>
                                   {[1, 2, 3, 4, 5, 6, 7, 8].map(num => <option key={num} value={num}>{num}</option>)}
@@ -1266,7 +1337,7 @@ const DatabaseView: React.FC = () => {
                           }
                           if (field === 'lecture_type') {
                             return (
-                              <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                              <div key={cellIndex} className="grid-table-cell editable-cell">
                                 <select className="cell-select" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value || null)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()}>
                                   <option value="">-</option>
                                   {['лекция', 'практика', 'лабораторная', 'семинар'].map(t => <option key={t} value={t}>{t}</option>)}
@@ -1276,7 +1347,7 @@ const DatabaseView: React.FC = () => {
                           }
                           if (field === 'week_type') {
                             return (
-                              <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                              <div key={cellIndex} className="grid-table-cell editable-cell">
                                 <select className="cell-select" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(field, e.target.value || null)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()}>
                                   <option value="">-</option>
                                   {['числитель', 'знаменатель', 'обе недели'].map(t => <option key={t} value={t}>{t}</option>)}
@@ -1285,7 +1356,7 @@ const DatabaseView: React.FC = () => {
                             );
                           }
                           return (
-                            <div key={cellIndex} className="grid-table-cell editable-cell" style={{ width, minWidth: width, maxWidth: width }}>
+                            <div key={cellIndex} className="grid-table-cell editable-cell">
                               <input type="text" className="cell-input" value={getValue(currentRecord[field])} onChange={(e) => handleFieldChange(String(field), e.target.value)} onClick={(e) => e.stopPropagation()} onFocus={(e) => e.stopPropagation()} />
                             </div>
                           );
@@ -1294,7 +1365,6 @@ const DatabaseView: React.FC = () => {
                           <div
                             key={cellIndex}
                             className={`grid-table-cell expandable-cell ${copiedCellId === uniqueCellId ? 'cell-copied' : ''}`}
-                            style={{ width, minWidth: width, maxWidth: width }}
                             onMouseEnter={(e) => handleCellMouseEnter(e, uniqueCellId)}
                             onMouseLeave={handleCellMouseLeave}
                             onDoubleClick={() => !isEditing && startEditing(record)}
@@ -1308,7 +1378,7 @@ const DatabaseView: React.FC = () => {
                         );
                       };
                       return (
-                        <div key={record.id} className={`grid-table-row ${isEditing ? 'editing-row' : ''}`} onContextMenu={(e) => !isEditing && handleRowContextMenu(e, record)}>
+                        <div key={record.id} className={`grid-table-row ${isEditing ? 'editing-row' : ''}`} style={{ display: 'grid', width: '100%', gridTemplateColumns }} onContextMenu={(e) => !isEditing && handleRowContextMenu(e, record)}>
                           {visibleColumnKeys.map((key) => {
                             const colIndex = COLUMN_KEYS.indexOf(key);
                             const displayValue = key === 'fio' ? getValue(currentRecord.fio || currentRecord.teacher) : getValue((currentRecord as any)[key]);

@@ -665,10 +665,20 @@ def get_db_records():
         if sort_order not in ['ASC', 'DESC']:
             sort_order = 'DESC'
         
+        # Для дня недели — сортировка по порядку (понедельник=1, ..., воскресенье=7), а не по алфавиту
+        day_order_sql = """CASE LOWER(TRIM(COALESCE(day_of_week, '')))
+            WHEN 'понедельник' THEN 1 WHEN 'вторник' THEN 2 WHEN 'среда' THEN 3
+            WHEN 'четверг' THEN 4 WHEN 'пятница' THEN 5 WHEN 'суббота' THEN 6
+            WHEN 'воскресенье' THEN 7 ELSE 8 END"""
+        order_clause = f"{day_order_sql} {sort_order}" if sort_by == 'day_of_week' else f"{sort_by} {sort_order}"
+        
         if table == 'timetable_teacher':
             sort_by_allowed = ['id', 'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio', 'group_name', 'subgroup', 'course', 'week_type']
             if sort_by not in sort_by_allowed:
                 sort_by = 'id'
+                order_clause = f"{sort_by} {sort_order}"
+            elif sort_by == 'day_of_week':
+                order_clause = f"{day_order_sql} {sort_order}"
             query = f"""
                 SELECT id, day_of_week, pair_number, subject_name, audience, fio,
                     fio AS teacher, group_name, week_type, subgroup,
@@ -676,10 +686,12 @@ def get_db_records():
                     department, is_external, is_remote, num_subgroups
                 FROM timetable_teacher
                 {where_clause}
-                ORDER BY {sort_by} {sort_order}
+                ORDER BY {order_clause}
                 LIMIT %s OFFSET %s
             """
         else:
+            if sort_by == 'day_of_week':
+                order_clause = f"{day_order_sql} {sort_order}"
             query = f"""
                 SELECT id, day_of_week, pair_number, subject_name, lecture_type, audience,
                     fio, teacher, group_name, week_type, subgroup,
@@ -687,7 +699,7 @@ def get_db_records():
                     is_external, is_remote, num_subgroups
                 FROM timetable_cleaned
                 {where_clause}
-                ORDER BY {sort_by} {sort_order}
+                ORDER BY {order_clause}
                 LIMIT %s OFFSET %s
             """
         query_params.extend([limit, offset])
