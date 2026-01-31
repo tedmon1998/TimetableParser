@@ -56,6 +56,39 @@ def extract_audiences_from_text(text, valid_audiences):
     
     return found_audiences
 
+
+def normalize_audience_week_separator(audience):
+    """Нормализация аудитории: 'К504//, К429' -> 'К504//К429', без запятых вокруг '//'."""
+    if not audience or not isinstance(audience, str):
+        return audience or ''
+    return re.sub(r',?\s*//\s*,?', '//', audience.strip()).strip(',').strip()
+
+
+def normalize_type_slash_for_weeks(text):
+    """Если одна группа ходит по числителю один тип, по знаменателю другой (запись через "/"),
+    приводим к формату "//": "Название (лек)/(пр), К511" -> "Название (лек), К511 // Название (пр), К511".
+    Вызывать до обработки "//". Если в тексте уже есть "//", текст не меняем."""
+    if not text or '//' in text:
+        return text
+    text = str(text).strip()
+    type_pattern = r'(лек|пр|л|п|практика|лекция)'
+    m = re.search(
+        r'^(.+?)\s*\(' + type_pattern + r'\)\s*/\s*\(' + type_pattern + r'\)\s*(.*)$',
+        text,
+        re.IGNORECASE
+    )
+    if not m:
+        return text
+    prefix, type1, type2, suffix = m.group(1).strip(), m.group(2), m.group(3), m.group(4).strip()
+    suffix_clean = suffix.lstrip(',').strip()  # ", К511" -> "К511"
+    part1 = f"{prefix} ({type1})"
+    part2 = f"{prefix} ({type2})"
+    if suffix_clean:
+        part1 += ", " + suffix_clean
+        part2 += ", " + suffix_clean
+    return part1 + " // " + part2
+
+
 def parse_week_division(text):
     """Определяет разделение по числителю/знаменателю (// или /)"""
     if not text:
@@ -356,7 +389,10 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
         return []
     
     text = str(text)
+    # Одна группа: числитель — один тип, знаменатель — другой: "(лек)/(пр), К511" -> "...(лек), К511 // ...(пр), К511"
+    text = normalize_type_slash_for_weeks(text)
     results = []
+    lecture_type = extract_lecture_type(text)  # для ветки «нет //» и fallback «if not results»
     
     # СНАЧАЛА проверяем разделение по неделям (//) - это приоритетнее всего
     # Если есть разделение по //, обрабатываем его сразу
@@ -450,32 +486,31 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
     # Разделяем преподавателей, если они есть
     numerator_teacher, denominator_teacher = split_teachers(teacher_text) if teacher_text else (None, None)
     
-    # Определяем тип занятия для всего текста
-    lecture_type = extract_lecture_type(text)
-    if not lecture_type and ('п/г' in text.lower() or 'подгруппа' in text.lower()):
-        lecture_type = 'практика'
-    
     # Проверяем, есть ли разделение по неделям (//) во всем тексте
     if '//' in text:
         # Есть разделение по числителю/знаменателю
         # Разбиваем на части по "//"
         parts = text.split('//')
         
-        # Числитель - все части до последнего "//"
-        numerator_parts = parts[:-1] if len(parts) > 1 else []
-        numerator_text = ' '.join(numerator_parts).strip()
-        
-        # Знаменатель - последняя часть после "//"
-        denominator_text = parts[-1].strip() if len(parts) > 1 else ''
+        # Числитель - первая часть (до "//")
+        numerator_text = parts[0].strip() if parts else ''
+        # Знаменатель - вторая часть (после "//"); при нескольких "//" — всё после первого "//"
+        denominator_text = (' // '.join(parts[1:]).strip() if len(parts) > 1 else '').strip()
         
         # Если в исходной строке уже указан week_type, обрабатываем только соответствующую часть
-        if existing_week_type:
-            if existing_week_type == 'числитель':
-                # Обрабатываем только числитель
+        if existing_week_type and existing_week_type.strip() and existing_week_type not in ('обе недели', 'обе'):
+            if existing_week_type.strip() == 'числитель':
                 denominator_text = ''
-            elif existing_week_type == 'знаменатель':
-                # Обрабатываем только знаменатель
+            elif existing_week_type.strip() == 'знаменатель':
                 numerator_text = ''
+        
+        # Тип занятия определяем отдельно для числителя и знаменателя (лекция/практика из своей части)
+        numerator_lecture_type = extract_lecture_type(numerator_text) if numerator_text else ''
+        denominator_lecture_type = extract_lecture_type(denominator_text) if denominator_text else ''
+        if not numerator_lecture_type and ('п/г' in (numerator_text or '').lower() or 'подгруппа' in (numerator_text or '').lower()):
+            numerator_lecture_type = 'практика'
+        if not denominator_lecture_type and ('п/г' in (denominator_text or '').lower() or 'подгруппа' in (denominator_text or '').lower()):
+            denominator_lecture_type = 'практика'
         
         # Извлекаем подгруппы из числителя и знаменателя
         numerator_subgroups = extract_subgroups_from_text(numerator_text) if numerator_text else []
@@ -485,7 +520,6 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
         numerator_audiences_unique = []
         if numerator_text:
             numerator_audiences = extract_audiences_from_text(numerator_text, valid_audiences)
-            # Убираем дубликаты, сохраняя порядок
             for aud in numerator_audiences:
                 if aud not in numerator_audiences_unique:
                     numerator_audiences_unique.append(aud)
@@ -494,43 +528,48 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
         denominator_audiences_unique = []
         if denominator_text:
             denominator_audiences = extract_audiences_from_text(denominator_text, valid_audiences)
-            # Убираем дубликаты, сохраняя порядок
             for aud in denominator_audiences:
                 if aud not in denominator_audiences_unique:
                     denominator_audiences_unique.append(aud)
         
         # Создаем отдельные строки для числителя
         if numerator_text:
-            # Если есть подгруппы в числителе, создаем запись для каждой
             if numerator_subgroups:
                 for subgroup_num in numerator_subgroups:
-                    # Извлекаем аудиторию для этой подгруппы
                     aud_for_subgroup = extract_audience_for_subgroup(numerator_text, subgroup_num, valid_audiences)
                     if not aud_for_subgroup and numerator_audiences_unique:
                         aud_for_subgroup = numerator_audiences_unique[0]
-                    
-                    # Очищаем название от лишних символов, но сохраняем структуру
                     clean_name = clean_subject_name_final(numerator_text, valid_audiences)
-                    
                     result_entry = {
                         'audience': aud_for_subgroup or '',
                         'subject_name': clean_name,
-                        'lecture_type': lecture_type or '',
+                        'lecture_type': numerator_lecture_type or 'практика',
                         'week_type': 'числитель',
                         'subgroup': subgroup_num
                     }
-                    # Добавляем преподавателя для числителя
                     if numerator_teacher:
                         result_entry['teacher'] = numerator_teacher
                     results.append(result_entry)
             else:
-                # Нет подгрупп в числителе - создаем одну запись
-                for aud in numerator_audiences_unique:
+                # Одна запись для числителя (без подгрупп)
+                if numerator_audiences_unique:
+                    for aud in numerator_audiences_unique:
+                        clean_name = clean_subject_name_final(numerator_text, valid_audiences)
+                        result_entry = {
+                            'audience': aud,
+                            'subject_name': clean_name,
+                            'lecture_type': numerator_lecture_type or 'практика',
+                            'week_type': 'числитель'
+                        }
+                        if numerator_teacher:
+                            result_entry['teacher'] = numerator_teacher
+                        results.append(result_entry)
+                else:
                     clean_name = clean_subject_name_final(numerator_text, valid_audiences)
                     result_entry = {
-                        'audience': aud,
+                        'audience': '',
                         'subject_name': clean_name,
-                        'lecture_type': lecture_type or '',
+                        'lecture_type': numerator_lecture_type or 'практика',
                         'week_type': 'числитель'
                     }
                     if numerator_teacher:
@@ -539,36 +578,42 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
         
         # Создаем отдельные строки для знаменателя
         if denominator_text:
-            # Если есть подгруппы в знаменателе, создаем запись для каждой
             if denominator_subgroups:
                 for subgroup_num in denominator_subgroups:
-                    # Извлекаем аудиторию для этой подгруппы
                     aud_for_subgroup = extract_audience_for_subgroup(denominator_text, subgroup_num, valid_audiences)
                     if not aud_for_subgroup and denominator_audiences_unique:
                         aud_for_subgroup = denominator_audiences_unique[0]
-                    
-                    # Очищаем название от лишних символов, но сохраняем структуру
                     clean_name = clean_subject_name_final(denominator_text, valid_audiences)
-                    
                     result_entry = {
                         'audience': aud_for_subgroup or '',
                         'subject_name': clean_name,
-                        'lecture_type': lecture_type or '',
+                        'lecture_type': denominator_lecture_type or 'практика',
                         'week_type': 'знаменатель',
                         'subgroup': subgroup_num
                     }
-                    # Добавляем преподавателя для знаменателя
                     if denominator_teacher:
                         result_entry['teacher'] = denominator_teacher
                     results.append(result_entry)
             else:
-                # Нет подгрупп в знаменателе - создаем одну запись
-                for aud in denominator_audiences_unique:
+                # Одна запись для знаменателя (без подгрупп)
+                if denominator_audiences_unique:
+                    for aud in denominator_audiences_unique:
+                        clean_name = clean_subject_name_final(denominator_text, valid_audiences)
+                        result_entry = {
+                            'audience': aud,
+                            'subject_name': clean_name,
+                            'lecture_type': denominator_lecture_type or 'практика',
+                            'week_type': 'знаменатель'
+                        }
+                        if denominator_teacher:
+                            result_entry['teacher'] = denominator_teacher
+                        results.append(result_entry)
+                else:
                     clean_name = clean_subject_name_final(denominator_text, valid_audiences)
                     result_entry = {
-                        'audience': aud,
+                        'audience': '',
                         'subject_name': clean_name,
-                        'lecture_type': lecture_type or '',
+                        'lecture_type': denominator_lecture_type or 'практика',
                         'week_type': 'знаменатель'
                     }
                     if denominator_teacher:
@@ -577,6 +622,9 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
     else:
         # Нет разделения по неделям - это одна дисциплина (уже проверили множественные выше)
         # Обрабатываем как одну дисциплину (обе недели)
+        lecture_type = extract_lecture_type(text)
+        if not lecture_type and ('п/г' in text.lower() or 'подгруппа' in text.lower()):
+            lecture_type = 'практика'
         disc_text = text
         audiences = extract_audiences_from_text(disc_text, valid_audiences)
         # Убираем дубликаты, сохраняя порядок
@@ -652,7 +700,7 @@ def process_csv_file(input_file, output_file, valid_audiences):
                 
                 for processed in processed_list:
                     new_row = row_with_group.copy()
-                    new_row['audience'] = processed['audience']
+                    new_row['audience'] = normalize_audience_week_separator(processed['audience'])
                     new_row['subject_name'] = processed['subject_name']
                     new_row['lecture_type'] = processed['lecture_type']
                     if 'teacher' in processed:
@@ -828,7 +876,7 @@ def process_excel_file(input_file, output_file, valid_audiences):
         # Создаем отдельную запись для каждой дисциплины/аудитории
         for processed in processed_list:
             new_row = row_data.copy()
-            new_row['audience'] = processed['audience']
+            new_row['audience'] = normalize_audience_week_separator(processed['audience'])
             new_row['subject_name'] = processed['subject_name']
             new_row['lecture_type'] = processed['lecture_type']
             # Добавляем преподавателя и тип недели, если они есть
@@ -1093,35 +1141,86 @@ def save_to_database(csv_file):
         return False
 
 def main():
+    import argparse
     import glob
-    
+
+    parser = argparse.ArgumentParser(description='Очистка аудиторий в расписании')
+    parser.add_argument('--no-db', action='store_true', help='Только обработка файлов, без загрузки в БД')
+    parser.add_argument('--db-only', action='store_true', help='Только загрузить timetable_processed_cleaned.csv в БД (без обработки)')
+    args = parser.parse_args()
+
+    csv_output = 'output/timetable/timetable_processed_cleaned.csv'
+    excel_output = 'output/timetable/timetable_processed_cleaned.xlsx'
+
+    # Режим: только загрузка в БД
+    if args.db_only:
+        if os.path.exists(csv_output):
+            print("Загрузка данных в базу данных...")
+            try:
+                if save_to_database(csv_output):
+                    print("Данные успешно сохранены в базу данных")
+                else:
+                    print("Не удалось сохранить данные в базу данных")
+            except Exception as e:
+                print(f"Ошибка при сохранении в базу данных: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            # Пробуем Excel -> временный CSV
+            if os.path.exists(excel_output):
+                print("Создаем временный CSV для сохранения в БД...")
+                try:
+                    wb = load_workbook(excel_output, data_only=True)
+                    ws = wb.active
+                    headers = []
+                    for col in range(1, ws.max_column + 1):
+                        cell = ws.cell(1, col)
+                        if cell.value:
+                            headers.append(str(cell.value))
+                    temp_csv = csv_output.replace('.csv', '_temp_for_db.csv')
+                    with open(temp_csv, 'w', encoding='utf-8-sig', newline='') as f:
+                        writer = csv.DictWriter(f, fieldnames=headers)
+                        writer.writeheader()
+                        for row_idx in range(2, ws.max_row + 1):
+                            row_data = {}
+                            for col_idx, header in enumerate(headers, 1):
+                                cell = ws.cell(row_idx, col_idx)
+                                row_data[header] = cell.value if cell.value else ''
+                            writer.writerow(row_data)
+                    if save_to_database(temp_csv):
+                        print("Данные успешно сохранены в базу данных")
+                        os.remove(temp_csv)
+                    else:
+                        print("Не удалось сохранить данные в базу данных")
+                except Exception as e:
+                    print(f"Ошибка: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"Не найден файл {csv_output} или {excel_output}. Сначала выполните обработку (clean_audiences).")
+        return
+
     # Загружаем валидные аудитории
     valid_audiences = load_audiences()
     print(f"Загружено {len(valid_audiences)} валидных аудиторий")
-    
+
     # Ищем исходные файлы (без _cleaned)
     csv_input = None
     excel_input = None
-    
-    # Ищем CSV файл
+
     csv_files = glob.glob('output/timetable/timetable_processed.csv')
     if csv_files:
         csv_input = csv_files[0]
-    
-    # Ищем Excel файл (исключаем временные файлы)
-    excel_files = [f for f in glob.glob('output/timetable/timetable_processed.xlsx') 
+
+    excel_files = [f for f in glob.glob('output/timetable/timetable_processed.xlsx')
                    if not os.path.basename(f).startswith('~$')]
     if excel_files:
         excel_input = excel_files[0]
-    
+
     if not csv_input and not excel_input:
         print("Не найдены файлы timetable_processed.csv или timetable_processed.xlsx в output/timetable/")
         return
-    
-    # Фиксированные имена выходных файлов
-    csv_output = 'output/timetable/timetable_processed_cleaned.csv'
-    excel_output = 'output/timetable/timetable_processed_cleaned.xlsx'
-    
+
     # Обрабатываем CSV
     if csv_input:
         print(f"\nОбрабатываем CSV файл: {csv_input}")
@@ -1133,7 +1232,7 @@ def main():
             print(f"Ошибка при обработке CSV файла: {e}")
             import traceback
             traceback.print_exc()
-    
+
     # Обрабатываем Excel
     if excel_input:
         print(f"\nОбрабатываем Excel файл: {excel_input}")
@@ -1145,58 +1244,50 @@ def main():
             print(f"Ошибка при обработке Excel файла: {e}")
             import traceback
             traceback.print_exc()
-    
-    # Сохраняем в базу данных
-    # Используем CSV файл, так как он уже обработан
-    if os.path.exists(csv_output):
-        print(f"\nСохраняем данные в базу данных...")
-        try:
-            if save_to_database(csv_output):
-                print("Данные успешно сохранены в базу данных")
-            else:
-                print("Не удалось сохранить данные в базу данных")
-        except Exception as e:
-            print(f"Ошибка при сохранении в базу данных: {e}")
-            import traceback
-            traceback.print_exc()
-    elif os.path.exists(excel_output):
-        # Если CSV нет, но есть Excel, создаем временный CSV для БД
-        print(f"\nСоздаем временный CSV для сохранения в БД...")
-        try:
-            # Читаем Excel и создаем CSV
-            wb = load_workbook(excel_output, data_only=True)
-            ws = wb.active
-            
-            # Читаем заголовки
-            headers = []
-            for col in range(1, ws.max_column + 1):
-                cell = ws.cell(1, col)
-                if cell.value:
-                    headers.append(str(cell.value))
-            
-            # Создаем временный CSV файл
-            temp_csv = csv_output.replace('.csv', '_temp_for_db.csv')
-            with open(temp_csv, 'w', encoding='utf-8-sig', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
-                writer.writeheader()
-                
-                for row_idx in range(2, ws.max_row + 1):
-                    row_data = {}
-                    for col_idx, header in enumerate(headers, 1):
-                        cell = ws.cell(row_idx, col_idx)
-                        row_data[header] = cell.value if cell.value else ''
-                    writer.writerow(row_data)
-            
-            if save_to_database(temp_csv):
-                print("Данные успешно сохранены в базу данных")
-                # Удаляем временный файл
-                os.remove(temp_csv)
-            else:
-                print("Не удалось сохранить данные в базу данных")
-        except Exception as e:
-            print(f"Ошибка при создании временного CSV или сохранении в БД: {e}")
-            import traceback
-            traceback.print_exc()
+
+    # Сохраняем в базу данных только если не указан --no-db
+    if not args.no_db:
+        if os.path.exists(csv_output):
+            print(f"\nСохраняем данные в базу данных...")
+            try:
+                if save_to_database(csv_output):
+                    print("Данные успешно сохранены в базу данных")
+                else:
+                    print("Не удалось сохранить данные в базу данных")
+            except Exception as e:
+                print(f"Ошибка при сохранении в базу данных: {e}")
+                import traceback
+                traceback.print_exc()
+        elif os.path.exists(excel_output):
+            print(f"\nСоздаем временный CSV для сохранения в БД...")
+            try:
+                wb = load_workbook(excel_output, data_only=True)
+                ws = wb.active
+                headers = []
+                for col in range(1, ws.max_column + 1):
+                    cell = ws.cell(1, col)
+                    if cell.value:
+                        headers.append(str(cell.value))
+                temp_csv = csv_output.replace('.csv', '_temp_for_db.csv')
+                with open(temp_csv, 'w', encoding='utf-8-sig', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=headers)
+                    writer.writeheader()
+                    for row_idx in range(2, ws.max_row + 1):
+                        row_data = {}
+                        for col_idx, header in enumerate(headers, 1):
+                            cell = ws.cell(row_idx, col_idx)
+                            row_data[header] = cell.value if cell.value else ''
+                        writer.writerow(row_data)
+                if save_to_database(temp_csv):
+                    print("Данные успешно сохранены в базу данных")
+                    os.remove(temp_csv)
+                else:
+                    print("Не удалось сохранить данные в базу данных")
+            except Exception as e:
+                print(f"Ошибка при создании временного CSV или сохранении в БД: {e}")
+                import traceback
+                traceback.print_exc()
+
 
 if __name__ == '__main__':
     main()

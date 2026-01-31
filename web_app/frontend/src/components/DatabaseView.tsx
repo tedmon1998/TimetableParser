@@ -49,6 +49,9 @@ interface Filters {
   course: string;
   direction: string;
   profile: string;
+  has_error: string;
+  week_error: string;
+  audience_error: string;
 }
 
 // Порядок и метки колонок таблицы (ключ поля → подпись). Подгруппа и Курс по умолчанию скрыты.
@@ -87,7 +90,50 @@ const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
   week_type: 'Фильтр по типу недели (числитель, знаменатель...)'
 };
 
-export type DbTableType = 'timetable_cleaned' | 'timetable_teacher';
+export type DbTableType = 'timetable_cleaned' | 'timetable_teacher' | 'intermediate_timetable';
+
+// Колонки промежуточного расписания: данные из timetable_cleaned + fio из timetable_teacher + флаги ошибок
+const INTERMEDIATE_COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience', 'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction', 'department', 'fio', 'week_error', 'audience_error'] as const;
+const INTERMEDIATE_LABELS: Record<string, string> = {
+  id: 'ID',
+  day_of_week: 'День',
+  pair_number: 'Пара',
+  subject_name: 'Предмет',
+  lecture_type: 'Тип',
+  audience: 'Ауд.',
+  group_name: 'Группа',
+  week_type: 'Неделя',
+  subgroup: 'п/г',
+  institute: 'Институт',
+  course: 'Курс',
+  direction: 'Направление',
+  department: 'Кафедра',
+  fio: 'Преподаватель (занятость)',
+  week_error: 'Ошибка недели',
+  audience_error: 'Ошибка аудитории'
+};
+
+// Список колонок для каждой вкладки (те, которые можно показывать/скрывать)
+const COLUMNS_FOR_TABLE: Record<DbTableType, readonly string[]> = {
+  timetable_cleaned: COLUMN_KEYS.filter(k => k !== 'fio'),
+  timetable_teacher: COLUMN_KEYS.filter(k => k !== 'subject_name' && k !== 'lecture_type'),
+  intermediate_timetable: [...INTERMEDIATE_COLUMN_KEYS]
+};
+// По умолчанию скрытые колонки для каждой вкладки
+const HIDDEN_BY_DEFAULT_BY_TABLE: Record<DbTableType, string[]> = {
+  timetable_cleaned: ['subgroup', 'course', 'profile', 'direction', 'institute'],
+  timetable_teacher: ['subgroup', 'course', 'profile', 'direction', 'institute'],
+  intermediate_timetable: ['subgroup', 'course', 'direction', 'institute']
+};
+
+function getDefaultVisibleForTable(table: DbTableType): Record<string, boolean> {
+  const keys = COLUMNS_FOR_TABLE[table];
+  const hiddenDefault = HIDDEN_BY_DEFAULT_BY_TABLE[table];
+  return keys.reduce<Record<string, boolean>>((acc, k) => ({
+    ...acc,
+    [k]: !hiddenDefault.includes(k)
+  }), {});
+}
 
 const DatabaseView: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
@@ -107,7 +153,10 @@ const DatabaseView: React.FC = () => {
     institute: '',
     course: '',
     direction: '',
-    profile: ''
+    profile: '',
+    has_error: '',
+    week_error: '',
+    audience_error: ''
   });
   const [showStats, setShowStats] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -147,6 +196,14 @@ const DatabaseView: React.FC = () => {
     position: 'before' | 'after';
   } | null>(null);
 
+  // Контекстное меню по ячейке (для intermediate: «Правильное»)
+  const [cellContextMenu, setCellContextMenu] = useState<{
+    x: number;
+    y: number;
+    recordId: number;
+    field: 'week_type' | 'audience';
+  } | null>(null);
+
   // Ширины колонок (id, день, пара, предмет, тип, аудитория, преподаватель, группа, подгруппа, курс, институт, направление, профиль, неделя)
   const DEFAULT_COLUMN_WIDTHS = [100, 120, 80, 200, 120, 120, 200, 120, 90, 80, 150, 180, 150, 120];
   const COLUMN_WIDTHS_KEY = 'timetable_db_column_widths';
@@ -164,44 +221,52 @@ const DatabaseView: React.FC = () => {
   const resizeStartX = useRef(0);
   const resizeStartWidth = useRef(0);
 
-  // Видимость колонок (сохраняем в localStorage). Подгруппа и Курс по умолчанию скрыты.
-  const VISIBLE_COLUMNS_KEY = 'timetable_db_visible_columns';
-  const HIDDEN_BY_DEFAULT_KEYS = ['subgroup', 'course', 'profile', 'direction', 'institute'];
-  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
+  // Видимость колонок по вкладкам (сохраняем в localStorage отдельно для каждой вкладки)
+  const VISIBLE_COLUMNS_BY_TABLE_KEY = 'timetable_db_visible_columns_by_table';
+  const [visibleColumnsByTable, setVisibleColumnsByTable] = useState<Record<DbTableType, Record<string, boolean>>>(() => {
     try {
-      const saved = localStorage.getItem(VISIBLE_COLUMNS_KEY);
+      const saved = localStorage.getItem(VISIBLE_COLUMNS_BY_TABLE_KEY);
       if (saved) {
-        const parsed = JSON.parse(saved) as Record<string, boolean>;
-        const out: Record<string, boolean> = {};
-        COLUMN_KEYS.forEach(k => { out[k] = parsed[k] !== false; });
+        const parsed = JSON.parse(saved) as Record<string, Record<string, boolean>>;
+        const out = {} as Record<DbTableType, Record<string, boolean>>;
+        (['timetable_cleaned', 'timetable_teacher', 'intermediate_timetable'] as DbTableType[]).forEach(table => {
+          const def = getDefaultVisibleForTable(table);
+          const keys = COLUMNS_FOR_TABLE[table];
+          out[table] = keys.reduce<Record<string, boolean>>((acc, k) => ({
+            ...acc,
+            [k]: parsed[table]?.[k] !== undefined ? parsed[table][k] !== false : def[k]
+          }), {});
+        });
         return out;
       }
     } catch (_) { }
-    return COLUMN_KEYS.reduce<Record<string, boolean>>((acc, k) => ({
-      ...acc,
-      [k]: HIDDEN_BY_DEFAULT_KEYS.includes(k) ? false : true
-    }), {});
+    return {
+      timetable_cleaned: getDefaultVisibleForTable('timetable_cleaned'),
+      timetable_teacher: getDefaultVisibleForTable('timetable_teacher'),
+      intermediate_timetable: getDefaultVisibleForTable('intermediate_timetable')
+    };
   });
-  // Колонки, скрытые по типу таблицы: спаршенное расписание — без «Преподаватель», занятость — без «Предмет» и «Тип»
-  const columnsHiddenByTable = useMemo((): string[] => {
-    if (activeTable === 'timetable_cleaned') return ['fio'];
-    if (activeTable === 'timetable_teacher') return ['subject_name', 'lecture_type'];
-    return [];
-  }, [activeTable]);
   const visibleColumnKeys = useMemo(
-    () => COLUMN_KEYS.filter(k => visibleColumns[k] !== false && !columnsHiddenByTable.includes(k)),
-    [visibleColumns, columnsHiddenByTable]
+    () => COLUMNS_FOR_TABLE[activeTable].filter(k => visibleColumnsByTable[activeTable]?.[k] !== false),
+    [activeTable, visibleColumnsByTable]
   );
 
+  const getColumnLabel = useCallback((key: string): string => {
+    if (activeTable === 'intermediate_timetable') return INTERMEDIATE_LABELS[key] || key;
+    return COLUMN_LABELS[key as ColumnKey] || key;
+  }, [activeTable]);
+
   const toggleColumnVisibility = useCallback((key: string) => {
-    setVisibleColumns(prev => {
-      const next = { ...prev, [key]: !prev[key] };
+    setVisibleColumnsByTable(prev => {
+      const table = activeTable;
+      const nextTable = { ...prev[table], [key]: !prev[table]?.[key] };
+      const next = { ...prev, [table]: nextTable };
       try {
-        localStorage.setItem(VISIBLE_COLUMNS_KEY, JSON.stringify(next));
+        localStorage.setItem(VISIBLE_COLUMNS_BY_TABLE_KEY, JSON.stringify(next));
       } catch (_) { }
       return next;
     });
-  }, []);
+  }, [activeTable]);
   const [showColumnsMenu, setShowColumnsMenu] = useState(false);
   const columnsMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -251,7 +316,7 @@ const DatabaseView: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
 
     const tableParam = params.get('table');
-    if (tableParam === 'timetable_teacher' || tableParam === 'timetable_cleaned') {
+    if (tableParam === 'timetable_teacher' || tableParam === 'timetable_cleaned' || tableParam === 'intermediate_timetable') {
       setActiveTable(tableParam);
     }
 
@@ -270,7 +335,10 @@ const DatabaseView: React.FC = () => {
       institute: params.get('institute') || '',
       course: params.get('course') || '',
       direction: params.get('direction') || '',
-      profile: params.get('profile') || ''
+      profile: params.get('profile') || '',
+      has_error: params.get('has_error') || '',
+      week_error: params.get('week_error') || '',
+      audience_error: params.get('audience_error') || ''
     };
     setFilters(restoredFilters);
 
@@ -352,7 +420,7 @@ const DatabaseView: React.FC = () => {
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
       const tableParam = params.get('table');
-      if (tableParam === 'timetable_teacher' || tableParam === 'timetable_cleaned') {
+      if (tableParam === 'timetable_teacher' || tableParam === 'timetable_cleaned' || tableParam === 'intermediate_timetable') {
         setActiveTable(tableParam);
       }
       const restoredFilters: Filters = {
@@ -369,7 +437,10 @@ const DatabaseView: React.FC = () => {
         institute: params.get('institute') || '',
         course: params.get('course') || '',
         direction: params.get('direction') || '',
-        profile: params.get('profile') || ''
+        profile: params.get('profile') || '',
+        has_error: params.get('has_error') || '',
+        week_error: params.get('week_error') || '',
+        audience_error: params.get('audience_error') || ''
       };
       setFilters(restoredFilters);
 
@@ -387,23 +458,29 @@ const DatabaseView: React.FC = () => {
 
   // Убрали логику закрытия фильтров - они теперь всегда видны
 
-  // Маппинг названий колонок на поля базы данных для сортировки
-  const columnToSortField: Record<string, string> = useMemo(() => ({
-    'ID': 'id',
-    'День': 'day_of_week',
-    'Пара': 'pair_number',
-    'Предмет': 'subject_name',
-    'Тип': 'lecture_type',
-    'Аудитория': 'audience',
-    'Преподаватель': 'fio',
-    'Группа': 'group_name',
-    'Подгруппа': 'subgroup',
-    'Курс': 'course',
-    'Институт': 'institute',
-    'Направление': 'direction',
-    'Профиль': 'profile',
-    'Неделя': 'week_type'
-  }), []);
+  // Маппинг названий колонок на поля базы данных для сортировки (для intermediate — по ключу поля)
+  const columnToSortField: Record<string, string> = useMemo(() => {
+    const base: Record<string, string> = {
+      'ID': 'id',
+      'День': 'day_of_week',
+      'Пара': 'pair_number',
+      'Предмет': 'subject_name',
+      'Тип': 'lecture_type',
+      'Аудитория': 'audience',
+      'Преподаватель': 'fio',
+      'Группа': 'group_name',
+      'Подгруппа': 'subgroup',
+      'Курс': 'course',
+      'Институт': 'institute',
+      'Направление': 'direction',
+      'Профиль': 'profile',
+      'Неделя': 'week_type'
+    };
+    if (activeTable === 'intermediate_timetable') {
+      INTERMEDIATE_COLUMN_KEYS.forEach(k => { base[INTERMEDIATE_LABELS[k] || k] = k; });
+    }
+    return base;
+  }, [activeTable]);
 
   // Мемоизируем параметры запроса для оптимизации (используем debounced фильтры)
   const recordsQueryParams = useMemo(() => {
@@ -475,13 +552,15 @@ const DatabaseView: React.FC = () => {
   // Веса колонок: приоритет у колонок с малым текстом (полностью видны); длинный текст — уже, частично
   const contentWeights = useMemo((): Record<string, number> => {
     const pxPerChar = 8;
-    const shortThreshold = 8; // макс. длина ≤ этого — «короткие», им даём полное место
-    const maxCharsLong = 16; // длинный текст — мало символов (пару слов), колонка уже
-    const longWeightFactor = 0.6; // длинные колонки получают меньший вес относительно коротких
+    const shortThreshold = 8;
+    const maxCharsLong = 16;
+    const longWeightFactor = 0.6;
+    const keys = activeTable === 'intermediate_timetable' ? [...INTERMEDIATE_COLUMN_KEYS] : COLUMN_KEYS;
+    const getLabel = (k: string) => activeTable === 'intermediate_timetable' ? (INTERMEDIATE_LABELS[k] || '') : (COLUMN_LABELS[k as ColumnKey] || '');
 
     const rawWeights: number[] = [];
-    COLUMN_KEYS.forEach((key, idx) => {
-      const labelLen = (COLUMN_LABELS[key] || '').length;
+    keys.forEach((key, idx) => {
+      const labelLen = getLabel(key).length;
       if (records.length > 0) {
         const lengths = records.map(r => {
           const val = key === 'fio' ? (r.fio ?? r.teacher ?? '') : (r as any)[key];
@@ -508,22 +587,22 @@ const DatabaseView: React.FC = () => {
     const cap = Math.max(median * 2, 160);
 
     const out: Record<string, number> = {};
-    COLUMN_KEYS.forEach((key, idx) => {
-      out[key] = Math.min(rawWeights[idx], cap);
+    keys.forEach((key, idx) => {
+      out[key as string] = Math.min(rawWeights[idx], cap);
     });
     return out;
-  }, [records]);
+  }, [records, activeTable]);
 
   // Шаблон колонок грида: ручной ресайз — в px, остальные — по весам (fr), заполняют 100%
   const gridTemplateColumns = useMemo(() => {
-    return visibleColumnKeys.map(k => {
-      const colIndex = COLUMN_KEYS.indexOf(k);
-      const userWidth = columnWidths[colIndex];
-      const defaultWidth = DEFAULT_COLUMN_WIDTHS[colIndex];
+    return (visibleColumnKeys as string[]).map((k) => {
+      const colIndex = activeTable === 'intermediate_timetable' ? (visibleColumnKeys as string[]).indexOf(k) : COLUMN_KEYS.indexOf(k as ColumnKey);
+      const userWidth = (columnWidths as number[])[colIndex];
+      const defaultWidth = (DEFAULT_COLUMN_WIDTHS as number[])[colIndex];
       const isUserResized = userWidth !== defaultWidth;
-      return isUserResized ? `${Math.max(60, Math.min(600, userWidth))}px` : `minmax(60px, ${contentWeights[k]}fr)`;
+      return isUserResized ? `${Math.max(60, Math.min(600, userWidth))}px` : `minmax(60px, ${(contentWeights as Record<string, number>)[k] ?? 100}fr)`;
     }).join(' ');
-  }, [visibleColumnKeys, contentWeights, columnWidths]);
+  }, [visibleColumnKeys, contentWeights, columnWidths, activeTable]);
 
   // Восстанавливаем фокус после обновления данных
   useLayoutEffect(() => {
@@ -649,7 +728,10 @@ const DatabaseView: React.FC = () => {
       institute: '',
       course: '',
       direction: '',
-      profile: ''
+      profile: '',
+      has_error: '',
+      week_error: '',
+      audience_error: ''
     };
     setFilters(emptyFilters);
     setCurrentPage(1);
@@ -667,24 +749,27 @@ const DatabaseView: React.FC = () => {
     return Object.values(filters).some(value => value.trim() !== '');
   };
 
-  // Маппинг названий колонок на поля фильтров (должны совпадать с COLUMN_LABELS)
-  const columnToFilterMap: Record<string, keyof Filters | null> = {
-    'ID': null, // ID не фильтруется
-    'День': 'day_of_week',
-    'Пара': 'pair_number',
-    'Предмет': 'subject_name',
-    'Тип': 'lecture_type',
-    'Ауд.': 'audience',
-    'Аудитория': 'audience',
-    'Преподаватель': 'fio',
-    'Группа': 'group_name',
-    'Подгруппа': 'subgroup',
-    'Курс': 'course',
-    'Институт': 'institute',
-    'Направление': 'direction',
-    'Профиль': 'profile',
-    'Неделя': 'week_type'
-  };
+  // Маппинг подписей колонок на поля фильтров (для intermediate — маппинг колонок на общие фильтры)
+  const columnToFilterMap: Record<string, keyof Filters | null> = useMemo(() => {
+    const map: Record<string, keyof Filters | null> = {};
+    if (activeTable === 'intermediate_timetable') {
+      const intermediateToFilter: Record<string, keyof Filters | null> = {
+        id: null, day_of_week: 'day_of_week', pair_number: 'pair_number', subject_name: 'subject_name',
+        lecture_type: 'lecture_type', audience: 'audience', group_name: 'group_name', week_type: 'week_type',
+        subgroup: 'subgroup', institute: 'institute', course: 'course', direction: 'direction',
+        department: null, fio: 'fio', week_error: 'week_error', audience_error: 'audience_error'
+      };
+      INTERMEDIATE_COLUMN_KEYS.forEach((k) => {
+        map[INTERMEDIATE_LABELS[k] || k] = intermediateToFilter[k] ?? null;
+      });
+    } else {
+      COLUMN_KEYS.forEach((k) => {
+        const label = COLUMN_LABELS[k];
+        map[label] = k === 'id' ? null : (k as keyof Filters);
+      });
+    }
+    return map;
+  }, [activeTable]);
 
   // Убрали handleHeaderClick - фильтры теперь всегда видны
 
@@ -764,7 +849,7 @@ const DatabaseView: React.FC = () => {
   }, [handleFilterChange]);
 
   const clearDatabase = async () => {
-    const tableLabel = activeTable === 'timetable_teacher' ? 'Занятость преподавателей' : 'Спаршенное расписание';
+    const tableLabel = activeTable === 'timetable_teacher' ? 'Занятость преподавателей' : activeTable === 'intermediate_timetable' ? 'Промежуточное расписание' : 'Спаршенное расписание';
     if (!window.confirm(`Вы уверены, что хотите очистить таблицу «${tableLabel}»? Это действие нельзя отменить.`)) {
       return;
     }
@@ -877,6 +962,21 @@ const DatabaseView: React.FC = () => {
     }
   };
 
+  // Отметить поле как правильное (intermediate_timetable: скопировать значение в cleaned/teacher)
+  const fixFieldAsCorrect = async (recordId: number, field: 'week_type' | 'audience') => {
+    try {
+      await axios.put(`${API_BASE}/db/records/${recordId}/fix-field`, { field }, { params: { table: activeTable } });
+      queryClient.invalidateQueries({ queryKey: ['db-records'] });
+      queryClient.invalidateQueries({ queryKey: ['db-stats'] });
+      setCellContextMenu(null);
+      setToast({ message: 'Поле отмечено как правильное', type: 'success' });
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.error || 'Ошибка при обновлении';
+      setToast({ message: errorMessage, type: 'error' });
+      setCellContextMenu(null);
+    }
+  };
+
   // Функция для создания копии записи
   const duplicateRecord = async (recordId: number, position: 'before' | 'after') => {
     try {
@@ -972,12 +1072,11 @@ const DatabaseView: React.FC = () => {
     }
   };
 
-  // Обработчик правого клика на строке
+  // Обработчик правого клика на строке (для intermediate_timetable показываем только редактирование)
   const handleRowContextMenu = (e: React.MouseEvent, record: DatabaseRecord) => {
     e.preventDefault();
     e.stopPropagation();
 
-    // Определяем позицию (до или после)
     const rowElement = e.currentTarget as HTMLElement;
     const rowRect = rowElement.getBoundingClientRect();
     const clickY = e.clientY;
@@ -996,9 +1095,12 @@ const DatabaseView: React.FC = () => {
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleClose = () => setContextMenu(null);
+    const handleClose = () => {
+      setContextMenu(null);
+      setCellContextMenu(null);
+    };
 
-    if (contextMenu) {
+    if (contextMenu || cellContextMenu) {
       document.addEventListener('click', handleClose);
       document.addEventListener('contextmenu', handleClose);
       window.addEventListener('scroll', handleClose, true);
@@ -1011,7 +1113,7 @@ const DatabaseView: React.FC = () => {
         if (tableEl) tableEl.removeEventListener('scroll', handleClose);
       };
     }
-  }, [contextMenu]);
+  }, [contextMenu, cellContextMenu]);
 
   // Изменение ширины колонки перетаскиванием
   const handleResizeStart = useCallback((e: React.MouseEvent, colIndex: number) => {
@@ -1156,6 +1258,13 @@ const DatabaseView: React.FC = () => {
               >
                 Занятость преподавателей
               </button>
+              <button
+                type="button"
+                className={`db-view-tab ${activeTable === 'intermediate_timetable' ? 'active' : ''}`}
+                onClick={() => setTable('intermediate_timetable')}
+              >
+                Промежуточное расписание
+              </button>
             </div>
             <h2>Записи в базе данных</h2>
             {totalRecords > 0 && (
@@ -1169,6 +1278,35 @@ const DatabaseView: React.FC = () => {
             <div className="filter-hint">
               💡 Кликните на ячейку для копирования, двойной клик по строке для редактирования
             </div>
+            {activeTable === 'intermediate_timetable' && (
+              <div className="error-filter-buttons">
+                <span className="error-filter-label">Фильтр по ошибкам:</span>
+                <button
+                  type="button"
+                  className={`button error-filter-btn ${filters.has_error === 'true' ? 'active' : ''}`}
+                  onClick={() => handleFilterChange('has_error', filters.has_error === 'true' ? '' : 'true')}
+                  title="Показать только записи с ошибкой недели или аудитории"
+                >
+                  Только с ошибками
+                </button>
+                <button
+                  type="button"
+                  className={`button error-filter-btn ${filters.week_error === 'true' ? 'active' : ''}`}
+                  onClick={() => handleFilterChange('week_error', filters.week_error === 'true' ? '' : 'true')}
+                  title="Показать только записи, где неделя не совпадает с занятостью"
+                >
+                  Ошибка недели
+                </button>
+                <button
+                  type="button"
+                  className={`button error-filter-btn ${filters.audience_error === 'true' ? 'active' : ''}`}
+                  onClick={() => handleFilterChange('audience_error', filters.audience_error === 'true' ? '' : 'true')}
+                  title="Показать только записи, где аудитория не совпадает с занятостью"
+                >
+                  Ошибка аудитории
+                </button>
+              </div>
+            )}
             <div className="columns-menu-wrapper" ref={columnsMenuRef}>
               <button
                 type="button"
@@ -1180,15 +1318,15 @@ const DatabaseView: React.FC = () => {
               </button>
               {showColumnsMenu && (
                 <div className="columns-dropdown">
-                  <div className="columns-dropdown-title">Видимость колонок</div>
-                  {COLUMN_KEYS.map(key => (
+                  <div className="columns-dropdown-title">Видимость колонок ({activeTable === 'timetable_cleaned' ? 'Спаршенное расписание' : activeTable === 'timetable_teacher' ? 'Занятость преподавателей' : 'Промежуточное расписание'})</div>
+                  {(COLUMNS_FOR_TABLE[activeTable] as string[]).map(key => (
                     <label key={key} className="columns-dropdown-item">
                       <input
                         type="checkbox"
-                        checked={visibleColumns[key] !== false}
+                        checked={visibleColumnsByTable[activeTable]?.[key] !== false}
                         onChange={() => toggleColumnVisibility(key)}
                       />
-                      <span>{COLUMN_LABELS[key]}</span>
+                      <span>{getColumnLabel(key)}</span>
                     </label>
                   ))}
                   <div className="columns-dropdown-divider" />
@@ -1219,9 +1357,9 @@ const DatabaseView: React.FC = () => {
             <div className="table-container" ref={tableContainerRef}>
               <div className="grid-table">
                 <div className="grid-table-header" style={{ display: 'grid', width: '100%', gridTemplateColumns }}>
-                  {visibleColumnKeys.map((key) => {
-                    const colIndex = COLUMN_KEYS.indexOf(key);
-                    const label = COLUMN_LABELS[key];
+                  {(visibleColumnKeys as string[]).map((key) => {
+                    const colIndex = activeTable === 'intermediate_timetable' ? (visibleColumnKeys as string[]).indexOf(key) : COLUMN_KEYS.indexOf(key as ColumnKey);
+                    const label = getColumnLabel(key);
                     const filterable = key !== 'id';
                     return (
                       <div
@@ -1274,7 +1412,7 @@ const DatabaseView: React.FC = () => {
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
-                            placeholder={COLUMN_PLACEHOLDERS[key] || ''}
+                            placeholder={activeTable === 'intermediate_timetable' ? `Фильтр: ${label}` : ((COLUMN_PLACEHOLDERS as Record<string, string>)[key] || '')}
                             title={`Поиск по колонке ${label}`}
                             autoComplete="off"
                           />
@@ -1362,15 +1500,24 @@ const DatabaseView: React.FC = () => {
                             </div>
                           );
                         }
+                        const isErrorCell = activeTable === 'intermediate_timetable' && (
+                          (field === 'week_type' && (record as any).week_error) ||
+                          (field === 'audience' && (record as any).audience_error)
+                        );
                         return (
                           <div
                             key={cellIndex}
-                            className={`grid-table-cell expandable-cell ${copiedCellId === uniqueCellId ? 'cell-copied' : ''}`}
+                            className={`grid-table-cell expandable-cell ${copiedCellId === uniqueCellId ? 'cell-copied' : ''} ${isErrorCell ? 'cell-error' : ''}`}
                             onMouseEnter={(e) => handleCellMouseEnter(e, uniqueCellId)}
                             onMouseLeave={handleCellMouseLeave}
                             onDoubleClick={() => !isEditing && startEditing(record)}
                             onClick={(e) => { if (displayValue && displayValue !== '-') copyToClipboard(displayValue, uniqueCellId); e.stopPropagation(); }}
-                            title="Клик — копировать, двойной клик — редактировать"
+                            onContextMenu={isErrorCell ? (e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setCellContextMenu({ x: e.clientX, y: e.clientY, recordId: record.id, field: field as 'week_type' | 'audience' });
+                            } : undefined}
+                            title={isErrorCell ? (field === 'week_type' ? 'Ошибка: неделя не совпадает с занятостью. ПКМ — отметить как правильное' : 'Ошибка: аудитория не совпадает с занятостью. ПКМ — отметить как правильное') : 'Клик — копировать, двойной клик — редактировать'}
                           >
                             <div className="cell-content" data-expanded={isExpanded} data-direction={expandDirection} style={isExpanded ? { width: `${expandWidth}px`, minWidth: `${expandWidth}px`, ...(expandDirection === 'left' ? { right: 0, left: 'auto' } : { left: 0, right: 'auto' }) } : {}}>
                               {displayValue || '-'}
@@ -1380,9 +1527,9 @@ const DatabaseView: React.FC = () => {
                       };
                       return (
                         <div key={record.id} className={`grid-table-row ${isEditing ? 'editing-row' : ''}`} style={{ display: 'grid', width: '100%', gridTemplateColumns }} onContextMenu={(e) => !isEditing && handleRowContextMenu(e, record)}>
-                          {visibleColumnKeys.map((key) => {
-                            const colIndex = COLUMN_KEYS.indexOf(key);
-                            const displayValue = key === 'fio' ? getValue(currentRecord.fio || currentRecord.teacher) : getValue((currentRecord as any)[key]);
+                          {(visibleColumnKeys as string[]).map((key) => {
+                            const colIndex = activeTable === 'intermediate_timetable' ? (visibleColumnKeys as string[]).indexOf(key) : COLUMN_KEYS.indexOf(key as ColumnKey);
+                            const displayValue = activeTable === 'intermediate_timetable' ? getValue((currentRecord as any)[key]) : (key === 'fio' ? getValue(currentRecord.fio || currentRecord.teacher) : getValue((currentRecord as any)[key]));
                             return renderEditableCell(key as keyof DatabaseRecord, colIndex, displayValue);
                           })}
                         </div>
@@ -1447,23 +1594,38 @@ const DatabaseView: React.FC = () => {
         >
           <button
             className="context-menu-item"
-            onClick={() => duplicateRecord(contextMenu.recordId, contextMenu.position)}
+            onClick={() => {
+              const record = records.find(r => r.id === contextMenu.recordId);
+              if (record) startEditing(record);
+              setContextMenu(null);
+            }}
           >
-            {contextMenu.position === 'before' ? 'Создать копию выше' : 'Создать копию ниже'}
+            Редактировать
           </button>
-          <button
-            className="context-menu-item"
-            onClick={() => createEmptyRecord(contextMenu.recordId, contextMenu.position)}
-          >
-            {contextMenu.position === 'before' ? 'Создать пустую выше' : 'Создать пустую ниже'}
-          </button>
-          <div className="context-menu-divider"></div>
-          <button
-            className="context-menu-item context-menu-item-danger"
-            onClick={() => deleteRecord(contextMenu.recordId)}
-          >
-            Удалить запись
-          </button>
+          {activeTable !== 'intermediate_timetable' && (
+            <>
+              <div className="context-menu-divider"></div>
+              <button
+                className="context-menu-item"
+                onClick={() => duplicateRecord(contextMenu.recordId, contextMenu.position)}
+              >
+                {contextMenu.position === 'before' ? 'Создать копию выше' : 'Создать копию ниже'}
+              </button>
+              <button
+                className="context-menu-item"
+                onClick={() => createEmptyRecord(contextMenu.recordId, contextMenu.position)}
+              >
+                {contextMenu.position === 'before' ? 'Создать пустую выше' : 'Создать пустую ниже'}
+              </button>
+              <div className="context-menu-divider"></div>
+              <button
+                className="context-menu-item context-menu-item-danger"
+                onClick={() => deleteRecord(contextMenu.recordId)}
+              >
+                Удалить запись
+              </button>
+            </>
+          )}
           <div className="context-menu-divider"></div>
           <button
             className="context-menu-item"
@@ -1481,6 +1643,36 @@ const DatabaseView: React.FC = () => {
           <button
             className="context-menu-item"
             onClick={() => setContextMenu(null)}
+          >
+            Отмена
+          </button>
+        </div>
+      )}
+
+      {/* Контекстное меню по ячейке с ошибкой (intermediate: «Правильное») */}
+      {cellContextMenu && (
+        <div
+          className="context-menu"
+          style={{
+            position: 'fixed',
+            left: `${cellContextMenu.x}px`,
+            top: `${cellContextMenu.y}px`,
+            zIndex: 10001
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            className="context-menu-item"
+            onClick={() => {
+              fixFieldAsCorrect(cellContextMenu.recordId, cellContextMenu.field);
+            }}
+          >
+            Правильное
+          </button>
+          <div className="context-menu-divider"></div>
+          <button
+            className="context-menu-item"
+            onClick={() => setCellContextMenu(null)}
           >
             Отмена
           </button>

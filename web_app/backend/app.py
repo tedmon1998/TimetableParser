@@ -4,6 +4,7 @@ import json
 import subprocess
 import os
 import glob
+import re
 import shutil
 import threading
 import time
@@ -28,15 +29,17 @@ DB_CONFIG = {
 script_status = {
     'parse_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'clean_audiences': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'load_timetable_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'merge_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'process_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'fetch_teachers': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
 
 # Разрешённые таблицы для просмотра записей
-ALLOWED_TABLES = ('timetable_cleaned', 'timetable_teacher')
+ALLOWED_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable')
 
 def get_table_param():
-    """Возвращает имя таблицы из query param (timetable_cleaned или timetable_teacher)."""
+    """Возвращает имя таблицы из query param (timetable_cleaned, timetable_teacher или intermediate_timetable)."""
     table = request.args.get('table', '').strip()
     if table in ALLOWED_TABLES:
         return table
@@ -50,6 +53,78 @@ def get_project_root():
     parent_dir = os.path.dirname(current_dir)  # web_app
     project_root = os.path.dirname(parent_dir)  # корень проекта (H:\Project\TimetableParser)
     return project_root
+
+
+INPUT_TIMETABLE_DIR = os.path.join(get_project_root(), 'input', 'timetable')
+
+
+def _normalize_group_for_search(s):
+    """Нормализует строку группы для поиска: 606.22, 606 22 -> 606-22."""
+    if not s or not isinstance(s, str):
+        return ''
+    s = re.sub(r'[\s.]+', '-', s.strip())
+    s = re.sub(r'-+', '-', s)  # несколько дефисов в один
+    return s.strip('-')
+
+
+def find_group_in_timetable_files(group_query):
+    """
+    Ищет номер группы в Excel-файлах input/timetable (рекурсивно).
+    Возвращает список: [{"file_path": "относительный/путь.xlsx", "file_name": "имя.xlsx", "sheet_name": "1 курс", "sheet_index": 1}, ...]
+    """
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return []
+    if not group_query or not isinstance(group_query, str):
+        return []
+    query_norm = _normalize_group_for_search(group_query)
+    if not query_norm:
+        return []
+    results = []
+    if not os.path.isdir(INPUT_TIMETABLE_DIR):
+        return results
+    for root, _dirs, files in os.walk(INPUT_TIMETABLE_DIR):
+        for f in files:
+            if not (f.endswith('.xlsx') and not f.startswith('~$')):
+                continue
+            full_path = os.path.join(root, f)
+            try:
+                wb = load_workbook(full_path, data_only=True, read_only=True)
+            except Exception:
+                continue
+            rel_root = os.path.relpath(root, INPUT_TIMETABLE_DIR)
+            if rel_root == '.':
+                rel_dir = ''
+            else:
+                rel_dir = rel_root.replace('\\', '/') + '/'
+            rel_path = rel_dir + f
+            for sheet_idx, sheet_name in enumerate(wb.sheetnames, start=1):
+                ws = wb[sheet_name]
+                found = False
+                for row in ws.iter_rows(values_only=True):
+                    if found:
+                        break
+                    for cell in row or []:
+                        if cell is None:
+                            continue
+                        cell_str = re.sub(r'[\s.]+', '-', str(cell).strip())
+                        cell_str = re.sub(r'-+', '-', cell_str)
+                        if query_norm in cell_str or group_query.strip() in str(cell):
+                            found = True
+                            break
+                if found:
+                    results.append({
+                        'file_path': rel_path,
+                        'file_name': f,
+                        'sheet_name': sheet_name,
+                        'sheet_index': sheet_idx
+                    })
+            try:
+                wb.close()
+            except Exception:
+                pass
+    return results
 
 # --- Преподаватели (info/teacher_all.json) ---
 TEACHER_KEYS = ['fio', 'post_name', 'post_struct', 'all_staj', 'staj_spec', 'phone', 'predmet']
@@ -199,9 +274,9 @@ def run_clean_audiences():
         script_status['clean_audiences']['progress'] = 20
         script_status['clean_audiences']['message'] = 'Запуск скрипта очистки...'
         
-        # Запускаем скрипт
+        # Запускаем скрипт без загрузки в БД (только обработка)
         process = subprocess.Popen(
-            ['python', script_path],
+            ['python', script_path, '--no-db'],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -238,7 +313,7 @@ def run_clean_audiences():
         
         if return_code == 0:
             script_status['clean_audiences']['progress'] = 100
-            script_status['clean_audiences']['message'] = 'Очистка завершена успешно! База данных обновлена.'
+            script_status['clean_audiences']['message'] = 'Очистка завершена успешно!'
         else:
             error_msg = stderr_output if stderr_output else 'Неизвестная ошибка (код возврата: {})'.format(return_code)
             script_status['clean_audiences']['error'] = error_msg
@@ -250,6 +325,143 @@ def run_clean_audiences():
         script_status['clean_audiences']['progress'] = 0
     finally:
         script_status['clean_audiences']['running'] = False
+
+def run_load_timetable_to_db():
+    """Загружает timetable_processed_cleaned.csv в таблицу timetable_cleaned (clean_audiences.py --db-only)"""
+    script_status['load_timetable_to_db']['running'] = True
+    script_status['load_timetable_to_db']['progress'] = 0
+    script_status['load_timetable_to_db']['message'] = 'Подготовка загрузки в БД...'
+    script_status['load_timetable_to_db']['error'] = None
+    try:
+        project_root = get_project_root()
+        csv_path = os.path.join(project_root, 'output', 'timetable', 'timetable_processed_cleaned.csv')
+        excel_path = os.path.join(project_root, 'output', 'timetable', 'timetable_processed_cleaned.xlsx')
+        if not os.path.isfile(csv_path) and not os.path.isfile(excel_path):
+            raise FileNotFoundError(
+                'Не найден файл timetable_processed_cleaned.csv (или .xlsx). '
+                'Сначала выполните «Очистка аудиторий».'
+            )
+        script_path = os.path.join(project_root, 'clean_audiences.py')
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"Скрипт не найден: {script_path}")
+        script_status['load_timetable_to_db']['progress'] = 20
+        script_status['load_timetable_to_db']['message'] = 'Загрузка в БД (timetable_cleaned)...'
+        process = subprocess.Popen(
+            ['python', script_path, '--db-only'],
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        stdout_output, stderr_output = process.communicate()
+        return_code = process.returncode
+        if return_code != 0:
+            error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
+            script_status['load_timetable_to_db']['error'] = error_msg
+            script_status['load_timetable_to_db']['message'] = 'Ошибка загрузки в БД'
+            script_status['load_timetable_to_db']['progress'] = 0
+        else:
+            script_status['load_timetable_to_db']['progress'] = 100
+            script_status['load_timetable_to_db']['message'] = 'Данные расписания загружены в БД.'
+    except Exception as e:
+        script_status['load_timetable_to_db']['error'] = str(e)
+        script_status['load_timetable_to_db']['message'] = f'Ошибка: {str(e)}'
+        script_status['load_timetable_to_db']['progress'] = 0
+    finally:
+        script_status['load_timetable_to_db']['running'] = False
+
+def run_merge_timetable():
+    """Слияние timetable_cleaned и timetable_teacher в intermediate_timetable.
+    Данные только из timetable_cleaned (кроме id), ФИО только из timetable_teacher.
+    Join по дню, паре, группе; проверки: неделя и аудитория совпадают или нет (week_error, audience_error).
+    """
+    script_status['merge_timetable']['running'] = True
+    script_status['merge_timetable']['progress'] = 0
+    script_status['merge_timetable']['message'] = 'Подготовка слияния...'
+    script_status['merge_timetable']['error'] = None
+    try:
+        script_status['merge_timetable']['progress'] = 10
+        script_status['merge_timetable']['message'] = 'Создание таблицы intermediate_timetable...'
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("DROP TABLE IF EXISTS intermediate_timetable")
+        conn.commit()
+        cursor.execute("""
+            CREATE TABLE intermediate_timetable (
+                id SERIAL PRIMARY KEY,
+                cleaned_id INTEGER,
+                teacher_id INTEGER,
+                day_of_week VARCHAR(50),
+                pair_number INTEGER,
+                subject_name TEXT,
+                lecture_type VARCHAR(50),
+                audience VARCHAR(50),
+                group_name VARCHAR(50),
+                week_type VARCHAR(50),
+                subgroup INTEGER,
+                institute TEXT,
+                course VARCHAR(10),
+                direction TEXT,
+                department TEXT,
+                is_external BOOLEAN,
+                is_remote BOOLEAN,
+                num_subgroups INTEGER,
+                fio TEXT,
+                week_error BOOLEAN,
+                audience_error BOOLEAN
+            )
+        """)
+        conn.commit()
+        script_status['merge_timetable']['progress'] = 30
+        script_status['merge_timetable']['message'] = 'Очистка и слияние данных...'
+        cursor.execute("""
+            INSERT INTO intermediate_timetable (
+                cleaned_id, teacher_id,
+                day_of_week, pair_number, subject_name, lecture_type, audience,
+                group_name, week_type, subgroup, institute, course, direction,
+                department, is_external, is_remote, num_subgroups,
+                fio, week_error, audience_error
+            )
+            SELECT
+                c.id,
+                t.id,
+                c.day_of_week,
+                c.pair_number,
+                c.subject_name,
+                c.lecture_type,
+                c.audience,
+                c.group_name,
+                c.week_type,
+                c.subgroup,
+                c.institute,
+                c.course,
+                c.direction,
+                c.department,
+                c.is_external,
+                c.is_remote,
+                c.num_subgroups,
+                t.fio,
+                (c.week_type IS DISTINCT FROM t.week_type) AS week_error,
+                (NULLIF(TRIM(c.audience), '') IS DISTINCT FROM NULLIF(TRIM(t.audience), '')) AS audience_error
+            FROM timetable_cleaned c
+            INNER JOIN timetable_teacher t
+                ON NULLIF(TRIM(c.day_of_week), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.day_of_week), '')
+               AND c.pair_number IS NOT DISTINCT FROM t.pair_number
+               AND NULLIF(TRIM(c.group_name), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.group_name), '')
+        """)
+        conn.commit()
+        n = cursor.rowcount
+        cursor.close()
+        conn.close()
+        script_status['merge_timetable']['progress'] = 100
+        script_status['merge_timetable']['message'] = f'Готово. Загружено записей: {n}'
+    except Exception as e:
+        script_status['merge_timetable']['error'] = str(e)
+        script_status['merge_timetable']['message'] = f'Ошибка: {str(e)}'
+        script_status['merge_timetable']['progress'] = 0
+    finally:
+        script_status['merge_timetable']['running'] = False
 
 def load_teacher_csv_to_db():
     """Создаёт таблицу timetable_teacher при необходимости и загружает в неё output/timetable_teacher.csv"""
@@ -405,7 +617,7 @@ def run_parse():
 
 @app.route('/api/run/clean_audiences', methods=['POST'])
 def run_clean():
-    """Запускает clean_audiences.py"""
+    """Запускает clean_audiences.py (только обработка, без загрузки в БД)"""
     if script_status['clean_audiences']['running']:
         return jsonify({'error': 'Script is already running'}), 400
     
@@ -413,6 +625,26 @@ def run_clean():
     thread.daemon = True
     thread.start()
     
+    return jsonify({'message': 'Script started'})
+
+@app.route('/api/run/load_timetable_to_db', methods=['POST'])
+def run_load_timetable_to_db_route():
+    """Загружает timetable_processed_cleaned в БД (timetable_cleaned)"""
+    if script_status['load_timetable_to_db']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_load_timetable_to_db)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+@app.route('/api/run/merge_timetable', methods=['POST'])
+def run_merge_timetable_route():
+    """Слияние timetable_cleaned и timetable_teacher в intermediate_timetable"""
+    if script_status['merge_timetable']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_merge_timetable)
+    thread.daemon = True
+    thread.start()
     return jsonify({'message': 'Script started'})
 
 @app.route('/api/run/process_timetable', methods=['POST'])
@@ -424,6 +656,34 @@ def run_process_timetable_route():
     thread.daemon = True
     thread.start()
     return jsonify({'message': 'Script started'})
+
+
+@app.route('/api/group-source', methods=['GET'])
+def api_group_source():
+    """Поиск по номеру группы: возвращает список файлов и листов, где встречается группа."""
+    group = request.args.get('group', '').strip()
+    if not group:
+        return jsonify({'error': 'Укажите номер группы (параметр group)'}), 400
+    results = find_group_in_timetable_files(group)
+    return jsonify({'results': results})
+
+
+@app.route('/api/files/timetable/<path:file_path>', methods=['GET'])
+def api_serve_timetable_file(file_path):
+    """Отдаёт файл из input/timetable по относительному пути (для открытия/скачивания)."""
+    if not file_path or '..' in file_path or file_path.startswith('/'):
+        return jsonify({'error': 'Invalid path'}), 400
+    full_path = os.path.normpath(os.path.join(INPUT_TIMETABLE_DIR, file_path))
+    if not os.path.abspath(full_path).startswith(os.path.abspath(INPUT_TIMETABLE_DIR)):
+        return jsonify({'error': 'Invalid path'}), 400
+    if not os.path.isfile(full_path):
+        return jsonify({'error': 'File not found'}), 404
+    return send_file(
+        full_path,
+        as_attachment=False,
+        download_name=os.path.basename(full_path),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
 
 def run_fetch_teachers():
@@ -487,7 +747,7 @@ def run_fetch_teachers_route():
 
 @app.route('/api/db/stats', methods=['GET'])
 def get_db_stats():
-    """Возвращает статистику из базы данных (таблица: timetable_cleaned или timetable_teacher)"""
+    """Возвращает статистику из базы данных (timetable_cleaned, timetable_teacher или intermediate_timetable)"""
     try:
         table = get_table_param()
         conn = psycopg2.connect(**DB_CONFIG)
@@ -496,27 +756,44 @@ def get_db_stats():
         cursor.execute(f"SELECT COUNT(*) as total FROM {table}")
         total = cursor.fetchone()['total']
         
-        cursor.execute(f"""
-            SELECT day_of_week, COUNT(*) as count 
-            FROM {table} 
-            GROUP BY day_of_week 
-            ORDER BY day_of_week
-        """)
-        by_day = cursor.fetchall()
-        
-        if table == 'timetable_cleaned':
+        if table == 'intermediate_timetable':
             cursor.execute("""
-                SELECT lecture_type, COUNT(*) as count 
-                FROM timetable_cleaned 
-                GROUP BY lecture_type 
+                SELECT day_of_week, COUNT(*) as count
+                FROM intermediate_timetable
+                GROUP BY day_of_week
+                ORDER BY day_of_week
+            """)
+            by_day = cursor.fetchall()
+            cursor.execute("""
+                SELECT lecture_type, COUNT(*) as count
+                FROM intermediate_timetable
+                GROUP BY lecture_type
                 ORDER BY lecture_type
             """)
             by_type = cursor.fetchall()
+            last_update = None
         else:
-            by_type = []
-        
-        cursor.execute(f"SELECT MAX(created_at) as last_update FROM {table}")
-        last_update = cursor.fetchone()['last_update']
+            cursor.execute(f"""
+                SELECT day_of_week, COUNT(*) as count 
+                FROM {table} 
+                GROUP BY day_of_week 
+                ORDER BY day_of_week
+            """)
+            by_day = cursor.fetchall()
+            
+            if table == 'timetable_cleaned':
+                cursor.execute("""
+                    SELECT lecture_type, COUNT(*) as count 
+                    FROM timetable_cleaned 
+                    GROUP BY lecture_type 
+                    ORDER BY lecture_type
+                """)
+                by_type = cursor.fetchall()
+            else:
+                by_type = []
+            
+            cursor.execute(f"SELECT MAX(created_at) as last_update FROM {table}")
+            last_update = cursor.fetchone()['last_update']
         
         cursor.close()
         conn.close()
@@ -554,6 +831,9 @@ def get_db_records():
             'course': request.args.get('course', '').strip(),
             'direction': request.args.get('direction', '').strip(),
             'profile': request.args.get('profile', '').strip(),
+            'has_error': request.args.get('has_error', '').strip(),
+            'week_error': request.args.get('week_error', '').strip(),
+            'audience_error': request.args.get('audience_error', '').strip(),
         }
         
         conn = psycopg2.connect(**DB_CONFIG)
@@ -584,8 +864,8 @@ def get_db_records():
             where_conditions.append("subject_name ILIKE %s")
             query_params.append(f"%{filters['subject_name']}%")
         
-        # Фильтр по типу занятия (только для timetable_cleaned)
-        if table == 'timetable_cleaned' and filters['lecture_type']:
+        # Фильтр по типу занятия (timetable_cleaned и intermediate_timetable)
+        if filters['lecture_type'] and table in ('timetable_cleaned', 'intermediate_timetable'):
             where_conditions.append("lecture_type ILIKE %s")
             query_params.append(f"%{filters['lecture_type']}%")
         
@@ -594,9 +874,9 @@ def get_db_records():
             where_conditions.append("audience ILIKE %s")
             query_params.append(f"%{filters['audience']}%")
         
-        # Фильтр по ФИО преподавателя (timetable_teacher имеет только fio, timetable_cleaned — fio и teacher)
+        # Фильтр по ФИО преподавателя (intermediate — только fio из занятости)
         if filters['fio']:
-            if table == 'timetable_teacher':
+            if table == 'timetable_teacher' or table == 'intermediate_timetable':
                 where_conditions.append("fio ILIKE %s")
                 query_params.append(f"%{filters['fio']}%")
             else:
@@ -604,9 +884,9 @@ def get_db_records():
                 query_params.append(f"%{filters['fio']}%")
                 query_params.append(f"%{filters['fio']}%")
         
-        # Фильтр по преподавателю (альтернативное поле; для timetable_teacher ищем по fio)
+        # Фильтр по преподавателю
         if filters['teacher']:
-            if table == 'timetable_teacher':
+            if table == 'timetable_teacher' or table == 'intermediate_timetable':
                 where_conditions.append("fio ILIKE %s")
                 query_params.append(f"%{filters['teacher']}%")
             else:
@@ -634,22 +914,31 @@ def get_db_records():
             where_conditions.append("week_type ILIKE %s")
             query_params.append(f"%{filters['week_type']}%")
         
-        # Фильтр по институту (только для timetable_cleaned)
-        if table == 'timetable_cleaned' and filters['institute']:
+        # Фильтры по ошибкам (только intermediate_timetable)
+        if table == 'intermediate_timetable':
+            if filters['has_error'] and filters['has_error'].lower() in ('1', 'true', 'yes', 'да'):
+                where_conditions.append("(week_error = TRUE OR audience_error = TRUE)")
+            if filters['week_error'] and filters['week_error'].lower() in ('1', 'true', 'yes', 'да'):
+                where_conditions.append("week_error = TRUE")
+            if filters['audience_error'] and filters['audience_error'].lower() in ('1', 'true', 'yes', 'да'):
+                where_conditions.append("audience_error = TRUE")
+        
+        # Фильтр по институту (timetable_cleaned и intermediate_timetable)
+        if filters['institute'] and table in ('timetable_cleaned', 'intermediate_timetable'):
             where_conditions.append("institute ILIKE %s")
             query_params.append(f"%{filters['institute']}%")
         
-        # Фильтр по курсу (только для timetable_cleaned)
-        if table == 'timetable_cleaned' and filters['course']:
+        # Фильтр по курсу
+        if filters['course'] and table in ('timetable_cleaned', 'intermediate_timetable'):
             where_conditions.append("course ILIKE %s")
             query_params.append(f"%{filters['course']}%")
         
-        # Фильтр по направлению (только для timetable_cleaned)
-        if table == 'timetable_cleaned' and filters['direction']:
+        # Фильтр по направлению
+        if filters['direction'] and table in ('timetable_cleaned', 'intermediate_timetable'):
             where_conditions.append("direction ILIKE %s")
             query_params.append(f"%{filters['direction']}%")
         
-        # Фильтр по профилю (только для timetable_cleaned)
+        # Фильтр по профилю (только timetable_cleaned)
         if table == 'timetable_cleaned' and filters['profile']:
             where_conditions.append("profile ILIKE %s")
             query_params.append(f"%{filters['profile']}%")
@@ -664,23 +953,36 @@ def get_db_records():
         sort_order = request.args.get('sort_order', 'desc').strip().upper()
         
         # Валидация параметров сортировки
-        allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 
-                              'audience', 'fio', 'teacher', 'group_name', 'subgroup', 'course', 
-                              'institute', 'direction', 'profile', 'week_type']
+        if table == 'intermediate_timetable':
+            allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
+                                  'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction',
+                                  'department', 'fio', 'week_error', 'audience_error']
+        else:
+            allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
+                                  'audience', 'fio', 'teacher', 'group_name', 'subgroup', 'course',
+                                  'institute', 'direction', 'profile', 'week_type']
         if sort_by not in allowed_sort_fields:
             sort_by = 'id'
         
         if sort_order not in ['ASC', 'DESC']:
             sort_order = 'DESC'
         
-        # Для дня недели — сортировка по порядку (понедельник=1, ..., воскресенье=7), а не по алфавиту
+        # Для дня недели — сортировка по порядку (понедельник=1, ..., воскресенье=7)
         day_order_sql = """CASE LOWER(TRIM(COALESCE(day_of_week, '')))
             WHEN 'понедельник' THEN 1 WHEN 'вторник' THEN 2 WHEN 'среда' THEN 3
             WHEN 'четверг' THEN 4 WHEN 'пятница' THEN 5 WHEN 'суббота' THEN 6
             WHEN 'воскресенье' THEN 7 ELSE 8 END"""
         order_clause = f"{day_order_sql} {sort_order}" if sort_by == 'day_of_week' else f"{sort_by} {sort_order}"
         
-        if table == 'timetable_teacher':
+        if table == 'intermediate_timetable':
+            query = f"""
+                SELECT *
+                FROM intermediate_timetable
+                {where_clause}
+                ORDER BY {order_clause}
+                LIMIT %s OFFSET %s
+            """
+        elif table == 'timetable_teacher':
             sort_by_allowed = ['id', 'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio', 'group_name', 'subgroup', 'course', 'week_type']
             if sort_by not in sort_by_allowed:
                 sort_by = 'id'
@@ -754,7 +1056,7 @@ def get_db_records():
 
 @app.route('/api/db/clear', methods=['POST'])
 def clear_database():
-    """Очищает выбранную таблицу (table=timetable_cleaned или timetable_teacher)"""
+    """Очищает выбранную таблицу (timetable_cleaned, timetable_teacher или intermediate_timetable)"""
     try:
         table = get_table_param()
         conn = psycopg2.connect(**DB_CONFIG)
@@ -768,7 +1070,13 @@ def clear_database():
         return jsonify({'error': str(e)}), 500
 
 def _allowed_update_fields(table):
-    """Разрешённые поля для обновления в зависимости от таблицы."""
+    """Разрешённые поля для обновления в зависимости от таблицы. intermediate_timetable — редактируемые поля с синхронизацией в cleaned/teacher и пересчётом ошибок."""
+    if table == 'intermediate_timetable':
+        return [
+            'week_type', 'audience', 'subject_name', 'lecture_type',
+            'day_of_week', 'pair_number', 'group_name', 'subgroup',
+            'institute', 'course', 'direction', 'department'
+        ]
     if table == 'timetable_teacher':
         return [
             'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio',
@@ -782,59 +1090,162 @@ def _allowed_update_fields(table):
         'is_external', 'is_remote', 'num_subgroups'
     ]
 
+def _normalize_update_value(field, value):
+    """Приводит значение поля к типу для UPDATE."""
+    if value == '' or value is None:
+        return None
+    if field in ['pair_number', 'subgroup', 'num_subgroups']:
+        try:
+            return int(value) if value is not None else None
+        except (ValueError, TypeError):
+            return None
+    if field in ['is_external', 'is_remote']:
+        return bool(value) if value is not None else None
+    return str(value) if value is not None else None
+
+
 @app.route('/api/db/records/<int:record_id>', methods=['PUT'])
 def update_record(record_id):
-    """Обновляет запись в выбранной таблице (table=...)."""
+    """Обновляет запись в выбранной таблице (table=...). Для intermediate_timetable синхронизирует cleaned/teacher и пересчитывает week_error, audience_error."""
     try:
         table = get_table_param()
         data = request.get_json()
-        
         if not data:
             return jsonify({'error': 'No data provided'}), 400
-        
+
         allowed_fields = _allowed_update_fields(table)
         # Для timetable_teacher teacher не существует — маппим на fio
         if table == 'timetable_teacher' and 'teacher' in data:
             data = dict(data)
             data['fio'] = data.get('fio') or data.get('teacher')
-        
+
+        if table == 'intermediate_timetable':
+            conn = psycopg2.connect(**DB_CONFIG)
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            if not _intermediate_has_cleaned_id(cursor):
+                cursor.close()
+                conn.close()
+                return jsonify({
+                    'error': 'Таблица intermediate_timetable создана старой версией. Выполните «Слияние расписания» (merge) заново.'
+                }), 400
+            cursor.execute(
+                "SELECT cleaned_id, teacher_id FROM intermediate_timetable WHERE id = %s",
+                (record_id,)
+            )
+            row = cursor.fetchone()
+            if not row or (row.get('cleaned_id') is None and row.get('teacher_id') is None):
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Record not found or no source ids'}), 404
+            cleaned_id = row['cleaned_id']
+            teacher_id = row['teacher_id']
+
+            # Поля, которые есть в timetable_cleaned
+            cleaned_fields = [
+                'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
+                'audience', 'group_name', 'week_type', 'subgroup',
+                'institute', 'course', 'direction', 'department'
+            ]
+            # Поля, которые есть в timetable_teacher
+            teacher_fields = [
+                'day_of_week', 'pair_number', 'subject_name', 'audience',
+                'group_name', 'week_type', 'subgroup', 'department'
+            ]
+
+            update_cleaned = []
+            vals_cleaned = []
+            for f in cleaned_fields:
+                if f not in data:
+                    continue
+                v = _normalize_update_value(f, data[f])
+                update_cleaned.append(f"{f} = %s")
+                vals_cleaned.append(v)
+            if cleaned_id and update_cleaned:
+                vals_cleaned.append(cleaned_id)
+                cursor.execute(
+                    f"UPDATE timetable_cleaned SET {', '.join(update_cleaned)} WHERE id = %s",
+                    vals_cleaned
+                )
+
+            update_teacher = []
+            vals_teacher = []
+            for f in teacher_fields:
+                if f not in data:
+                    continue
+                v = _normalize_update_value(f, data[f])
+                update_teacher.append(f"{f} = %s")
+                vals_teacher.append(v)
+            if teacher_id and update_teacher:
+                vals_teacher.append(teacher_id)
+                cursor.execute(
+                    f"UPDATE timetable_teacher SET {', '.join(update_teacher)} WHERE id = %s",
+                    vals_teacher
+                )
+
+            # Обновить intermediate_timetable: те же поля + пересчитать week_error, audience_error
+            update_int = []
+            vals_int = []
+            for f in allowed_fields:
+                if f not in data:
+                    continue
+                v = _normalize_update_value(f, data[f])
+                update_int.append(f"{f} = %s")
+                vals_int.append(v)
+            if update_int:
+                vals_int.append(record_id)
+                cursor.execute(
+                    f"UPDATE intermediate_timetable SET {', '.join(update_int)} WHERE id = %s",
+                    vals_int
+                )
+            # Пересчёт week_error и audience_error из текущего состояния cleaned и teacher
+            cursor.execute("""
+                UPDATE intermediate_timetable it SET
+                    week_error = (
+                        SELECT (c.week_type IS DISTINCT FROM t.week_type)
+                        FROM timetable_cleaned c, timetable_teacher t
+                        WHERE c.id = it.cleaned_id AND t.id = it.teacher_id
+                    ),
+                    audience_error = (
+                        SELECT (NULLIF(TRIM(c.audience), '') IS DISTINCT FROM NULLIF(TRIM(t.audience), ''))
+                        FROM timetable_cleaned c, timetable_teacher t
+                        WHERE c.id = it.cleaned_id AND t.id = it.teacher_id
+                    )
+                WHERE it.id = %s AND it.cleaned_id IS NOT NULL AND it.teacher_id IS NOT NULL
+            """, (record_id,))
+            cursor.execute(
+                "SELECT * FROM intermediate_timetable WHERE id = %s",
+                (record_id,)
+            )
+            updated_record = cursor.fetchone()
+            conn.commit()
+            cursor.close()
+            conn.close()
+        if updated_record:
+            return jsonify({'message': 'Record updated successfully', 'record': dict(updated_record)})
+        return jsonify({'error': 'Record not found'}), 404
+
+        # Обычное обновление для timetable_cleaned / timetable_teacher
         update_fields = []
         update_values = []
-        
         for field in allowed_fields:
             if field not in data:
                 continue
-            value = data[field]
-            if value == '' or value is None:
-                update_values.append(None)
-            elif field in ['pair_number', 'subgroup', 'num_subgroups']:
-                try:
-                    update_values.append(int(value) if value is not None else None)
-                except (ValueError, TypeError):
-                    update_values.append(None)
-            elif field in ['is_external', 'is_remote']:
-                update_values.append(bool(value) if value is not None else None)
-            else:
-                update_values.append(str(value) if value is not None else None)
+            value = _normalize_update_value(field, data[field])
+            update_values.append(value)
             update_fields.append(f"{field} = %s")
-        
         if not update_fields:
             return jsonify({'error': 'No fields to update'}), 400
-        
         update_values.append(record_id)
         update_query = f"UPDATE {table} SET {', '.join(update_fields)} WHERE id = %s"
-        
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(update_query, update_values)
         rows_affected = cursor.rowcount
         conn.commit()
-        
         if rows_affected == 0:
             cursor.close()
             conn.close()
             return jsonify({'error': 'Record not found'}), 404
-        
         if table == 'timetable_teacher':
             cursor.execute(
                 """SELECT id, day_of_week, pair_number, subject_name, audience, fio,
@@ -849,7 +1260,6 @@ def update_record(record_id):
         updated_record = cursor.fetchone()
         cursor.close()
         conn.close()
-        
         if updated_record:
             return jsonify({'message': 'Record updated successfully', 'record': dict(updated_record)})
         return jsonify({'error': 'Record not found'}), 404
@@ -858,8 +1268,89 @@ def update_record(record_id):
         print(f"Error updating record {record_id}: {traceback.format_exc()}")
         return jsonify({'error': str(e)}), 500
 
+
+def _intermediate_has_cleaned_id(cursor):
+    """Проверяет, что intermediate_timetable имеет колонки cleaned_id/teacher_id (новая схема)."""
+    cursor.execute("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'intermediate_timetable' AND column_name = 'cleaned_id'
+    """)
+    return cursor.fetchone() is not None
+
+
+@app.route('/api/db/records/<int:record_id>/fix-field', methods=['PUT', 'POST'])
+def fix_intermediate_field(record_id):
+    """Отметить поле как правильное: скопировать значение из intermediate в cleaned и teacher, пересчитать ошибки."""
+    try:
+        table = get_table_param()
+        if table != 'intermediate_timetable':
+            return jsonify({'error': 'Доступно только для таблицы intermediate_timetable'}), 400
+        data = request.get_json() or {}
+        field = (data.get('field') or request.args.get('field', '')).strip()
+        if field not in ('week_type', 'audience'):
+            return jsonify({'error': 'Укажите field: week_type или audience'}), 400
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        if not _intermediate_has_cleaned_id(cursor):
+            cursor.close()
+            conn.close()
+            return jsonify({
+                'error': 'Таблица intermediate_timetable создана старой версией. Выполните «Слияние расписания» (merge) заново.'
+            }), 400
+        cursor.execute(
+            "SELECT cleaned_id, teacher_id, week_type, audience FROM intermediate_timetable WHERE id = %s",
+            (record_id,)
+        )
+        row = cursor.fetchone()
+        if not row or (row.get('cleaned_id') is None and row.get('teacher_id') is None):
+            cursor.close()
+            conn.close()
+            return jsonify({'error': 'Record not found or no source ids'}), 404
+        cleaned_id = row['cleaned_id']
+        teacher_id = row['teacher_id']
+        value = row.get(field)
+        if cleaned_id:
+            cursor.execute(
+                f"UPDATE timetable_cleaned SET {field} = %s WHERE id = %s",
+                (value, cleaned_id)
+            )
+        if teacher_id:
+            cursor.execute(
+                f"UPDATE timetable_teacher SET {field} = %s WHERE id = %s",
+                (value, teacher_id)
+            )
+        cursor.execute("""
+            UPDATE intermediate_timetable it SET
+                week_error = (
+                    SELECT (c.week_type IS DISTINCT FROM t.week_type)
+                    FROM timetable_cleaned c, timetable_teacher t
+                    WHERE c.id = it.cleaned_id AND t.id = it.teacher_id
+                ),
+                audience_error = (
+                    SELECT (NULLIF(TRIM(c.audience), '') IS DISTINCT FROM NULLIF(TRIM(t.audience), ''))
+                    FROM timetable_cleaned c, timetable_teacher t
+                    WHERE c.id = it.cleaned_id AND t.id = it.teacher_id
+                )
+            WHERE it.id = %s AND it.cleaned_id IS NOT NULL AND it.teacher_id IS NOT NULL
+        """, (record_id,))
+        cursor.execute("SELECT * FROM intermediate_timetable WHERE id = %s", (record_id,))
+        updated_record = cursor.fetchone()
+        conn.commit()
+        cursor.close()
+        conn.close()
+        if updated_record:
+            return jsonify({'message': 'Поле отмечено как правильное', 'record': dict(updated_record)})
+        return jsonify({'error': 'Record not found'}), 404
+    except Exception as e:
+        import traceback
+        print(f"Error fix-field {record_id}: {traceback.format_exc()}")
+        return jsonify({'error': str(e)}), 500
+
+
 def _allowed_insert_fields(table):
-    """Разрешённые поля для вставки в зависимости от таблицы."""
+    """Разрешённые поля для вставки в зависимости от таблицы. intermediate_timetable — только чтение."""
+    if table == 'intermediate_timetable':
+        return []
     if table == 'timetable_teacher':
         return [
             'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio',
@@ -875,9 +1366,11 @@ def _allowed_insert_fields(table):
 
 @app.route('/api/db/records', methods=['POST'])
 def create_record():
-    """Создаёт новую запись в выбранной таблице (table=...)."""
+    """Создаёт новую запись в выбранной таблице (table=...). intermediate_timetable — только чтение."""
     try:
         table = get_table_param()
+        if table == 'intermediate_timetable':
+            return jsonify({'error': 'Таблица intermediate_timetable только для просмотра'}), 400
         data = request.get_json()
         
         if not data:
@@ -971,9 +1464,11 @@ def create_record():
 
 @app.route('/api/db/records/<int:record_id>', methods=['DELETE'])
 def delete_record(record_id):
-    """Удаляет запись из выбранной таблицы (table=...)."""
+    """Удаляет запись из выбранной таблицы (table=...). intermediate_timetable — только чтение."""
     try:
         table = get_table_param()
+        if table == 'intermediate_timetable':
+            return jsonify({'error': 'Таблица intermediate_timetable только для просмотра'}), 400
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(f"SELECT id FROM {table} WHERE id = %s", (record_id,))

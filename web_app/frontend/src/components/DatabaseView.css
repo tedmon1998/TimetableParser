@@ -493,6 +493,47 @@
   flex-wrap: wrap;
 }
 
+.error-filter-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.error-filter-label {
+  font-size: 0.9rem;
+  color: #555;
+  margin-right: 0.25rem;
+}
+
+.error-filter-btn {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.85rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+  color: #333;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.error-filter-btn:hover {
+  background: #f0f0f0;
+  border-color: #999;
+}
+
+.error-filter-btn.active {
+  background: #dc3545;
+  border-color: #c82333;
+  color: #fff;
+}
+
+.error-filter-btn.active:hover {
+  background: #c82333;
+  border-color: #bd2130;
+  color: #fff;
+}
+
 .columns-menu-wrapper {
   position: relative;
 }
@@ -815,6 +856,15 @@
 
 .grid-table-cell.cell-copied .cell-content {
   color: #155724;
+  font-weight: 600;
+}
+
+.grid-table-cell.cell-error {
+  background-color: #f8d7da !important;
+}
+
+.grid-table-cell.cell-error .cell-content {
+  color: #721c24;
   font-weight: 600;
 }
 

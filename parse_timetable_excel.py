@@ -12,17 +12,43 @@ from process_timetable import load_teacher_names, normalize_short_fio
 # Маппинг дней недели
 DAYS_OF_WEEK = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота']
 
-# Префиксы аудиторий
-AUDIENCE_PREFIXES = ['У', 'К', 'А', 'Г', 'м/зал', 'бассейн', 'п/б', 'УЦ', 'л/б', 'зал 2', 'зал гимн', 
+# Префиксы аудиторий (используются только если не загружен info/aud.json)
+AUDIENCE_PREFIXES = ['У', 'К', 'А', 'Г', 'м/зал', 'бассейн', 'п/б', 'УЦ', 'л/б', 'зал 2', 'зал гимн',
                      'ЭБЦ', 'ЦАС', 'СОКЦОМиД', 'ЭОиДОТ', 'С', 'СОКБ']
 
+# Список валидных аудиторий из info/aud.json (ваш список) — загружается при первом обращении
+_valid_audiences = None
+
+def load_valid_audiences():
+    """Загружает список валидных аудиторий из info/aud.json (тот же список, что в clean_audiences)."""
+    global _valid_audiences
+    if _valid_audiences is not None:
+        return _valid_audiences
+    for base in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
+        path = os.path.join(base, 'info', 'aud.json')
+        if os.path.isfile(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    _valid_audiences = set(json.load(f))
+                return _valid_audiences
+            except Exception:
+                pass
+    _valid_audiences = set()
+    return _valid_audiences
+
 def is_audience(text):
-    """Проверяет, является ли текст аудиторией"""
+    """Проверяет, является ли текст аудиторией. Использует список из info/aud.json; С* считаем как С."""
     if not text or not isinstance(text, str):
         return False
-    text = text.strip()
-    for prefix in AUDIENCE_PREFIXES:
-        if text.startswith(prefix):
+    token = text.strip().rstrip('*')
+    valid = load_valid_audiences()
+    if valid:
+        return token in valid
+    # Fallback без списка: префиксы + цифры для У/К/А/Г
+    for prefix in sorted(AUDIENCE_PREFIXES, key=lambda x: -len(x)):
+        if token.startswith(prefix):
+            if len(prefix) == 1 and prefix in 'УКАГ':
+                return bool(re.search(r'\d', token[1:]))
             return True
     return False
 
@@ -36,23 +62,31 @@ def split_group_string(group_str):
 
 
 def parse_pair_number(pair_str):
-    """Парсит номер пары, может быть диапазон типа '1-2'"""
+    """Парсит номер пары, может быть диапазон типа '1-2' или '1-2.' (с точкой)."""
     if not pair_str:
         return []
     pair_str = str(pair_str).strip()
+    # Убираем точку и прочие нецифровые символы для парсинга (например "1-2." -> "1-2")
+    pair_str_clean = re.sub(r'[^\d\-]', '', pair_str)
+    if not pair_str_clean:
+        return []
     
     # Если это диапазон типа "1-2"
-    if '-' in pair_str:
+    if '-' in pair_str_clean:
         try:
-            start, end = map(int, pair_str.split('-'))
-            return list(range(start, end + 1))
-        except:
+            parts = pair_str_clean.split('-', 1)
+            start = int(parts[0]) if parts[0] else 0
+            end = int(parts[1]) if len(parts) > 1 and parts[1] else start
+            if start and end:
+                return list(range(start, end + 1))
+        except (ValueError, TypeError):
             pass
     
     # Если это одно число
     try:
-        return [int(pair_str)]
-    except:
+        n = int(pair_str_clean)
+        return [n] if n else []
+    except (ValueError, TypeError):
         return []
 
 def extract_subgroups_from_text(text):
@@ -67,6 +101,31 @@ def extract_subgroups_from_text(text):
             if n not in subgroups:
                 subgroups.append(n)
     return sorted(subgroups)
+
+
+def normalize_type_slash_for_weeks(text):
+    """Если одна группа ходит по числителю один тип, по знаменателю другой (запись через "/"),
+    приводим к формату "//": "Название (лек)/(пр), К511" -> "Название (лек), К511 // Название (пр), К511".
+    Вызывать до обработки "//". Если в тексте уже есть "//", текст не меняем."""
+    if not text or '//' in text:
+        return text
+    # Паттерн: название (тип1)/(тип2) [, аудитория...]; тип1/тип2 — лек, пр, л, п и т.д.
+    type_pattern = r'(лек|пр|л|п|практика|лекция)'
+    m = re.search(
+        r'^(.+?)\s*\(' + type_pattern + r'\)\s*/\s*\(' + type_pattern + r'\)\s*(.*)$',
+        text.strip(),
+        re.IGNORECASE
+    )
+    if not m:
+        return text
+    prefix, type1, type2, suffix = m.group(1).strip(), m.group(2), m.group(3), m.group(4).strip()
+    suffix_clean = suffix.lstrip(',').strip()  # ", К511" -> "К511"
+    part1 = f"{prefix} ({type1})"
+    part2 = f"{prefix} ({type2})"
+    if suffix_clean:
+        part1 += ", " + suffix_clean
+        part2 += ", " + suffix_clean
+    return part1 + " // " + part2
 
 
 def parse_week_type(text):
@@ -120,43 +179,125 @@ def parse_lecture_type(text):
         return 'практика'
 
 def extract_audience(text):
-    """Извлекает аудиторию из текста. Перед вызовом текст нормализуют: «). » -> «), »."""
+    """Извлекает аудиторию из текста по списку info/aud.json; допускается «С*» как «С». Перед вызовом текст нормализуют: «). » -> «), »."""
     if not text or not isinstance(text, str):
         return ''
-    
     text = text.strip()
     audiences = []
-    
-    # Разделяем по запятым и ищем аудитории
+    valid = load_valid_audiences()
+    # Сначала ищем по вашему списку аудиторий (длинные первыми, чтобы «СОКБ» не съедало «С»)
+    if valid:
+        for aud in sorted(valid, key=lambda x: -len(x)):
+            # В тексте может быть «С*» — сноска; считаем как «С»
+            pattern = r'\b' + re.escape(aud) + r'\*?\b'
+            if re.search(pattern, text, re.IGNORECASE):
+                if aud not in audiences:
+                    audiences.append(aud)
+        if audiences:
+            return ', '.join(audiences)
+    # Fallback без списка: по префиксам
     parts = re.split(r'[,;]', text)
     for part in parts:
         part = part.strip()
         if not part:
             continue
-        
-        # Проверяем, является ли часть аудиторией
-        for prefix in AUDIENCE_PREFIXES:
+        for prefix in sorted(AUDIENCE_PREFIXES, key=lambda x: -len(x)):
             if part.startswith(prefix) or prefix in part:
-                # Извлекаем аудиторию (может быть с номером)
-                # Паттерн: префикс + номер (например, "У708", "К506", "А601")
-                match = re.search(rf'({prefix}[^\s,;]*)', part, re.IGNORECASE)
+                match = re.search(rf'({re.escape(prefix)}[^\s,;]*)', part, re.IGNORECASE)
                 if match:
                     aud = match.group(1).strip()
-                    if aud not in audiences:
+                    aud = re.sub(r'//+\s*$', '', aud).strip()
+                    aud = aud.rstrip('*').strip()
+                    if valid and aud not in valid:
+                        continue
+                    if not valid and len(prefix) == 1 and prefix in 'УКАГ' and not re.search(r'\d', aud):
+                        continue
+                    if aud and aud not in audiences:
                         audiences.append(aud)
                 else:
-                    if part not in audiences:
-                        audiences.append(part)
+                    if is_audience(part) and part not in audiences:
+                        audiences.append(part.rstrip('*').strip() or part)
                 break
-    
-    # Если не нашли по префиксам, ищем паттерны типа "ауд. 708", "ауд 506"
     if not audiences:
-        # Ищем "ауд" или "аудитория"
         aud_pattern = re.search(r'(?:ауд\.?|аудитория)\s*([А-ЯЁа-яё0-9\-\s]+)', text, re.IGNORECASE)
         if aud_pattern:
-            audiences.append(aud_pattern.group(1).strip())
-    
+            a = aud_pattern.group(1).strip()
+            if not valid or a in valid:
+                audiences.append(a)
     return ', '.join(audiences) if audiences else ''
+
+
+def extract_audience_list(part_text):
+    """Из одной части (числитель или знаменатель) извлекает список аудиторий по порядку.
+    Напр. 'Дисц (лек), К511/К503' -> ['К511', 'К503']. Разбивает по запятой и по '/' (пробел-слэш-пробел)."""
+    if not part_text or not isinstance(part_text, str):
+        return []
+    part_text = part_text.strip()
+    collected = []
+    for seg in re.split(r'[,;]', part_text):
+        seg = seg.strip()
+        if not seg:
+            continue
+        for s in re.split(r'\s*/\s*', seg):
+            s = re.sub(r'//+\s*$', '', s.strip()).strip()
+            if s and is_audience(s):
+                collected.append(s.rstrip('*').strip() or s)
+    return collected
+
+
+def build_combined_subject_and_audience(raw_discipline):
+    """Когда в ячейке есть '//' (числитель/знаменатель): одна запись, subject_name и audience в формате
+    'Часть1, К511 // Часть2, К503' и 'К511//К503'. Каждая часть получает свою аудиторию (числитель — первую, знаменатель — вторую при формате А/Б)."""
+    if not raw_discipline or '//' not in raw_discipline:
+        return None, None
+    parts = [p.strip() for p in raw_discipline.split('//') if p.strip()]
+    if len(parts) < 2:
+        return None, None
+    aud_lists = [extract_audience_list(p) for p in parts]
+    # Для объединённой аудитории: i-я часть -> i-я аудитория из её списка (числитель=0, знаменатель=1)
+    chosen = []
+    for i in range(len(parts)):
+        if i < len(aud_lists[i]):
+            chosen.append(aud_lists[i][i].strip())
+        elif aud_lists[i]:
+            chosen.append(aud_lists[i][0].strip())
+        else:
+            chosen.append('')
+    combined_aud = '//'.join(a for a in chosen if a)
+    # Нормализация: без "//," и ",//" — только "К504//К429"
+    combined_aud = re.sub(r',?\s*//\s*,?', '//', combined_aud).strip(',').strip()
+    # Формируем subject_name: в каждой части подменяем блок аудиторий на одну выбранную
+    part_displays = []
+    for i, p in enumerate(parts):
+        auds = aud_lists[i]
+        chosen_one = chosen[i] if i < len(chosen) else ''
+        # Убираем из части строку с аудиториями (сегменты с А, А/Б, А,Б)
+        segs = re.split(r'[,;]', p)
+        keep = []
+        for seg in segs:
+            seg = seg.strip()
+            if not seg:
+                continue
+            # Один сегмент — аудитория или несколько через "/" (К511/К503)
+            if is_audience(seg):
+                continue
+            sub = re.split(r'\s*/\s*', seg)
+            if all(x.strip() and is_audience(x.strip()) for x in sub):
+                continue
+            keep.append(seg)
+        subject_part = ', '.join(keep).strip().rstrip(',')
+        if chosen_one:
+            part_displays.append((subject_part + ', ' + chosen_one).strip(',').strip())
+        else:
+            part_displays.append(subject_part)
+    # Если вторая часть — только аудитория (нет названия дисциплины), одна запись: "Часть1, К511"
+    if len(part_displays) == 2 and (not part_displays[1].strip() or part_displays[1].strip() == (chosen[1] or '')):
+        subject_name = (part_displays[0] + (', ' + chosen[1] if chosen[1] else '')).strip(',').strip()
+        combined_aud = (chosen[1] or chosen[0] or '').strip()
+        return subject_name, combined_aud
+    subject_name = ' // '.join(part_displays)
+    return subject_name, combined_aud
+
 
 def extract_subject_name(text):
     """Извлекает название предмета из текста, убирая лишние символы"""
@@ -913,6 +1054,8 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             
             # Нормализация: "(лек). У708" -> "(лек), У708", "(пр). " -> "(пр), " и т.д., чтобы аудитория и тип занятия парсились
             raw_discipline = raw_discipline.replace('). ', '), ')
+            # Одна группа: числитель — один тип, знаменатель — другой: "(лек)/(пр), К511" -> "...(лек), К511 // ...(пр), К511"
+            raw_discipline = normalize_type_slash_for_weeks(raw_discipline)
             
             if not raw_discipline:
                 continue
@@ -932,14 +1075,25 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                             teacher_fio = teacher_text
             
             # Опционально: аудитория, тип занятия, неделя
+            subject_name_for_record = raw_discipline
             audience = extract_audience(raw_discipline)
-            lecture_type = parse_lecture_type(raw_discipline)
             week_types = parse_week_type(raw_discipline)
-            is_remote = 'ЭОиДОТ' in raw_discipline.upper() or 'эоидот' in raw_discipline.lower()
-            
+            # Если в ячейке "//" (числитель/знаменатель) — одна запись, формат "Часть1, К511 // Часть2, К503" и "К511//К503"
+            if '//' in raw_discipline:
+                sn, au = build_combined_subject_and_audience(raw_discipline)
+                if sn and au is not None:
+                    subject_name_for_record = sn
+                    audience = au
+                    week_types = ['обе недели']  # одна запись на обе недели, без дублей
             if not week_types:
                 week_types = ['обе недели']
-            
+            lecture_type = parse_lecture_type(raw_discipline)
+            is_remote = 'ЭОиДОТ' in raw_discipline.upper() or 'эоидот' in raw_discipline.lower()
+            # Нормализация аудитории: "К504//, К429" -> "К504//К429"; "К504//" в конце -> "К504"
+            if audience:
+                audience = re.sub(r',?\s*//\s*,?', '//', audience).strip(',').strip()
+                audience = re.sub(r'//+\s*$', '', audience).strip()  # убрать завершающие //
+
             # Одна запись на каждую группу: "501-33,501-34", "502-21.502-22" -> отдельные записи
             group_values = split_group_string(metadata.get('group') or '')
             # Подгруппы из текста дисциплины (п/г 1, подгруппа 2)
@@ -959,7 +1113,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                             result_entry = {
                                 'day_of_week': day_of_week,
                                 'pair_number': pair_num,
-                                'subject_name': raw_discipline,
+                                'subject_name': subject_name_for_record,
                                 'teacher': teacher_fio,
                                 'audience': audience,
                                 'lecture_type': lecture_type,
