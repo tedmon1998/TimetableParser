@@ -1,12 +1,32 @@
 import json
 import os
+import re
 import sys
 import requests
 import numpy as np
 
-# Путь к справочнику дисциплин
+# Путь к справочнику дисциплин и кэшу эмбеддингов
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DISCIPLINE_FILE = os.path.join(SCRIPT_DIR, "info", "discipline.json")
+EMBEDDINGS_DIR = os.path.join(SCRIPT_DIR, "subject")
+EMBEDDINGS_FILE = os.path.join(EMBEDDINGS_DIR, "discipline_embeddings.npy")
+EMBEDDINGS_META_FILE = os.path.join(EMBEDDINGS_DIR, "discipline_embeddings_meta.json")
+
+
+def normalize_for_compare(s):
+    """Нормализация строки перед сравнением: убрать '-', '(лек', '(пр', '(лаб', '.', ',', числа; обрезать пробелы по краям."""
+    if not s:
+        return s
+    s = str(s).strip()
+    # Убрать все '-' (в любом количестве: '--', '---', '-- ----' и т.д.)
+    s = re.sub(r"-+", "", s)
+    # Убрать подстроки и символы
+    for remove in ["(лек", "(пр", "(лаб", ".", ",", ")", "("]:
+        s = s.replace(remove, "")
+    # Убрать числа
+    s = re.sub(r"\d+", "", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
 
 
 def load_documents():
@@ -31,6 +51,28 @@ def get_embedding(text):
     return np.array(response.json()["embedding"])
 
 
+def load_cached_embeddings(documents):
+    """Загружает эмбеддинги из файла, если кэш есть и соответствует текущему списку документов."""
+    if not os.path.isfile(EMBEDDINGS_FILE) or not os.path.isfile(EMBEDDINGS_META_FILE):
+        return None
+    try:
+        with open(EMBEDDINGS_META_FILE, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        if meta.get("documents") != documents:
+            return None
+        return np.load(EMBEDDINGS_FILE)
+    except Exception:
+        return None
+
+
+def save_embeddings(documents, embeddings):
+    """Сохраняет эмбеддинги и метаданные (список документов) в папку subject."""
+    os.makedirs(EMBEDDINGS_DIR, exist_ok=True)
+    np.save(EMBEDDINGS_FILE, embeddings)
+    with open(EMBEDDINGS_META_FILE, "w", encoding="utf-8") as f:
+        json.dump({"documents": documents}, f, ensure_ascii=False, indent=0)
+
+
 def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
@@ -42,18 +84,23 @@ def main():
         print("Список дисциплин пуст. Завершение.", file=sys.stderr)
         return
 
-    print("Загрузка эмбеддингов документов...", file=sys.stderr)
-    doc_embeddings = []
-    for i, doc in enumerate(documents):
-        try:
-            doc_embeddings.append(get_embedding(doc))
-        except Exception as e:
-            print(f"Ошибка эмбеддинга для документа {i}: {e}", file=sys.stderr)
-            return
-        if (i + 1) % 200 == 0:
-            print(f"  {i + 1}/{len(documents)}", file=sys.stderr)
-    doc_embeddings = np.array(doc_embeddings)
-    print("Готово.", file=sys.stderr)
+    doc_embeddings = load_cached_embeddings(documents)
+    if doc_embeddings is not None:
+        print("Эмбеддинги загружены из кэша.", file=sys.stderr)
+    else:
+        print("Загрузка эмбеддингов документов...", file=sys.stderr)
+        doc_embeddings = []
+        for i, doc in enumerate(documents):
+            try:
+                doc_embeddings.append(get_embedding(normalize_for_compare(doc)))
+            except Exception as e:
+                print(f"Ошибка эмбеддинга для документа {i}: {e}", file=sys.stderr)
+                return
+            if (i + 1) % 200 == 0:
+                print(f"  {i + 1}/{len(documents)}", file=sys.stderr)
+        doc_embeddings = np.array(doc_embeddings)
+        save_embeddings(documents, doc_embeddings)
+        print("Готово. Эмбеддинги сохранены в кэш.", file=sys.stderr)
     print("-" * 50)
     print("Вводите текст для проверки (пустая строка или exit — выход):")
     print()
@@ -67,7 +114,9 @@ def main():
             break
         query = line
         try:
-            query_emb = get_embedding(query)
+            normalized_query = normalize_for_compare(query)
+            print(f"normalized_query : {normalized_query}")
+            query_emb = get_embedding(normalized_query)
         except Exception as e:
             print(f"Ошибка: {e}\n")
             continue

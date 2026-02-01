@@ -957,9 +957,11 @@ def get_db_records():
         if where_conditions:
             where_clause = "WHERE " + " AND ".join(where_conditions)
         
-        # Получаем параметры сортировки
-        sort_by = request.args.get('sort_by', 'id').strip()
-        sort_order = request.args.get('sort_order', 'desc').strip().upper()
+        # Получаем параметры сортировки (можно несколько столбцов через запятую)
+        sort_by_raw = request.args.get('sort_by', 'id').strip()
+        sort_order_raw = request.args.get('sort_order', 'desc').strip().upper()
+        sort_by_list = [s.strip() for s in sort_by_raw.split(',') if s.strip()]
+        sort_order_list = [s.strip().upper() for s in sort_order_raw.split(',') if s.strip()]
         
         # Валидация параметров сортировки
         if table == 'intermediate_timetable':
@@ -970,18 +972,27 @@ def get_db_records():
             allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
                                   'audience', 'fio', 'teacher', 'group_name', 'subgroup', 'course',
                                   'institute', 'direction', 'profile', 'week_type']
-        if sort_by not in allowed_sort_fields:
-            sort_by = 'id'
+        if table == 'timetable_teacher':
+            sort_by_allowed = ['id', 'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio', 'group_name', 'subgroup', 'course', 'week_type']
+            allowed_sort_fields = sort_by_allowed
         
-        if sort_order not in ['ASC', 'DESC']:
-            sort_order = 'DESC'
-        
-        # Для дня недели — сортировка по порядку (понедельник=1, ..., воскресенье=7)
-        day_order_sql = """CASE LOWER(TRIM(COALESCE(day_of_week, '')))
-            WHEN 'понедельник' THEN 1 WHEN 'вторник' THEN 2 WHEN 'среда' THEN 3
-            WHEN 'четверг' THEN 4 WHEN 'пятница' THEN 5 WHEN 'суббота' THEN 6
-            WHEN 'воскресенье' THEN 7 ELSE 8 END"""
-        order_clause = f"{day_order_sql} {sort_order}" if sort_by == 'day_of_week' else f"{sort_by} {sort_order}"
+        # Собираем пары (поле, порядок), по умолчанию id DESC
+        order_parts = []
+        for i, sort_by in enumerate(sort_by_list):
+            if sort_by not in allowed_sort_fields:
+                continue
+            sort_order = sort_order_list[i] if i < len(sort_order_list) else (sort_order_list[0] if sort_order_list else 'DESC')
+            if sort_order not in ['ASC', 'DESC']:
+                sort_order = 'DESC'
+            day_order_sql = """CASE LOWER(TRIM(COALESCE(day_of_week, '')))
+                WHEN 'понедельник' THEN 1 WHEN 'вторник' THEN 2 WHEN 'среда' THEN 3
+                WHEN 'четверг' THEN 4 WHEN 'пятница' THEN 5 WHEN 'суббота' THEN 6
+                WHEN 'воскресенье' THEN 7 ELSE 8 END"""
+            part = f"{day_order_sql} {sort_order}" if sort_by == 'day_of_week' else f"{sort_by} {sort_order}"
+            order_parts.append(part)
+        if not order_parts:
+            order_parts = ['id DESC']
+        order_clause = ', '.join(order_parts)
         
         if table == 'intermediate_timetable':
             query = f"""
@@ -992,12 +1003,6 @@ def get_db_records():
                 LIMIT %s OFFSET %s
             """
         elif table == 'timetable_teacher':
-            sort_by_allowed = ['id', 'day_of_week', 'pair_number', 'subject_name', 'audience', 'fio', 'group_name', 'subgroup', 'course', 'week_type']
-            if sort_by not in sort_by_allowed:
-                sort_by = 'id'
-                order_clause = f"{sort_by} {sort_order}"
-            elif sort_by == 'day_of_week':
-                order_clause = f"{day_order_sql} {sort_order}"
             query = f"""
                 SELECT id, day_of_week, pair_number, subject_name, audience, fio,
                     fio AS teacher, group_name, week_type, subgroup,
@@ -1009,8 +1014,6 @@ def get_db_records():
                 LIMIT %s OFFSET %s
             """
         else:
-            if sort_by == 'day_of_week':
-                order_clause = f"{day_order_sql} {sort_order}"
             query = f"""
                 SELECT id, day_of_week, pair_number, subject_name, lecture_type, audience,
                     fio, teacher, group_name, week_type, subgroup,
@@ -1367,21 +1370,140 @@ def _allowed_insert_fields(table):
         'is_external', 'is_remote', 'num_subgroups'
     ]
 
+def _create_record_intermediate(reference_id, position, empty=False):
+    """Дублирует или создаёт пустую запись в объединённой таблице: вставка в cleaned/teacher + merge."""
+    conn = psycopg2.connect(**DB_CONFIG)
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    if not _intermediate_has_cleaned_id(cursor):
+        cursor.close()
+        conn.close()
+        return None, 'Таблица intermediate_timetable создана старой версией. Выполните «Слияние расписания» заново.'
+    cursor.execute(
+        "SELECT cleaned_id, teacher_id, day_of_week, pair_number, subject_name, lecture_type, audience, "
+        "group_name, week_type, subgroup, institute, course, direction, department, "
+        "is_external, is_remote, num_subgroups, fio FROM intermediate_timetable WHERE id = %s",
+        (reference_id,)
+    )
+    ref_row = cursor.fetchone()
+    if not ref_row:
+        cursor.close()
+        conn.close()
+        return None, 'Запись не найдена'
+    cleaned_id = ref_row.get('cleaned_id')
+    teacher_id = ref_row.get('teacher_id')
+
+    cleaned_cols = [
+        'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
+        'fio', 'teacher', 'group_name', 'week_type', 'subgroup',
+        'institute', 'course', 'direction', 'department',
+        'is_external', 'is_remote', 'num_subgroups'
+    ]
+    teacher_cols = [
+        'fio', 'pair_number', 'day_of_week', 'group_name', 'audience', 'department',
+        'week_type', 'subgroup', 'num_subgroups', 'is_external', 'is_remote', 'subject_name'
+    ]
+
+    if empty:
+        # Пустая запись: только ключевые поля из reference для join при merge
+        cleaned_vals = [
+            ref_row.get('day_of_week'), ref_row.get('pair_number'), None, None, None,
+            None, None, ref_row.get('group_name'), ref_row.get('week_type'), ref_row.get('subgroup'),
+            None, None, None, None, None, None, None
+        ]
+        teacher_vals = [
+            None, ref_row.get('pair_number'), ref_row.get('day_of_week'), ref_row.get('group_name'),
+            None, None, ref_row.get('week_type'), ref_row.get('subgroup'), None, None, None, None
+        ]
+    else:
+        # Дубликат: копируем из cleaned и teacher
+        if cleaned_id:
+            cursor.execute("SELECT * FROM timetable_cleaned WHERE id = %s", (cleaned_id,))
+            c_row = cursor.fetchone()
+            if c_row:
+                cleaned_vals = [c_row.get(f) for f in cleaned_cols]
+            else:
+                cleaned_vals = [ref_row.get(f) if f != 'teacher' else ref_row.get('fio') for f in cleaned_cols]
+        else:
+            cleaned_vals = [
+                ref_row.get('day_of_week'), ref_row.get('pair_number'), ref_row.get('subject_name'),
+                ref_row.get('lecture_type'), ref_row.get('audience'), ref_row.get('fio'), ref_row.get('fio'),
+                ref_row.get('group_name'), ref_row.get('week_type'), ref_row.get('subgroup'),
+                ref_row.get('institute'), ref_row.get('course'), ref_row.get('direction'), ref_row.get('department'),
+                ref_row.get('is_external'), ref_row.get('is_remote'), ref_row.get('num_subgroups')
+            ]
+        if teacher_id:
+            cursor.execute("SELECT * FROM timetable_teacher WHERE id = %s", (teacher_id,))
+            t_row = cursor.fetchone()
+            if t_row:
+                teacher_vals = [t_row.get(f) for f in teacher_cols]
+            else:
+                teacher_vals = [
+                    ref_row.get('fio'), ref_row.get('pair_number'), ref_row.get('day_of_week'),
+                    ref_row.get('group_name'), ref_row.get('audience'), ref_row.get('department'),
+                    ref_row.get('week_type'), ref_row.get('subgroup'), ref_row.get('num_subgroups'),
+                    ref_row.get('is_external'), ref_row.get('is_remote'), ref_row.get('subject_name')
+                ]
+        else:
+            teacher_vals = [
+                ref_row.get('fio'), ref_row.get('pair_number'), ref_row.get('day_of_week'),
+                ref_row.get('group_name'), ref_row.get('audience'), ref_row.get('department'),
+                ref_row.get('week_type'), ref_row.get('subgroup'), ref_row.get('num_subgroups'),
+                ref_row.get('is_external'), ref_row.get('is_remote'), ref_row.get('subject_name')
+            ]
+
+    def to_val(v):
+        if v is None or v == '':
+            return None
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return int(v) if v == v else None
+        return str(v)
+
+    cleaned_vals = [to_val(v) for v in cleaned_vals]
+    teacher_vals = [to_val(v) for v in teacher_vals]
+
+    cursor.execute(
+        "INSERT INTO timetable_cleaned (" + ", ".join(cleaned_cols) + ") VALUES (" + ", ".join(["%s"] * len(cleaned_cols)) + ") RETURNING id",
+        cleaned_vals
+    )
+    new_cleaned_id = cursor.fetchone()['id']
+    cursor.execute(
+        "INSERT INTO timetable_teacher (" + ", ".join(teacher_cols) + ") VALUES (" + ", ".join(["%s"] * len(teacher_cols)) + ") RETURNING id",
+        teacher_vals
+    )
+    new_teacher_id = cursor.fetchone()['id']
+    conn.commit()
+    cursor.close()
+    conn.close()
+    run_merge_timetable()
+    return True, None
+
+
 @app.route('/api/db/records', methods=['POST'])
 def create_record():
-    """Создаёт новую запись в выбранной таблице (table=...). intermediate_timetable — только чтение."""
+    """Создаёт новую запись в выбранной таблице (table=...). Для intermediate_timetable — дубликат/пустая через cleaned+teacher+merge."""
     try:
         table = get_table_param()
-        if table == 'intermediate_timetable':
-            return jsonify({'error': 'Таблица intermediate_timetable только для просмотра'}), 400
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-        
+        data = request.get_json() or {}
         reference_id = data.get('_reference_id')
         position = data.get('_position')
         record_data = {k: v for k, v in data.items() if not k.startswith('_')}
+
+        if table == 'intermediate_timetable':
+            if reference_id is None:
+                return jsonify({'error': 'Для объединённой таблицы укажите _reference_id (id строки)'}), 400
+            has_data = any(
+                record_data.get(k) not in (None, '') for k in
+                ['day_of_week', 'pair_number', 'subject_name', 'group_name', 'week_type', 'fio']
+            )
+            ok, err = _create_record_intermediate(reference_id, position, empty=not has_data)
+            if err:
+                return jsonify({'error': err}), 400 if 'старой версией' in err else 404
+            return jsonify({'message': 'Record created successfully; merge completed'}), 201
+
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
         if table == 'timetable_teacher' and 'teacher' in record_data:
             record_data['fio'] = record_data.get('fio') or record_data.get('teacher')
         
@@ -1467,13 +1589,37 @@ def create_record():
 
 @app.route('/api/db/records/<int:record_id>', methods=['DELETE'])
 def delete_record(record_id):
-    """Удаляет запись из выбранной таблицы (table=...). intermediate_timetable — только чтение."""
+    """Удаляет запись из выбранной таблицы (table=...). Для intermediate_timetable удаляет из cleaned/teacher и пересобирает merge."""
     try:
         table = get_table_param()
-        if table == 'intermediate_timetable':
-            return jsonify({'error': 'Таблица intermediate_timetable только для просмотра'}), 400
         conn = psycopg2.connect(**DB_CONFIG)
         cursor = conn.cursor(cursor_factory=RealDictCursor)
+        if table == 'intermediate_timetable':
+            if not _intermediate_has_cleaned_id(cursor):
+                cursor.close()
+                conn.close()
+                return jsonify({
+                    'error': 'Таблица intermediate_timetable создана старой версией. Выполните «Слияние расписания» заново.'
+                }), 400
+            cursor.execute(
+                "SELECT cleaned_id, teacher_id FROM intermediate_timetable WHERE id = %s",
+                (record_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Record not found'}), 404
+            cleaned_id, teacher_id = row.get('cleaned_id'), row.get('teacher_id')
+            if cleaned_id is not None:
+                cursor.execute("DELETE FROM timetable_cleaned WHERE id = %s", (cleaned_id,))
+            if teacher_id is not None:
+                cursor.execute("DELETE FROM timetable_teacher WHERE id = %s", (teacher_id,))
+            conn.commit()
+            cursor.close()
+            conn.close()
+            run_merge_timetable()
+            return jsonify({'message': 'Record deleted successfully'}), 200
         cursor.execute(f"SELECT id FROM {table} WHERE id = %s", (record_id,))
         record = cursor.fetchone()
         if not record:

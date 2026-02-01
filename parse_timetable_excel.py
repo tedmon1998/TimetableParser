@@ -163,30 +163,45 @@ def parse_week_type(text):
     return ['обе недели']
 
 def _strip_lecture_type_markers(text):
-    """Убирает из текста маркеры типа занятия: (лек), (пр), (лаб) и т.д. Для отображения названия без типа."""
+    """Убирает из текста маркеры типа занятия: (лек), (пр), (лаб) и т.д. Для отображения названия без типа.
+    Учитывает пробелы в скобках и точку после: (пр). А603 -> А603."""
     if not text or not isinstance(text, str):
         return text
-    for pattern in (r'\(лек\)', r'\(пр\)', r'\(лаб\)', r'\(практика\)', r'\(лабораторная\)', r'\(л\)', r'\(п\)'):
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    # С пробелами внутри скобок и опциональной точкой/запятой после: (пр). ( пр ),
+    for pattern in (
+        r'\(\s*лек\s*\)\s*[.,]?\s*', r'\(\s*пр\s*\)\s*[.,]?\s*', r'\(\s*лаб\s*\)\s*[.,]?\s*',
+        r'\(\s*практика\s*\)\s*[.,]?\s*', r'\(\s*лабораторная\s*\)\s*[.,]?\s*',
+        r'\(\s*лекция\s*\)\s*[.,]?\s*', r'\(\s*л\s*\)\s*[.,]?\s*', r'\(\s*п\s*\)\s*[.,]?\s*'
+    ):
+        text = re.sub(pattern, ' ', text, flags=re.IGNORECASE)
     return re.sub(r'\s+', ' ', text).strip().strip(',').strip()
 
 
 def parse_lecture_type(text):
     """Определяет тип занятия: лекция, практика или лабораторная.
-    Проверяем лабораторную до практики, чтобы «лабораторная практика» давала лабораторная."""
+    Проверяем лабораторную до практики, чтобы «лабораторная практика» давала лабораторная.
+    Учитываем варианты: (пр), ( пр ), (пр). А603 и т.д."""
     if not text or not isinstance(text, str):
         return 'практика'
     
-    text = text.lower()
-    if '(лек)' in text or 'лекция' in text:
+    text_lower = text.lower()
+    # Маркеры в скобках с возможными пробелами и точкой после: (лек), ( лек ), (лек). А603
+    if re.search(r'\(\s*лек\s*\)', text_lower) or 'лекция' in text_lower:
         return 'лекция'
-    # Лабораторная — до проверки «практика», иначе «лабораторная практика» даст практика
-    if '(лаб)' in text or 'лабораторная' in text or 'лабораторные' in text or 'лаб' in text:
+    # Лабораторная — до проверки «практика»
+    if re.search(r'\(\s*лаб\s*\)', text_lower) or 'лабораторная' in text_lower or 'лабораторные' in text_lower or re.search(r'\bлаб\b', text_lower):
         return 'лабораторная'
-    if '(пр)' in text or 'практика' in text:
+    if re.search(r'\(\s*пр\s*\)', text_lower) or 'практика' in text_lower:
         return 'практика'
-    # Без скобок: лек/лаб по подстроке
-    if 'лек' in text:
+    # Расширенные маркеры: (практика), (лекция), (лабораторная)
+    if re.search(r'\(\s*лекция\s*\)', text_lower):
+        return 'лекция'
+    if re.search(r'\(\s*лабораторная\s*\)', text_lower):
+        return 'лабораторная'
+    if re.search(r'\(\s*практика\s*\)', text_lower):
+        return 'практика'
+    # Без скобок: лек по подстроке (осторожно с «лек» внутри слов)
+    if re.search(r'\bлек\b', text_lower) or 'лекция' in text_lower:
         return 'лекция'
     return 'практика'
 
@@ -257,6 +272,26 @@ def extract_audience_list(part_text):
     return collected
 
 
+def week_type_from_single_part(part_text):
+    """Определяет тип недели для одной части (одна ячейка) при двух соседних колонках.
+    Если в ячейке нет «//» и нет « / » — это обе недели (две колонки = две подгруппы, не числ./знам.).
+    Числитель/знаменатель выводим только при явном разделителе в тексте."""
+    if not part_text or not isinstance(part_text, str):
+        return 'обе недели'
+    part_stripped = part_text.strip()
+    # Нет разделителя недель — обе недели (напр. две колонки: п/г 1 и п/г 2 без //)
+    if '//' not in part_stripped and ' / ' not in part_stripped:
+        return 'обе недели'
+    t = part_stripped.lstrip('/').strip().lower()
+    if re.search(r'п/г\s*1|подгруппа\s*1', t):
+        return 'числитель'
+    if re.search(r'п/г\s*2|подгруппа\s*2', t):
+        return 'знаменатель'
+    if part_stripped.startswith('//') and 'п/г 2' not in t and 'подгруппа 2' not in t:
+        return 'числитель'
+    return 'обе недели'
+
+
 def build_combined_subject_and_audience(raw_discipline):
     """Когда в ячейке есть '//' (числитель/знаменатель): одна запись, subject_name и audience в формате
     'Часть1, К511 // Часть2, К503' и 'К511//К503'. Каждая часть получает свою аудиторию (числитель — первую, знаменатель — вторую при формате А/Б)."""
@@ -298,7 +333,6 @@ def build_combined_subject_and_audience(raw_discipline):
                 continue
             keep.append(seg)
         subject_part = ', '.join(keep).strip().rstrip(',')
-        subject_part = _strip_lecture_type_markers(subject_part)
         if chosen_one:
             part_displays.append((subject_part + ', ' + chosen_one).strip(',').strip())
         else:
@@ -1033,8 +1067,13 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             pair_numbers = []
             if pair_col and pair_col <= len(row):
                 pair_cell = row[pair_col - 1]
-                if pair_cell.value:
-                    pair_numbers = parse_pair_number(pair_cell.value)
+                pair_raw = get_merged_cell_value(ws, pair_cell) or (pair_cell.value if pair_cell else None)
+                if pair_raw:
+                    pair_str = str(pair_raw).strip().upper()
+                    # ЭУК в столбце "пара" — не предмет, строку не берём
+                    if pair_str == 'ЭУК':
+                        continue
+                    pair_numbers = parse_pair_number(pair_raw)
             
             # Если не нашли в колонке "пара", проверяем вторую колонку таблицы
             if not pair_numbers and start_col + 1 <= len(row):
@@ -1066,19 +1105,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             if not discipline_parts:
                 continue
             
-            # Объединяем все ячейки дисциплины в один сырой текст (через пробел)
-            raw_discipline = ' '.join(discipline_parts).strip()
-            
-            # Нормализация: "(лек). У708" -> "(лек), У708", "(пр). " -> "(пр), " и т.д., чтобы аудитория и тип занятия парсились
-            raw_discipline = raw_discipline.replace('). ', '), ')
-            # Одна группа: числитель — один тип, знаменатель — другой: "(лек)/(пр), К511" -> "...(лек), К511 // ...(пр), К511"
-            raw_discipline = normalize_type_slash_for_weeks(raw_discipline)
-            
-            if not raw_discipline:
-                continue
-            
-            # Опционально: извлекаем дополнительные данные
-            # Преподаватель
+            # Опционально: извлекаем дополнительные данные (общие для строки)
             teacher_fio = ''
             if teacher_col and teacher_col <= len(row):
                 teacher_cell = row[teacher_col - 1]
@@ -1091,8 +1118,64 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                         except:
                             teacher_fio = teacher_text
             
-            # Опционально: аудитория, тип занятия, неделя
-            subject_name_for_record = _strip_lecture_type_markers(raw_discipline).strip()
+            group_values = split_group_string(metadata.get('group') or '')
+            
+            # Две ячейки дисциплины (числитель в одной, знаменатель в другой) — две отдельные записи
+            if len(discipline_parts) == 2:
+                for part in discipline_parts:
+                    part_clean = part.replace('). ', '), ').strip()
+                    if '//' not in part_clean:
+                        part_clean = normalize_type_slash_for_weeks(part_clean) or part_clean
+                    if not part_clean:
+                        continue
+                    subject_name_for_record = part_clean.lstrip('/').strip()
+                    audience = extract_audience(part_clean)
+                    if audience:
+                        audience = re.sub(r',?\s*//\s*,?', '//', audience).strip(',').strip()
+                        audience = re.sub(r'//+\s*$', '', audience).strip()
+                    lecture_type = parse_lecture_type(part_clean)
+                    week_type = week_type_from_single_part(part_clean)
+                    is_remote = 'ЭОиДОТ' in part_clean.upper() or 'эоидот' in part_clean.lower()
+                    subgroups_list = extract_subgroups_from_text(part_clean)
+                    num_subgroups = len(subgroups_list) if subgroups_list else 0
+                    if not subgroups_list:
+                        subgroups_list = [None]
+                    elif len(subgroups_list) > 1:
+                        subgroups_list = [None]
+                    for pair_num in pair_numbers:
+                        for group_val in group_values:
+                            for subgroup_num in subgroups_list:
+                                result_entry = {
+                                    'day_of_week': day_of_week,
+                                    'pair_number': pair_num,
+                                    'subject_name': subject_name_for_record,
+                                    'teacher': teacher_fio,
+                                    'audience': audience,
+                                    'lecture_type': lecture_type,
+                                    'week_type': week_type,
+                                    'is_remote': is_remote,
+                                    'is_external': False,
+                                    'department': '',
+                                    'group': group_val,
+                                    'institute': metadata.get('institute', ''),
+                                    'course': metadata.get('course', ''),
+                                    'direction': metadata.get('direction', ''),
+                                    'profile': metadata.get('profile', ''),
+                                    'subgroup': subgroup_num,
+                                    'num_subgroups': num_subgroups
+                                }
+                                results.append(result_entry)
+                continue
+            
+            # Одна ячейка или больше двух: объединяем в один сырой текст (как раньше)
+            raw_discipline = ' '.join(discipline_parts).strip()
+            raw_discipline = raw_discipline.replace('). ', '), ')
+            raw_discipline = normalize_type_slash_for_weeks(raw_discipline)
+            
+            if not raw_discipline:
+                continue
+            
+            subject_name_for_record = raw_discipline.strip()
             audience = extract_audience(raw_discipline)
             week_types = parse_week_type(raw_discipline)
             # Если в ячейке "//" (числитель/знаменатель) — одна запись, формат "Часть1, К511 // Часть2, К503" и "К511//К503"
@@ -1101,8 +1184,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                 if sn and au is not None:
                     subject_name_for_record = sn
                     audience = au
-                    week_types = ['обе недели']  # одна запись на обе недели, без дублей
-                # Тип по частям: "лекция // лабораторная" или "лекция // практика"
+                    week_types = ['обе недели']
                 parts_for_type = [p.strip() for p in raw_discipline.split('//') if p.strip()]
                 if len(parts_for_type) >= 2:
                     lecture_type = ' // '.join(parse_lecture_type(p) for p in parts_for_type)
@@ -1113,20 +1195,14 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             if not week_types:
                 week_types = ['обе недели']
             is_remote = 'ЭОиДОТ' in raw_discipline.upper() or 'эоидот' in raw_discipline.lower()
-            # Нормализация аудитории: "К504//, К429" -> "К504//К429"; "К504//" в конце -> "К504"
             if audience:
                 audience = re.sub(r',?\s*//\s*,?', '//', audience).strip(',').strip()
-                audience = re.sub(r'//+\s*$', '', audience).strip()  # убрать завершающие //
+                audience = re.sub(r'//+\s*$', '', audience).strip()
 
-            # Одна запись на каждую группу: "501-33,501-34", "502-21.502-22" -> отдельные записи
-            group_values = split_group_string(metadata.get('group') or '')
-            # Подгруппы из текста дисциплины (п/г 1, подгруппа 2)
             subgroups_list = extract_subgroups_from_text(raw_discipline)
             num_subgroups = len(subgroups_list) if subgroups_list else 0
             if not subgroups_list:
-                subgroups_list = [None]  # одна запись без номера подгруппы
-            # Если в одной ячейке несколько подгрупп (п/г 1 и п/г 2) — один общий текст и одни аудитории:
-            # не создаём по записи на каждую подгруппу (дубли), а одну запись с subgroup=None и num_subgroups=N
+                subgroups_list = [None]
             elif len(subgroups_list) > 1:
                 subgroups_list = [None]
 

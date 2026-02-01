@@ -147,6 +147,13 @@
   font-weight: bold;
 }
 
+.sort-order-badge {
+  font-size: 0.55rem;
+  color: var(--primary-color);
+  font-weight: bold;
+  margin-left: 1px;
+}
+
 /* Расширяемые ячейки - раскрытие поверх остальных */
 .expandable-cell {
   transition: z-index 0.3s ease;

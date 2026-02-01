@@ -2,6 +2,7 @@ node_modules/
 # Python
 .venv/
 __pycache__/
+subject/
 *.pyc
 
 # IDE

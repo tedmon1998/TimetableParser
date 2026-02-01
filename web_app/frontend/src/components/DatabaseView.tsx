@@ -161,9 +161,9 @@ const DatabaseView: React.FC = () => {
   const [showStats, setShowStats] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // Состояние для сортировки
-  const [sortColumn, setSortColumn] = useState<string | null>(null);
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  // Состояние для сортировки (несколько столбцов: первый — основной)
+  type SortEntry = { field: string; direction: 'asc' | 'desc' };
+  const [sortColumns, setSortColumns] = useState<SortEntry[]>([]);
 
   // Refs для input полей фильтров для сохранения фокуса
   const filterRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
@@ -351,12 +351,14 @@ const DatabaseView: React.FC = () => {
     // Восстанавливаем состояние показа статистики
     setShowStats(params.get('showStats') === 'true');
 
-    // Восстанавливаем сортировку
+    // Восстанавливаем сортировку (несколько столбцов через запятую)
     const sortBy = params.get('sort_by');
     const sortOrder = params.get('sort_order');
     if (sortBy) {
-      setSortColumn(sortBy);
-      setSortDirection((sortOrder === 'desc' ? 'desc' : 'asc') as 'asc' | 'desc');
+      const fields = sortBy.split(',').map(s => s.trim()).filter(Boolean);
+      const orders = (sortOrder || '').split(',').map(s => (s.trim().toLowerCase() === 'desc' ? 'desc' : 'asc'));
+      const restored: SortEntry[] = fields.map((f, i) => ({ field: f, direction: orders[i] ?? 'asc' }));
+      setSortColumns(restored.length ? restored : []);
     }
 
     setIsInitialized(true);
@@ -415,6 +417,19 @@ const DatabaseView: React.FC = () => {
     updateURL({ showStats });
   }, [showStats, isInitialized]);
 
+  // Синхронизируем сортировку с URL
+  useEffect(() => {
+    if (!isInitialized) return;
+    if (sortColumns.length === 0) {
+      updateURL({ sort_by: '', sort_order: '' });
+    } else {
+      updateURL({
+        sort_by: sortColumns.map(s => s.field).join(','),
+        sort_order: sortColumns.map(s => s.direction).join(',')
+      });
+    }
+  }, [sortColumns, isInitialized]);
+
   // Слушаем изменения в URL (например, при нажатии назад/вперед)
   useEffect(() => {
     const handlePopState = () => {
@@ -450,6 +465,16 @@ const DatabaseView: React.FC = () => {
       }
 
       setShowStats(params.get('showStats') === 'true');
+
+      const sortBy = params.get('sort_by');
+      const sortOrder = params.get('sort_order');
+      if (sortBy) {
+        const fields = sortBy.split(',').map(s => s.trim()).filter(Boolean);
+        const orders = (sortOrder || '').split(',').map(s => (s.trim().toLowerCase() === 'desc' ? 'desc' : 'asc'));
+        setSortColumns(fields.map((f, i) => ({ field: f, direction: (orders[i] ?? 'asc') as 'asc' | 'desc' })));
+      } else {
+        setSortColumns([]);
+      }
     };
 
     window.addEventListener('popstate', handlePopState);
@@ -467,9 +492,11 @@ const DatabaseView: React.FC = () => {
       'Предмет': 'subject_name',
       'Тип': 'lecture_type',
       'Аудитория': 'audience',
+      'Ауд.': 'audience',
       'Преподаватель': 'fio',
       'Группа': 'group_name',
       'Подгруппа': 'subgroup',
+      'п/г': 'subgroup',
       'Курс': 'course',
       'Институт': 'institute',
       'Направление': 'direction',
@@ -490,32 +517,37 @@ const DatabaseView: React.FC = () => {
         params[key] = debouncedFilters[key as keyof Filters];
       }
     });
-    if (sortColumn) {
-      const sortField = columnToSortField[sortColumn] || sortColumn;
-      params.sort_by = sortField;
-      params.sort_order = sortDirection;
+    if (sortColumns.length > 0) {
+      params.sort_by = sortColumns.map(s => s.field).join(',');
+      params.sort_order = sortColumns.map(s => s.direction).join(',');
     }
     return params;
-  }, [currentPage, debouncedFilters, sortColumn, sortDirection, activeTable, columnToSortField]);
+  }, [currentPage, debouncedFilters, sortColumns, activeTable, columnToSortField]);
 
-  // Обработчик клика на заголовок для сортировки
-  const handleSort = useCallback((column: string) => {
+  // Обработчик клика на заголовок для сортировки. Обычный клик — основной столбец (или смена направления). Shift+клик — добавить как следующий уровень.
+  const handleSort = useCallback((column: string, shiftKey: boolean) => {
     const sortField = columnToSortField[column];
     if (!sortField) return;
 
-    if (sortColumn === column) {
-      // Если кликнули на ту же колонку - меняем направление
-      const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
-      setSortDirection(newDirection);
-      updateURL({ sort_by: sortField, sort_order: newDirection });
-    } else {
-      // Если кликнули на другую колонку - устанавливаем новую сортировку
-      setSortColumn(column);
-      setSortDirection('asc');
-      updateURL({ sort_by: sortField, sort_order: 'asc' });
-    }
-    setCurrentPage(1); // Сбрасываем на первую страницу при сортировке
-  }, [sortColumn, sortDirection, columnToSortField, updateURL]);
+    setSortColumns(prev => {
+      const idx = prev.findIndex(s => s.field === sortField);
+      if (shiftKey) {
+        // Shift+клик: добавить в конец или переключить направление, если уже есть
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...next[idx], direction: next[idx].direction === 'asc' ? 'desc' : 'asc' };
+          return next;
+        }
+        return [...prev, { field: sortField, direction: 'asc' as const }];
+      }
+      // Обычный клик: сделать этот столбец единственным (или переключить направление, если он один)
+      if (idx === 0 && prev.length === 1) {
+        return [{ field: sortField, direction: prev[0].direction === 'asc' ? 'desc' : 'asc' }];
+      }
+      return [{ field: sortField, direction: 'asc' as const }];
+    });
+    setCurrentPage(1);
+  }, [columnToSortField]);
 
   // Запрос статистики с React Query (с учётом выбранной таблицы)
   const { data: stats, isLoading: statsLoading } = useQuery<DatabaseStats>({
@@ -1072,7 +1104,7 @@ const DatabaseView: React.FC = () => {
     }
   };
 
-  // Обработчик правого клика на строке (для intermediate_timetable показываем только редактирование)
+  // Обработчик правого клика на строке (контекстное меню: редактировать, дублировать, пустая, удалить)
   const handleRowContextMenu = (e: React.MouseEvent, record: DatabaseRecord) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1368,16 +1400,22 @@ const DatabaseView: React.FC = () => {
                       >
                         <div
                           className={key === 'id' ? 'header-label' : 'header-label header-sortable'}
-                          onClick={filterable ? () => handleSort(label) : undefined}
-                          title={filterable ? 'Нажмите для сортировки' : undefined}
+                          onClick={filterable ? (e) => handleSort(label, e.shiftKey) : undefined}
+                          title={filterable ? 'Клик — сортировка по столбцу. Shift+клик — добавить уровень сортировки.' : undefined}
                         >
                           {label}
-                          {filterable && (
-                            <span className="sort-arrows">
-                              <span className={`sort-arrow ${sortColumn === label && sortDirection === 'asc' ? 'active' : ''}`}>▲</span>
-                              <span className={`sort-arrow ${sortColumn === label && sortDirection === 'desc' ? 'active' : ''}`}>▼</span>
-                            </span>
-                          )}
+                          {filterable && (() => {
+                            const sortField = columnToSortField[label];
+                            const sortIdx = sortField != null ? sortColumns.findIndex(s => s.field === sortField) : -1;
+                            const entry = sortIdx >= 0 ? sortColumns[sortIdx] : null;
+                            return (
+                              <span className="sort-arrows">
+                                <span className={`sort-arrow ${entry?.direction === 'asc' ? 'active' : ''}`}>▲</span>
+                                <span className={`sort-arrow ${entry?.direction === 'desc' ? 'active' : ''}`}>▼</span>
+                                {sortIdx >= 0 && sortColumns.length > 1 && <span className="sort-order-badge">{sortIdx + 1}</span>}
+                              </span>
+                            );
+                          })()}
                         </div>
                         {key === 'id' ? (
                           <input
@@ -1602,30 +1640,26 @@ const DatabaseView: React.FC = () => {
           >
             Редактировать
           </button>
-          {activeTable !== 'intermediate_timetable' && (
-            <>
-              <div className="context-menu-divider"></div>
-              <button
-                className="context-menu-item"
-                onClick={() => duplicateRecord(contextMenu.recordId, contextMenu.position)}
-              >
-                {contextMenu.position === 'before' ? 'Создать копию выше' : 'Создать копию ниже'}
-              </button>
-              <button
-                className="context-menu-item"
-                onClick={() => createEmptyRecord(contextMenu.recordId, contextMenu.position)}
-              >
-                {contextMenu.position === 'before' ? 'Создать пустую выше' : 'Создать пустую ниже'}
-              </button>
-              <div className="context-menu-divider"></div>
-              <button
-                className="context-menu-item context-menu-item-danger"
-                onClick={() => deleteRecord(contextMenu.recordId)}
-              >
-                Удалить запись
-              </button>
-            </>
-          )}
+          <div className="context-menu-divider"></div>
+          <button
+            className="context-menu-item"
+            onClick={() => duplicateRecord(contextMenu.recordId, contextMenu.position)}
+          >
+            {contextMenu.position === 'before' ? 'Создать копию выше' : 'Создать копию ниже'}
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={() => createEmptyRecord(contextMenu.recordId, contextMenu.position)}
+          >
+            {contextMenu.position === 'before' ? 'Создать пустую выше' : 'Создать пустую ниже'}
+          </button>
+          <div className="context-menu-divider"></div>
+          <button
+            className="context-menu-item context-menu-item-danger"
+            onClick={() => deleteRecord(contextMenu.recordId)}
+          >
+            Удалить запись
+          </button>
           <div className="context-menu-divider"></div>
           <button
             className="context-menu-item"

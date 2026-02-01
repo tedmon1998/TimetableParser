@@ -16,7 +16,8 @@ def load_audiences():
         return set()
 
 def extract_audiences_from_text(text, valid_audiences):
-    """Извлекает аудитории из текста дисциплины"""
+    """Извлекает аудитории из текста дисциплины.
+    Не считаем букву «с» предлогом (с курсом, с основами) аудиторией «С»."""
     if not text:
         return []
     
@@ -25,13 +26,17 @@ def extract_audiences_from_text(text, valid_audiences):
     
     # Ищем все возможные аудитории в тексте
     # Паттерны: А539, У708, К506, Г201, СОКБ, ЭОиДОТ и т.д.
-    # Проверяем каждую валидную аудиторию
     for aud in valid_audiences:
-        # Ищем точное совпадение (с учетом регистра и границ слова)
-        # Используем регулярное выражение для поиска
         pattern = r'\b' + re.escape(aud) + r'\b'
-        if re.search(pattern, text, re.IGNORECASE):
-            found_audiences.append(aud)
+        for m in re.finditer(pattern, text, re.IGNORECASE):
+            # Однобуквенная «С»: не считать предлог «с» (с курсом, с основами) аудиторией
+            if aud == 'С' and m.group(0) == 'с' and m.end() < len(text):
+                rest = text[m.end():m.end() + 2]
+                if len(rest) >= 2 and rest[0] in ' \t' and rest[1].isalpha():
+                    continue
+            if aud not in found_audiences:
+                found_audiences.append(aud)
+            break
     
     # Если не нашли по списку, пытаемся найти по паттернам
     if not found_audiences:
@@ -120,26 +125,27 @@ def parse_week_division(text):
 
 def extract_lecture_type(text):
     """Определяет тип занятия: лекция, практика или лабораторная.
-    Лабораторную проверяем до практики, чтобы «лабораторная практика» давала лабораторная."""
+    Лабораторную проверяем до практики, чтобы «лабораторная практика» давала лабораторная.
+    Учитываем варианты: (пр). А603, ( пр ), (лек) и т.д."""
     if not text:
         return None
     
-    text = str(text).lower()
+    text_lower = str(text).lower()
     
     # Проверяем наличие подгрупп - если есть, то это практика
-    if 'п/г' in text or 'подгруппа' in text:
+    if 'п/г' in text_lower or 'подгруппа' in text_lower:
         return 'практика'
     
-    # Маркеры типа занятия: лекция, затем лабораторная (до практики!), затем практика
-    if '(лек)' in text or 'лек' in text or 'лекция' in text:
+    # Маркеры в скобках с возможными пробелами: (лек), ( пр ). А603
+    if re.search(r'\(\s*лек\s*\)', text_lower) or re.search(r'\bлек\b', text_lower) or 'лекция' in text_lower:
         return 'лекция'
-    if '(лаб)' in text or 'лабораторная' in text or 'лабораторные' in text or 'лаб' in text:
+    if re.search(r'\(\s*лаб\s*\)', text_lower) or 'лабораторная' in text_lower or 'лабораторные' in text_lower or re.search(r'\bлаб\b', text_lower):
         return 'лабораторная'
-    if '(пр)' in text or 'практика' in text:
+    if re.search(r'\(\s*пр\s*\)', text_lower) or 'практика' in text_lower:
         return 'практика'
     
     # Если есть разделение по подгруппам (п/г 1, п/г 2), это практика
-    if re.search(r'п/г\s*\d+', text, re.IGNORECASE):
+    if re.search(r'п/г\s*\d+', text_lower, re.IGNORECASE):
         return 'практика'
     
     return None
@@ -231,9 +237,12 @@ def clean_discipline_name(text, audience_to_remove=None):
     
     # Если указана аудитория для удаления, убираем её
     if audience_to_remove:
-        # Убираем аудиторию из текста
-        pattern = r'\b' + re.escape(audience_to_remove) + r'\b'
-        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+        # Аудитория «С»: убираем только заглавную С, не предлог «с»
+        if audience_to_remove == 'С':
+            text = re.sub(r'\bС\b', '', text)
+        else:
+            pattern = r'\b' + re.escape(audience_to_remove) + r'\b'
+            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
     # Убираем все валидные аудитории из текста (на случай, если остались другие)
     # Но только если они не являются частью названия дисциплины
@@ -281,11 +290,15 @@ def clean_subject_name_final(text, valid_audiences=None):
     # Убираем все валидные аудитории из текста
     if valid_audiences:
         for aud in valid_audiences:
-            # Убираем аудиторию в разных форматах: ", А539", " А539", "А539"
-            pattern = r'[, ]\s*' + re.escape(aud) + r'\b'
-            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
-            pattern = r'\b' + re.escape(aud) + r'\b'
-            text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+            # Аудитория «С»: убираем только заглавную С, не предлог «с» (с курсом, с основами)
+            if aud == 'С':
+                text = re.sub(r'[, ]\s*С\b', ' ', text)
+                text = re.sub(r'\bС\b', '', text)
+            else:
+                pattern = r'[, ]\s*' + re.escape(aud) + r'\b'
+                text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+                pattern = r'\b' + re.escape(aud) + r'\b'
+                text = re.sub(pattern, '', text, flags=re.IGNORECASE)
     
     # Убираем разделители "//" в середине текста
     text = re.sub(r'\s*//\s*', ' ', text)
@@ -545,6 +558,13 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
                 if aud not in denominator_audiences_unique:
                     denominator_audiences_unique.append(aud)
         
+        # Когда после "//" только одна часть непуста (напр. "СОКЦОМиД//"): сохраняем week_type из источника
+        only_numerator = numerator_text and not denominator_text
+        only_denominator = denominator_text and not numerator_text
+        existing_is_both = existing_week_type and str(existing_week_type).strip() in ('обе недели', 'обе')
+        effective_numerator_week = 'обе недели' if (only_numerator and existing_is_both) else 'числитель'
+        effective_denominator_week = 'обе недели' if (only_denominator and existing_is_both) else 'знаменатель'
+        
         # Создаем отдельные строки для числителя
         if numerator_text:
             if numerator_subgroups:
@@ -557,7 +577,7 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
                         'audience': aud_for_subgroup or '',
                         'subject_name': clean_name,
                         'lecture_type': numerator_lecture_type or 'практика',
-                        'week_type': 'числитель',
+                        'week_type': effective_numerator_week,
                         'subgroup': subgroup_num
                     }
                     if numerator_teacher:
@@ -572,7 +592,7 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
                             'audience': aud,
                             'subject_name': clean_name,
                             'lecture_type': numerator_lecture_type or 'практика',
-                            'week_type': 'числитель'
+                            'week_type': effective_numerator_week
                         }
                         if numerator_teacher:
                             result_entry['teacher'] = numerator_teacher
@@ -583,7 +603,7 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
                         'audience': '',
                         'subject_name': clean_name,
                         'lecture_type': numerator_lecture_type or 'практика',
-                        'week_type': 'числитель'
+                        'week_type': effective_numerator_week
                     }
                     if numerator_teacher:
                         result_entry['teacher'] = numerator_teacher
@@ -601,7 +621,7 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
                         'audience': aud_for_subgroup or '',
                         'subject_name': clean_name,
                         'lecture_type': denominator_lecture_type or 'практика',
-                        'week_type': 'знаменатель',
+                        'week_type': effective_denominator_week,
                         'subgroup': subgroup_num
                     }
                     if denominator_teacher:
@@ -616,7 +636,7 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
                             'audience': aud,
                             'subject_name': clean_name,
                             'lecture_type': denominator_lecture_type or 'практика',
-                            'week_type': 'знаменатель'
+                            'week_type': effective_denominator_week
                         }
                         if denominator_teacher:
                             result_entry['teacher'] = denominator_teacher
@@ -627,7 +647,7 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
                         'audience': '',
                         'subject_name': clean_name,
                         'lecture_type': denominator_lecture_type or 'практика',
-                        'week_type': 'знаменатель'
+                        'week_type': effective_denominator_week
                     }
                     if denominator_teacher:
                         result_entry['teacher'] = denominator_teacher
