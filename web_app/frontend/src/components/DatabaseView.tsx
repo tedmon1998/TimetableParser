@@ -92,13 +92,14 @@ const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
 
 export type DbTableType = 'timetable_cleaned' | 'timetable_teacher' | 'intermediate_timetable';
 
-// Колонки промежуточного расписания: данные из timetable_cleaned + fio из timetable_teacher + флаги ошибок
-const INTERMEDIATE_COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience', 'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction', 'department', 'fio', 'week_error', 'audience_error'] as const;
+// Колонки промежуточного расписания: данные из timetable_cleaned + fio из timetable_teacher + флаги ошибок + старое имя дисциплины
+const INTERMEDIATE_COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'discipline_original', 'lecture_type', 'audience', 'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction', 'department', 'fio', 'week_error', 'audience_error'] as const;
 const INTERMEDIATE_LABELS: Record<string, string> = {
   id: 'ID',
   day_of_week: 'День',
   pair_number: 'Пара',
   subject_name: 'Предмет',
+  discipline_original: 'Дисциплина (было)',
   lecture_type: 'Тип',
   audience: 'Ауд.',
   group_name: 'Группа',
@@ -787,6 +788,7 @@ const DatabaseView: React.FC = () => {
     if (activeTable === 'intermediate_timetable') {
       const intermediateToFilter: Record<string, keyof Filters | null> = {
         id: null, day_of_week: 'day_of_week', pair_number: 'pair_number', subject_name: 'subject_name',
+        discipline_original: null,
         lecture_type: 'lecture_type', audience: 'audience', group_name: 'group_name', week_type: 'week_type',
         subgroup: 'subgroup', institute: 'institute', course: 'course', direction: 'direction',
         department: null, fio: 'fio', week_error: 'week_error', audience_error: 'audience_error'

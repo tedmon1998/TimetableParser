@@ -5,6 +5,7 @@ import ScriptRunner from './components/ScriptRunner';
 import DatabaseView from './components/DatabaseView';
 import TeachersView from './components/TeachersView';
 import DisciplinesView from './components/DisciplinesView';
+import DisciplineMatchView from './components/DisciplineMatchView';
 import logoImage from '../assets/SurSU.png';
 
 // Создаем QueryClient с настройками для оптимизации
@@ -22,11 +23,11 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-  type TabType = 'scripts' | 'database' | 'teachers' | 'disciplines';
+  type TabType = 'scripts' | 'database' | 'teachers' | 'disciplines' | 'discipline-match';
   const getInitialTab = (): TabType => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
-    return (tab === 'scripts' || tab === 'database' || tab === 'teachers' || tab === 'disciplines') ? tab : 'scripts';
+    return (tab === 'scripts' || tab === 'database' || tab === 'teachers' || tab === 'disciplines' || tab === 'discipline-match') ? tab : 'scripts';
   };
 
   const [activeTab, setActiveTab] = useState<TabType>(getInitialTab);
@@ -92,6 +93,12 @@ function App() {
             >
               Дисциплины
             </button>
+            <button
+              className={activeTab === 'discipline-match' ? 'active' : ''}
+              onClick={() => handleTabChange('discipline-match')}
+            >
+              Сопоставление дисциплин
+            </button>
           </nav>
         </header>
         <main className="App-main">
@@ -99,6 +106,7 @@ function App() {
           {activeTab === 'database' && <DatabaseView />}
           {activeTab === 'teachers' && <TeachersView />}
           {activeTab === 'disciplines' && <DisciplinesView />}
+          {activeTab === 'discipline-match' && <DisciplineMatchView />}
         </main>
       </div>
     </QueryClientProvider>

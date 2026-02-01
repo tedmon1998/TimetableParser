@@ -3,6 +3,7 @@ from flask_cors import CORS
 import json
 import subprocess
 import os
+import sys
 import glob
 import re
 import shutil
@@ -12,6 +13,14 @@ import csv
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
+
+# Корень проекта для импорта discipline_validate (сопоставление дисциплин по эмбеддингам)
+def _project_root():
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.dirname(current_dir))
+
+if _project_root() not in sys.path:
+    sys.path.insert(0, _project_root())
 
 app = Flask(__name__)
 CORS(app)
@@ -395,6 +404,7 @@ def run_merge_timetable():
                 day_of_week VARCHAR(50),
                 pair_number INTEGER,
                 subject_name TEXT,
+                discipline_original TEXT,
                 lecture_type VARCHAR(50),
                 audience VARCHAR(50),
                 group_name VARCHAR(50),
@@ -419,7 +429,7 @@ def run_merge_timetable():
         cursor.execute("""
             INSERT INTO intermediate_timetable (
                 cleaned_id, teacher_id,
-                day_of_week, pair_number, subject_name, lecture_type, audience,
+                day_of_week, pair_number, subject_name, discipline_original, lecture_type, audience,
                 group_name, week_type, subgroup, institute, course, direction,
                 department, is_external, is_remote, num_subgroups,
                 fio, week_error, audience_error
@@ -430,6 +440,7 @@ def run_merge_timetable():
                 c.day_of_week,
                 c.pair_number,
                 c.subject_name,
+                NULL,
                 c.lecture_type,
                 c.audience,
                 c.group_name,
@@ -1079,7 +1090,7 @@ def _allowed_update_fields(table):
     """Разрешённые поля для обновления в зависимости от таблицы. intermediate_timetable — редактируемые поля с синхронизацией в cleaned/teacher и пересчётом ошибок."""
     if table == 'intermediate_timetable':
         return [
-            'week_type', 'audience', 'subject_name', 'lecture_type',
+            'week_type', 'audience', 'subject_name', 'discipline_original', 'lecture_type',
             'day_of_week', 'pair_number', 'group_name', 'subgroup',
             'institute', 'course', 'direction', 'department'
         ]
@@ -1774,6 +1785,207 @@ def save_disciplines(disciplines):
     os.makedirs(os.path.dirname(DISCIPLINE_FILE), exist_ok=True)
     with open(DISCIPLINE_FILE, 'w', encoding='utf-8') as f:
         json.dump(disciplines, f, ensure_ascii=False, indent=2)
+
+
+# --- Сопоставление дисциплин из БД со справочником (discipline.json + discipline_validate.py) ---
+
+def _intermediate_table_exists(cursor):
+    """Проверяет, что таблица intermediate_timetable существует."""
+    cursor.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'intermediate_timetable'"
+    )
+    return cursor.fetchone() is not None
+
+
+def _ensure_intermediate_discipline_original(conn):
+    """Добавляет колонку discipline_original в intermediate_timetable, если её ещё нет (миграция для старых БД)."""
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "ALTER TABLE intermediate_timetable ADD COLUMN IF NOT EXISTS discipline_original TEXT"
+        )
+        conn.commit()
+    finally:
+        cur.close()
+
+
+@app.route('/api/discipline-match/unmatched', methods=['GET'])
+def get_discipline_match_unmatched():
+    """Список названий из intermediate_timetable, которых нет в discipline.json, с предложениями (алгоритм discipline_validate.py).
+    Замены в БД не выполняются — только ручная обработка через кнопки на фронте."""
+    try:
+        import discipline_validate as match_module
+        canonical = read_disciplines()
+        canonical_lower = {d.strip().lower() for d in canonical}
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        if not _intermediate_table_exists(cur):
+            cur.close()
+            conn.close()
+            return jsonify({
+                'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания» в разделе загрузки.',
+                'items': []
+            }), 400
+        _ensure_intermediate_discipline_original(conn)
+        cur.execute(
+            "SELECT DISTINCT subject_name FROM intermediate_timetable WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        distinct = [r[0].strip() for r in rows if r[0] and str(r[0]).strip()]
+        unmatched = list(dict.fromkeys(s for s in distinct if s.lower() not in canonical_lower))
+        if not unmatched:
+            return jsonify({'items': [], 'message': 'Нет несовпадающих дисциплин'})
+
+        documents, doc_embeddings = match_module.ensure_embeddings()
+        if not documents or doc_embeddings is None:
+            return jsonify({'error': 'Не удалось загрузить справочник или эмбеддинги', 'items': []}), 500
+
+        items = []
+        for original in unmatched:
+            try:
+                top4 = match_module.match_query(original, documents, doc_embeddings, top_k=4)
+            except Exception:
+                top4 = []
+            if not top4:
+                items.append({
+                    'original': original,
+                    'suggested': '',
+                    'score': 0.0,
+                    'alternatives': []
+                })
+                continue
+            suggested, score = top4[0]
+            alternatives = [{'name': name, 'score': round(s, 3)} for name, s in top4[1:4]]
+            items.append({
+                'original': original,
+                'suggested': suggested,
+                'score': round(score, 3),
+                'alternatives': alternatives
+            })
+        return jsonify({'items': items})
+    except Exception as e:
+        return jsonify({'error': str(e), 'items': []}), 500
+
+
+@app.route('/api/discipline-match/apply', methods=['POST'])
+def apply_discipline_match():
+    """Для всех несовпадающих в intermediate_timetable: если точность >= threshold, заменить subject_name на предложенное и записать старое в discipline_original."""
+    conn = None
+    try:
+        data = request.get_json(silent=True) or {}
+        try:
+            threshold = float(data.get('threshold', 0.95))
+        except (TypeError, ValueError):
+            threshold = 0.95
+        threshold = max(0.0, min(1.0, threshold))
+        import discipline_validate as match_module
+        canonical = read_disciplines()
+        canonical_lower = {d.strip().lower() for d in canonical}
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        if not _intermediate_table_exists(cur):
+            cur.close()
+            conn.close()
+            return jsonify({
+                'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания» в разделе загрузки.'
+            }), 400
+        _ensure_intermediate_discipline_original(conn)
+        cur.execute(
+            "SELECT DISTINCT subject_name FROM intermediate_timetable WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
+        )
+        rows = cur.fetchall()
+        distinct = [r[0].strip() for r in rows if r[0] and str(r[0]).strip()]
+        unmatched = list(dict.fromkeys(s for s in distinct if s.lower() not in canonical_lower))
+        if not unmatched:
+            cur.close()
+            conn.close()
+            return jsonify({'replaced': 0, 'message': 'Нет несовпадающих дисциплин'})
+
+        documents, doc_embeddings = match_module.ensure_embeddings()
+        if not documents or doc_embeddings is None:
+            cur.close()
+            conn.close()
+            return jsonify({'error': 'Не удалось загрузить справочник или эмбеддинги. Убедитесь, что Ollama запущен (nomic-embed-text).'}), 500
+
+        replaced = 0
+        for original in unmatched:
+            try:
+                top4 = match_module.match_query(original, documents, doc_embeddings, top_k=1)
+            except Exception:
+                continue
+            score = top4[0][1] if top4 else 0.0
+            if score < threshold - 1e-9:
+                continue
+            suggested = top4[0][0]
+            cur.execute(
+                "SELECT cleaned_id FROM intermediate_timetable WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                (original,)
+            )
+            cleaned_ids = [r[0] for r in cur.fetchall() if r[0]]
+            cur.execute(
+                "UPDATE intermediate_timetable SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                (suggested, original, original)
+            )
+            replaced += cur.rowcount
+            if cleaned_ids:
+                cur.execute(
+                    "UPDATE timetable_cleaned SET subject_name = %s WHERE id = ANY(%s)",
+                    (suggested, cleaned_ids)
+                )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'replaced': replaced})
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+                conn.close()
+            except Exception:
+                pass
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/discipline-match/replace', methods=['POST'])
+def replace_discipline_match():
+    """Заменить в intermediate_timetable все вхождения original на replacement (subject_name), записать старое имя в discipline_original; синхронизировать timetable_cleaned."""
+    try:
+        data = request.get_json(silent=True) or {}
+        original = (data.get('original') or '').strip()
+        replacement = (data.get('replacement') or '').strip()
+        if not original:
+            return jsonify({'error': 'original is required'}), 400
+        new_name = replacement or original
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        if not _intermediate_table_exists(cur):
+            cur.close()
+            conn.close()
+            return jsonify({'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания».'}), 400
+        _ensure_intermediate_discipline_original(conn)
+        cur.execute(
+            "SELECT cleaned_id FROM intermediate_timetable WHERE TRIM(COALESCE(subject_name, '')) = %s",
+            (original,)
+        )
+        cleaned_ids = [r[0] for r in cur.fetchall() if r[0]]
+        cur.execute(
+            "UPDATE intermediate_timetable SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
+            (new_name, original, original)
+        )
+        updated = cur.rowcount
+        if cleaned_ids:
+            cur.execute(
+                "UPDATE timetable_cleaned SET subject_name = %s WHERE id = ANY(%s)",
+                (new_name, cleaned_ids)
+            )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'updated': updated})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/disciplines', methods=['GET'])
