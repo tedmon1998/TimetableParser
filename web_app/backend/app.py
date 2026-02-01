@@ -415,6 +415,7 @@ def run_merge_timetable():
         conn.commit()
         script_status['merge_timetable']['progress'] = 30
         script_status['merge_timetable']['message'] = 'Очистка и слияние данных...'
+        # Основа — вся timetable_cleaned; из timetable_teacher только fio и флаги ошибок (по одному преподавателю на день/пара/группа).
         cursor.execute("""
             INSERT INTO intermediate_timetable (
                 cleaned_id, teacher_id,
@@ -442,13 +443,23 @@ def run_merge_timetable():
                 c.is_remote,
                 c.num_subgroups,
                 t.fio,
-                (c.week_type IS DISTINCT FROM t.week_type) AS week_error,
-                (NULLIF(TRIM(c.audience), '') IS DISTINCT FROM NULLIF(TRIM(t.audience), '')) AS audience_error
+                CASE WHEN t.id IS NULL THEN NULL ELSE (NULLIF(TRIM(c.week_type), '') IS DISTINCT FROM NULLIF(TRIM(t.week_type), '')) END AS week_error,
+                CASE WHEN t.id IS NULL THEN NULL ELSE (NULLIF(TRIM(c.audience), '') IS DISTINCT FROM NULLIF(TRIM(t.audience), '')) END AS audience_error
             FROM timetable_cleaned c
-            INNER JOIN timetable_teacher t
-                ON NULLIF(TRIM(c.day_of_week), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.day_of_week), '')
+            LEFT JOIN (
+                SELECT id, day_of_week, pair_number, group_name, week_type, fio, audience,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY NULLIF(TRIM(day_of_week), ''), pair_number, NULLIF(TRIM(group_name), ''),
+                                      NULLIF(TRIM(week_type), '')
+                           ORDER BY id
+                       ) AS rn
+                FROM timetable_teacher
+            ) t
+                ON t.rn = 1
+               AND NULLIF(TRIM(c.day_of_week), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.day_of_week), '')
                AND c.pair_number IS NOT DISTINCT FROM t.pair_number
                AND NULLIF(TRIM(c.group_name), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.group_name), '')
+               AND NULLIF(TRIM(c.week_type), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.week_type), '')
         """)
         conn.commit()
         n = cursor.rowcount
@@ -571,8 +582,6 @@ def run_process_timetable():
                     script_status['process_timetable']['message'] = f'Обработано строк: {len(output_lines)}'
         return_code = process.wait()
         stderr_output = process.stderr.read()
-        if stderr_output:
-            print(f"Stderr process_timetable: {stderr_output}")
         if return_code != 0:
             error_msg = stderr_output if stderr_output else f'Код возврата: {return_code}'
             script_status['process_timetable']['error'] = error_msg
@@ -1022,12 +1031,6 @@ def get_db_records():
         for row in records:
             record_dict = dict(row)
             
-            # Логируем первую запись для отладки
-            if len(records_list) == 0:
-                print(f"DEBUG: Первая запись из БД: {record_dict}")
-                print(f"DEBUG: Ключи записи: {list(record_dict.keys())}")
-                print(f"DEBUG: fio={record_dict.get('fio')}, teacher={record_dict.get('teacher')}, group_name={record_dict.get('group_name')}, week_type={record_dict.get('week_type')}")
-            
             # Убеждаемся, что все поля присутствуют (даже если они None)
             record_dict['fio'] = record_dict.get('fio')
             record_dict['teacher'] = record_dict.get('teacher')
@@ -1197,11 +1200,11 @@ def update_record(record_id):
                     f"UPDATE intermediate_timetable SET {', '.join(update_int)} WHERE id = %s",
                     vals_int
                 )
-            # Пересчёт week_error и audience_error из текущего состояния cleaned и teacher
+            # Пересчёт week_error и audience_error (сравнение с TRIM, чтобы пробелы не давали ложную ошибку)
             cursor.execute("""
                 UPDATE intermediate_timetable it SET
                     week_error = (
-                        SELECT (c.week_type IS DISTINCT FROM t.week_type)
+                        SELECT (NULLIF(TRIM(c.week_type), '') IS DISTINCT FROM NULLIF(TRIM(t.week_type), ''))
                         FROM timetable_cleaned c, timetable_teacher t
                         WHERE c.id = it.cleaned_id AND t.id = it.teacher_id
                     ),
@@ -1322,7 +1325,7 @@ def fix_intermediate_field(record_id):
         cursor.execute("""
             UPDATE intermediate_timetable it SET
                 week_error = (
-                    SELECT (c.week_type IS DISTINCT FROM t.week_type)
+                    SELECT (NULLIF(TRIM(c.week_type), '') IS DISTINCT FROM NULLIF(TRIM(t.week_type), ''))
                     FROM timetable_cleaned c, timetable_teacher t
                     WHERE c.id = it.cleaned_id AND t.id = it.teacher_id
                 ),

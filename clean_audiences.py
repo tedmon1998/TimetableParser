@@ -119,7 +119,8 @@ def parse_week_division(text):
     return None, None
 
 def extract_lecture_type(text):
-    """Определяет тип занятия (лекция/практика)"""
+    """Определяет тип занятия: лекция, практика или лабораторная.
+    Лабораторную проверяем до практики, чтобы «лабораторная практика» давала лабораторная."""
     if not text:
         return None
     
@@ -129,10 +130,11 @@ def extract_lecture_type(text):
     if 'п/г' in text or 'подгруппа' in text:
         return 'практика'
     
-    # Проверяем маркеры типа занятия
+    # Маркеры типа занятия: лекция, затем лабораторная (до практики!), затем практика
     if '(лек)' in text or 'лек' in text or 'лекция' in text:
         return 'лекция'
-    
+    if '(лаб)' in text or 'лабораторная' in text or 'лабораторные' in text or 'лаб' in text:
+        return 'лабораторная'
     if '(пр)' in text or 'практика' in text:
         return 'практика'
     
@@ -376,7 +378,7 @@ def extract_audience_for_subgroup(text, subgroup_num, valid_audiences):
     
     return None
 
-def process_discipline_text(text, valid_audiences, teacher_text=None, existing_week_type=None):
+def process_discipline_text(text, valid_audiences, teacher_text=None, existing_week_type=None, existing_lecture_type=None):
     """Обрабатывает текст дисциплины и возвращает список записей (по одной на каждую дисциплину/неделю)
     
     Args:
@@ -384,6 +386,7 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
         valid_audiences: Список валидных аудиторий
         teacher_text: Текст с преподавателями
         existing_week_type: Если указан, обрабатываем только эту неделю (числитель/знаменатель)
+        existing_lecture_type: Тип из парсера (напр. "лекция // лабораторная"); при разбиении по // берём части отсюда, т.к. в text маркеры (лек)/(лаб) уже убраны
     """
     if not text:
         return []
@@ -504,9 +507,19 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
             elif existing_week_type.strip() == 'знаменатель':
                 numerator_text = ''
         
-        # Тип занятия определяем отдельно для числителя и знаменателя (лекция/практика из своей части)
-        numerator_lecture_type = extract_lecture_type(numerator_text) if numerator_text else ''
-        denominator_lecture_type = extract_lecture_type(denominator_text) if denominator_text else ''
+        # Тип занятия: если в строке уже пришёл тип "лекция // лабораторная" (из парсера), берём части оттуда —
+        # в text маркеры (лек)/(лаб) уже убраны, и extract_lecture_type по тексту даст практика
+        if existing_lecture_type and ' // ' in str(existing_lecture_type).strip():
+            type_parts = [p.strip() for p in str(existing_lecture_type).split('//') if p.strip()]
+            if len(type_parts) >= 2:
+                numerator_lecture_type = type_parts[0] if numerator_text else ''
+                denominator_lecture_type = type_parts[1] if denominator_text else ''
+            else:
+                numerator_lecture_type = extract_lecture_type(numerator_text) if numerator_text else ''
+                denominator_lecture_type = extract_lecture_type(denominator_text) if denominator_text else ''
+        else:
+            numerator_lecture_type = extract_lecture_type(numerator_text) if numerator_text else ''
+            denominator_lecture_type = extract_lecture_type(denominator_text) if denominator_text else ''
         if not numerator_lecture_type and ('п/г' in (numerator_text or '').lower() or 'подгруппа' in (numerator_text or '').lower()):
             numerator_lecture_type = 'практика'
         if not denominator_lecture_type and ('п/г' in (denominator_text or '').lower() or 'подгруппа' in (denominator_text or '').lower()):
@@ -690,7 +703,8 @@ def process_csv_file(input_file, output_file, valid_audiences):
             subject_name = row.get('subject_name', '')
             teacher_fio = row.get('fio', '') or row.get('teacher', '')
             existing_week_type = row.get('week_type', '') or row.get('week', '')
-            processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type)
+            existing_lecture_type = row.get('lecture_type', '') or ''
+            processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type, existing_lecture_type)
             
             # Для каждой группы — отдельные записи (501-33,501-34,501-35 -> три записи)
             for group_val in group_parts:
@@ -869,9 +883,11 @@ def process_excel_file(input_file, output_file, valid_audiences):
                 break
         
         teacher_fio = row_data.get(headers[teacher_idx], '') if teacher_idx is not None else ''
+        existing_week_type = row_data.get('week_type', '') or row_data.get('week', '') or ''
+        existing_lecture_type = row_data.get('lecture_type', '') or ''
         
         # Обрабатываем текст дисциплины - получаем список записей
-        processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio)
+        processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type, existing_lecture_type)
         
         # Создаем отдельную запись для каждой дисциплины/аудитории
         for processed in processed_list:
@@ -1035,9 +1051,7 @@ def save_to_database(csv_file):
         with open(csv_file, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames
-            
-            # Логируем доступные поля для отладки
-            print(f"DEBUG: Поля в CSV файле: {fieldnames}")
+
             
             for row in reader:
                 # Вспомогательная функция для преобразования в int
@@ -1177,6 +1191,23 @@ def main():
                         cell = ws.cell(1, col)
                         if cell.value:
                             headers.append(str(cell.value))
+                    merged_ranges = list(ws.merged_cells.ranges) if getattr(ws, 'merged_cells', None) and ws.merged_cells else []
+                    def cell_value(row_idx, col_idx, header):
+                        cell = ws.cell(row=row_idx, column=col_idx)
+                        val = cell.value
+                        if val is not None and str(val).strip() != '':
+                            return val
+                        for mrange in merged_ranges:
+                            if mrange.min_row <= row_idx <= mrange.max_row and mrange.min_col <= col_idx <= mrange.max_col:
+                                top = ws.cell(row=mrange.min_row, column=mrange.min_col).value
+                                if header == 'pair_number' and mrange.max_row > mrange.min_row and row_idx > mrange.min_row:
+                                    try:
+                                        base = int(top) if top is not None else 1
+                                        return base + (row_idx - mrange.min_row)
+                                    except (TypeError, ValueError):
+                                        return top
+                                return top if top is not None else ''
+                        return ''
                     temp_csv = csv_output.replace('.csv', '_temp_for_db.csv')
                     with open(temp_csv, 'w', encoding='utf-8-sig', newline='') as f:
                         writer = csv.DictWriter(f, fieldnames=headers)
@@ -1184,8 +1215,7 @@ def main():
                         for row_idx in range(2, ws.max_row + 1):
                             row_data = {}
                             for col_idx, header in enumerate(headers, 1):
-                                cell = ws.cell(row_idx, col_idx)
-                                row_data[header] = cell.value if cell.value else ''
+                                row_data[header] = cell_value(row_idx, col_idx, header)
                             writer.writerow(row_data)
                     if save_to_database(temp_csv):
                         print("Данные успешно сохранены в базу данных")

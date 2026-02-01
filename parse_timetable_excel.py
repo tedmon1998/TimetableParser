@@ -109,8 +109,8 @@ def normalize_type_slash_for_weeks(text):
     Вызывать до обработки "//". Если в тексте уже есть "//", текст не меняем."""
     if not text or '//' in text:
         return text
-    # Паттерн: название (тип1)/(тип2) [, аудитория...]; тип1/тип2 — лек, пр, л, п и т.д.
-    type_pattern = r'(лек|пр|л|п|практика|лекция)'
+    # Паттерн: название (тип1)/(тип2) [, аудитория...]; тип1/тип2 — лек, пр, лаб, л, п и т.д. (длинные первыми)
+    type_pattern = r'(лек|пр|лаб|практика|лекция|лабораторная|л|п)'
     m = re.search(
         r'^(.+?)\s*\(' + type_pattern + r'\)\s*/\s*\(' + type_pattern + r'\)\s*(.*)$',
         text.strip(),
@@ -162,21 +162,33 @@ def parse_week_type(text):
     
     return ['обе недели']
 
+def _strip_lecture_type_markers(text):
+    """Убирает из текста маркеры типа занятия: (лек), (пр), (лаб) и т.д. Для отображения названия без типа."""
+    if not text or not isinstance(text, str):
+        return text
+    for pattern in (r'\(лек\)', r'\(пр\)', r'\(лаб\)', r'\(практика\)', r'\(лабораторная\)', r'\(л\)', r'\(п\)'):
+        text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', text).strip().strip(',').strip()
+
+
 def parse_lecture_type(text):
-    """Определяет тип занятия: лекция или практика"""
+    """Определяет тип занятия: лекция, практика или лабораторная.
+    Проверяем лабораторную до практики, чтобы «лабораторная практика» давала лабораторная."""
     if not text or not isinstance(text, str):
         return 'практика'
     
     text = text.lower()
     if '(лек)' in text or 'лекция' in text:
         return 'лекция'
-    elif '(пр)' in text or 'практика' in text:
+    # Лабораторная — до проверки «практика», иначе «лабораторная практика» даст практика
+    if '(лаб)' in text or 'лабораторная' in text or 'лабораторные' in text or 'лаб' in text:
+        return 'лабораторная'
+    if '(пр)' in text or 'практика' in text:
         return 'практика'
-    else:
-        # Если есть "лекция" в тексте, но без скобок
-        if 'лек' in text:
-            return 'лекция'
-        return 'практика'
+    # Без скобок: лек/лаб по подстроке
+    if 'лек' in text:
+        return 'лекция'
+    return 'практика'
 
 def extract_audience(text):
     """Извлекает аудиторию из текста по списку info/aud.json; допускается «С*» как «С». Перед вызовом текст нормализуют: «). » -> «), »."""
@@ -286,6 +298,7 @@ def build_combined_subject_and_audience(raw_discipline):
                 continue
             keep.append(seg)
         subject_part = ', '.join(keep).strip().rstrip(',')
+        subject_part = _strip_lecture_type_markers(subject_part)
         if chosen_one:
             part_displays.append((subject_part + ', ' + chosen_one).strip(',').strip())
         else:
@@ -309,7 +322,9 @@ def extract_subject_name(text):
     # Убираем маркеры типа занятия
     text = re.sub(r'\(лек\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(пр\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\(лаб\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(практика\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\(лабораторная\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(л\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\(п\)', '', text, flags=re.IGNORECASE)
     
@@ -330,7 +345,9 @@ def extract_subject_name(text):
             # Убираем маркеры типа занятия для этой части
             part = re.sub(r'\(лек\)', '', part, flags=re.IGNORECASE)
             part = re.sub(r'\(пр\)', '', part, flags=re.IGNORECASE)
+            part = re.sub(r'\(лаб\)', '', part, flags=re.IGNORECASE)
             part = re.sub(r'\(практика\)', '', part, flags=re.IGNORECASE)
+            part = re.sub(r'\(лабораторная\)', '', part, flags=re.IGNORECASE)
             part = re.sub(r'\(л\)', '', part, flags=re.IGNORECASE)
             part = re.sub(r'\(п\)', '', part, flags=re.IGNORECASE)
             
@@ -1075,7 +1092,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                             teacher_fio = teacher_text
             
             # Опционально: аудитория, тип занятия, неделя
-            subject_name_for_record = raw_discipline
+            subject_name_for_record = _strip_lecture_type_markers(raw_discipline).strip()
             audience = extract_audience(raw_discipline)
             week_types = parse_week_type(raw_discipline)
             # Если в ячейке "//" (числитель/знаменатель) — одна запись, формат "Часть1, К511 // Часть2, К503" и "К511//К503"
@@ -1085,9 +1102,16 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                     subject_name_for_record = sn
                     audience = au
                     week_types = ['обе недели']  # одна запись на обе недели, без дублей
+                # Тип по частям: "лекция // лабораторная" или "лекция // практика"
+                parts_for_type = [p.strip() for p in raw_discipline.split('//') if p.strip()]
+                if len(parts_for_type) >= 2:
+                    lecture_type = ' // '.join(parse_lecture_type(p) for p in parts_for_type)
+                else:
+                    lecture_type = parse_lecture_type(raw_discipline)
+            else:
+                lecture_type = parse_lecture_type(raw_discipline)
             if not week_types:
                 week_types = ['обе недели']
-            lecture_type = parse_lecture_type(raw_discipline)
             is_remote = 'ЭОиДОТ' in raw_discipline.upper() or 'эоидот' in raw_discipline.lower()
             # Нормализация аудитории: "К504//, К429" -> "К504//К429"; "К504//" в конце -> "К504"
             if audience:

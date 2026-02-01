@@ -93,7 +93,7 @@ const ScriptRunner: React.FC = () => {
     }
   };
 
-  const runScript = async (scriptName: 'parse_timetable' | 'clean_audiences' | 'load_timetable_to_db' | 'merge_timetable' | 'process_timetable') => {
+  const runScript = (scriptName: 'parse_timetable' | 'clean_audiences' | 'load_timetable_to_db' | 'merge_timetable' | 'process_timetable'): Promise<ScriptStatus> => {
     const setStatus = scriptName === 'parse_timetable' ? setParseStatus
       : scriptName === 'clean_audiences' ? setCleanStatus
         : scriptName === 'load_timetable_to_db' ? setLoadTimetableToDbStatus
@@ -110,30 +110,50 @@ const ScriptRunner: React.FC = () => {
     const runUrl = scriptName === 'process_timetable' ? `${API_BASE}/run/process_timetable`
       : scriptName === 'load_timetable_to_db' ? `${API_BASE}/run/load_timetable_to_db`
         : `${API_BASE}/run/${scriptName}`;
-    try {
-      await axios.post(runUrl);
-      // Начинаем опрос статуса
-      const statusInterval = setInterval(async () => {
-        try {
-          const response = await axios.get(`${API_BASE}/status/${scriptName}`);
-          const status = response.data;
-          setStatus(status);
 
-          if (!status.running) {
-            clearInterval(statusInterval);
-          }
-        } catch (error) {
-          console.error(`Error fetching status:`, error);
-          clearInterval(statusInterval);
-        }
-      }, 500);
-    } catch (error: any) {
-      setStatus({
-        running: false,
-        progress: 0,
-        message: 'Ошибка при запуске скрипта',
-        error: error.response?.data?.error || error.message
+    return axios.post(runUrl)
+      .then(() => {
+        return new Promise<ScriptStatus>((resolve, reject) => {
+          const statusInterval = setInterval(async () => {
+            try {
+              const response = await axios.get(`${API_BASE}/status/${scriptName}`);
+              const status: ScriptStatus = response.data;
+              setStatus(status);
+              if (!status.running) {
+                clearInterval(statusInterval);
+                resolve(status);
+              }
+            } catch (error) {
+              clearInterval(statusInterval);
+              reject(error);
+            }
+          }, 500);
+        });
+      })
+      .catch((error: any) => {
+        const errMsg = error.response?.data?.error || error.message;
+        setStatus({
+          running: false,
+          progress: 0,
+          message: 'Ошибка при запуске скрипта',
+          error: errMsg
+        });
+        return Promise.reject(error);
       });
+  };
+
+  const [pipelineRunning, setPipelineRunning] = useState(false);
+  const runAllPipeline = async () => {
+    if (pipelineRunning) return;
+    setPipelineRunning(true);
+    try {
+      await runScript('parse_timetable');
+      await runScript('clean_audiences');
+      await runScript('load_timetable_to_db');
+    } catch {
+      // Ошибка уже отображена в статусе шага
+    } finally {
+      setPipelineRunning(false);
     }
   };
 
@@ -245,124 +265,88 @@ const ScriptRunner: React.FC = () => {
         )}
       </div>
 
-      <div className="card">
-        <h2>Парсинг расписания (parse_timetable_excel.py)</h2>
+      <div className="card pipeline-card">
+        <h2>Парсинг → Обработка → Загрузка в БД</h2>
         <p className="description">
-          Парсит Excel файлы из папки input/timetable и создает timetable_processed.csv/xlsx
+          Парсинг Excel из input/timetable → очистка аудиторий и дисциплин → загрузка в таблицу timetable_cleaned. Можно запускать шаги по отдельности или всё по очереди.
         </p>
-        <button
-          className="button"
-          onClick={() => runScript('parse_timetable')}
-          disabled={parseStatus.running}
-        >
-          {parseStatus.running ? 'Выполняется...' : 'Запустить парсинг'}
-        </button>
-
-        {parseStatus.running && (
-          <div className="progress-container">
-            <div className="progress-bar">
-              <div
-                className="progress-bar-fill"
-                style={{ width: `${parseStatus.progress}%` }}
-              >
-                {parseStatus.progress}%
+        <div className="pipeline-actions">
+          <button
+            className="button"
+            onClick={() => runScript('parse_timetable')}
+            disabled={parseStatus.running || pipelineRunning}
+          >
+            {parseStatus.running ? 'Выполняется...' : 'Запуск парсинга'}
+          </button>
+          <button
+            className="button"
+            onClick={() => runScript('clean_audiences')}
+            disabled={cleanStatus.running || pipelineRunning}
+          >
+            {cleanStatus.running ? 'Выполняется...' : 'Запуск обработки'}
+          </button>
+          <button
+            className="button"
+            onClick={() => runScript('load_timetable_to_db')}
+            disabled={loadTimetableToDbStatus.running || pipelineRunning}
+          >
+            {loadTimetableToDbStatus.running ? 'Выполняется...' : 'Добавить в БД'}
+          </button>
+          <button
+            className="button button-primary"
+            onClick={runAllPipeline}
+            disabled={pipelineRunning || parseStatus.running || cleanStatus.running || loadTimetableToDbStatus.running}
+          >
+            {pipelineRunning ? 'Выполняется цепочка...' : 'Запустить всё по очереди'}
+          </button>
+        </div>
+        <div className="pipeline-progress-list">
+          <div className="pipeline-step">
+            <span className="pipeline-step-label">1. Парсинг</span>
+            <div className="progress-container">
+              <div className="progress-bar">
+                <div
+                  className="progress-bar-fill"
+                  style={{ width: `${parseStatus.progress}%` }}
+                >
+                  {parseStatus.progress}%
+                </div>
               </div>
+              <p className="progress-message">{parseStatus.message || (parseStatus.progress === 100 && !parseStatus.error ? 'Готово' : '')}</p>
             </div>
-            <p className="progress-message">{parseStatus.message}</p>
+            {parseStatus.error && <div className="message error">{parseStatus.error}</div>}
           </div>
-        )}
-
-        {parseStatus.error && (
-          <div className="message error">
-            <strong>Ошибка:</strong> {parseStatus.error}
-          </div>
-        )}
-
-        {!parseStatus.running && parseStatus.progress === 100 && !parseStatus.error && (
-          <div className="message success">
-            {parseStatus.message || 'Скрипт выполнен успешно!'}
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <h2>Обработка расписания (clean_audiences.py)</h2>
-        <p className="description">
-          Обрабатывает timetable_processed.csv/xlsx: очищает аудитории, дисциплины. Результат — timetable_processed_cleaned. В БД не загружает.
-        </p>
-        <button
-          className="button"
-          onClick={() => runScript('clean_audiences')}
-          disabled={cleanStatus.running}
-        >
-          {cleanStatus.running ? 'Выполняется...' : 'Запустить обработку'}
-        </button>
-
-        {cleanStatus.running && (
-          <div className="progress-container">
-            <div className="progress-bar">
-              <div
-                className="progress-bar-fill"
-                style={{ width: `${cleanStatus.progress}%` }}
-              >
-                {cleanStatus.progress}%
+          <div className="pipeline-step">
+            <span className="pipeline-step-label">2. Обработка</span>
+            <div className="progress-container">
+              <div className="progress-bar">
+                <div
+                  className="progress-bar-fill"
+                  style={{ width: `${cleanStatus.progress}%` }}
+                >
+                  {cleanStatus.progress}%
+                </div>
               </div>
+              <p className="progress-message">{cleanStatus.message || (cleanStatus.progress === 100 && !cleanStatus.error ? 'Готово' : '')}</p>
             </div>
-            <p className="progress-message">{cleanStatus.message}</p>
+            {cleanStatus.error && <div className="message error">{cleanStatus.error}</div>}
           </div>
-        )}
-
-        {cleanStatus.error && (
-          <div className="message error">
-            <strong>Ошибка:</strong> {cleanStatus.error}
-          </div>
-        )}
-
-        {!cleanStatus.running && cleanStatus.progress === 100 && !cleanStatus.error && (
-          <div className="message success">
-            {cleanStatus.message || 'Обработка завершена успешно!'}
-          </div>
-        )}
-      </div>
-
-      <div className="card">
-        <h2>Добавить расписание в БД</h2>
-        <p className="description">
-          Загружает timetable_processed_cleaned.csv в таблицу timetable_cleaned. Сначала выполните «Обработка расписания».
-        </p>
-        <button
-          className="button"
-          onClick={() => runScript('load_timetable_to_db')}
-          disabled={loadTimetableToDbStatus.running}
-        >
-          {loadTimetableToDbStatus.running ? 'Выполняется...' : 'Добавить в БД'}
-        </button>
-
-        {loadTimetableToDbStatus.running && (
-          <div className="progress-container">
-            <div className="progress-bar">
-              <div
-                className="progress-bar-fill"
-                style={{ width: `${loadTimetableToDbStatus.progress}%` }}
-              >
-                {loadTimetableToDbStatus.progress}%
+          <div className="pipeline-step">
+            <span className="pipeline-step-label">3. Добавить в БД</span>
+            <div className="progress-container">
+              <div className="progress-bar">
+                <div
+                  className="progress-bar-fill"
+                  style={{ width: `${loadTimetableToDbStatus.progress}%` }}
+                >
+                  {loadTimetableToDbStatus.progress}%
+                </div>
               </div>
+              <p className="progress-message">{loadTimetableToDbStatus.message || (loadTimetableToDbStatus.progress === 100 && !loadTimetableToDbStatus.error ? 'Готово' : '')}</p>
             </div>
-            <p className="progress-message">{loadTimetableToDbStatus.message}</p>
+            {loadTimetableToDbStatus.error && <div className="message error">{loadTimetableToDbStatus.error}</div>}
           </div>
-        )}
-
-        {loadTimetableToDbStatus.error && (
-          <div className="message error">
-            <strong>Ошибка:</strong> {loadTimetableToDbStatus.error}
-          </div>
-        )}
-
-        {!loadTimetableToDbStatus.running && loadTimetableToDbStatus.progress === 100 && !loadTimetableToDbStatus.error && (
-          <div className="message success">
-            {loadTimetableToDbStatus.message || 'Данные загружены в БД.'}
-          </div>
-        )}
+        </div>
       </div>
 
       <div className="card">
