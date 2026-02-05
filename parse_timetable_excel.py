@@ -272,10 +272,12 @@ def extract_audience_list(part_text):
     return collected
 
 
-def week_type_from_single_part(part_text):
+def week_type_from_single_part(part_text, part_index=None):
     """Определяет тип недели для одной части (одна ячейка) при двух соседних колонках.
     Если в ячейке нет «//» и нет « / » — это обе недели (две колонки = две подгруппы, не числ./знам.).
-    Числитель/знаменатель выводим только при явном разделителе в тексте."""
+    Числитель/знаменатель выводим только при явном разделителе в тексте.
+    part_index: при двух колонках 0 = первая (числитель), 1 = вторая (знаменатель); используется
+    когда в тексте есть «//» или « / », но нет явной пометки п/г 1 / п/г 2."""
     if not part_text or not isinstance(part_text, str):
         return 'обе недели'
     part_stripped = part_text.strip()
@@ -287,8 +289,15 @@ def week_type_from_single_part(part_text):
         return 'числитель'
     if re.search(r'п/г\s*2|подгруппа\s*2', t):
         return 'знаменатель'
+    # По позиции колонки: первая колонка — числитель, вторая — знаменатель (напр. "// Дисциплина" во 2-й ячейке)
+    if part_index is not None:
+        if part_index == 0:
+            return 'числитель'
+        if part_index == 1:
+            return 'знаменатель'
     if part_stripped.startswith('//') and 'п/г 2' not in t and 'подгруппа 2' not in t:
-        return 'числитель'
+        # Только "//" в начале без п/г 2 — контент после "//", т.е. знаменатель
+        return 'знаменатель'
     return 'обе недели'
 
 
@@ -1122,7 +1131,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             
             # Две ячейки дисциплины (числитель в одной, знаменатель в другой) — две отдельные записи
             if len(discipline_parts) == 2:
-                for part in discipline_parts:
+                for part_idx, part in enumerate(discipline_parts):
                     part_clean = part.replace('). ', '), ').strip()
                     if '//' not in part_clean:
                         part_clean = normalize_type_slash_for_weeks(part_clean) or part_clean
@@ -1134,7 +1143,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                         audience = re.sub(r',?\s*//\s*,?', '//', audience).strip(',').strip()
                         audience = re.sub(r'//+\s*$', '', audience).strip()
                     lecture_type = parse_lecture_type(part_clean)
-                    week_type = week_type_from_single_part(part_clean)
+                    week_type = week_type_from_single_part(part_clean, part_index=part_idx)
                     is_remote = 'ЭОиДОТ' in part_clean.upper() or 'эоидот' in part_clean.lower()
                     subgroups_list = extract_subgroups_from_text(part_clean)
                     num_subgroups = len(subgroups_list) if subgroups_list else 0

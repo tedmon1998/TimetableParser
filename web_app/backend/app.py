@@ -1086,6 +1086,192 @@ def clear_database():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+# --- Расписание: чистая сущность без полей ошибок, бэкап и восстановление ---
+
+SCHEDULE_COLUMNS = [
+    'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
+    'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction',
+    'department', 'is_external', 'is_remote', 'num_subgroups', 'fio'
+]
+
+def _ensure_schedule_table(conn):
+    """Создаёт таблицу schedule, если её ещё нет (только поля расписания, без ошибок и служебных id)."""
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS schedule (
+                id SERIAL PRIMARY KEY,
+                day_of_week VARCHAR(50),
+                pair_number INTEGER,
+                subject_name TEXT,
+                lecture_type VARCHAR(50),
+                audience VARCHAR(50),
+                group_name VARCHAR(50),
+                week_type VARCHAR(50),
+                subgroup INTEGER,
+                institute TEXT,
+                course VARCHAR(10),
+                direction TEXT,
+                department TEXT,
+                is_external BOOLEAN,
+                is_remote BOOLEAN,
+                num_subgroups INTEGER,
+                fio TEXT
+            )
+        """)
+        conn.commit()
+    finally:
+        cur.close()
+
+
+@app.route('/api/schedule/save', methods=['POST'])
+def schedule_save():
+    """Копирует данные из intermediate_timetable в таблицу schedule (только поля расписания, без ошибок)."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'intermediate_timetable'"
+        )
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({'error': 'Сначала выполните «Слияние расписания» (intermediate_timetable).'}), 400
+        _ensure_schedule_table(conn)
+        cols = ', '.join(SCHEDULE_COLUMNS)
+        placeholders = ', '.join(['%s'] * len(SCHEDULE_COLUMNS))
+        cur.execute("TRUNCATE TABLE schedule")
+        cur.execute(f"""
+            INSERT INTO schedule ({cols})
+            SELECT {cols}
+            FROM intermediate_timetable
+        """)
+        n = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'saved': n, 'message': f'В расписание сохранено записей: {n}'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/schedule/backup', methods=['GET'])
+def schedule_backup():
+    """Возвращает JSON-файл с полным дампом таблицы schedule (бэкап)."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        _ensure_schedule_table(conn)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("""
+            SELECT id, day_of_week, pair_number, subject_name, lecture_type, audience,
+                   group_name, week_type, subgroup, institute, course, direction,
+                   department, is_external, is_remote, num_subgroups, fio
+            FROM schedule
+            ORDER BY id
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        data = {'schedule': [dict(r) for r in rows], 'version': 1, 'exported_at': datetime.utcnow().isoformat() + 'Z'}
+        from flask import Response
+        return Response(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            mimetype='application/json',
+            headers={'Content-Disposition': 'attachment; filename=schedule_backup.json'}
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/schedule/restore', methods=['POST'])
+def schedule_restore():
+    """Восстанавливает таблицу schedule из загруженного JSON-файла бэкапа."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'Файл не выбран'}), 400
+        f = request.files['file']
+        if not f.filename or not f.filename.lower().endswith('.json'):
+            return jsonify({'error': 'Нужен файл .json'}), 400
+        data = json.load(f)
+        if not isinstance(data, dict) or 'schedule' not in data:
+            return jsonify({'error': 'Неверный формат бэкапа: ожидается объект с полем schedule'}), 400
+        rows = data['schedule']
+        if not isinstance(rows, list):
+            return jsonify({'error': 'Неверный формат: schedule должен быть массивом'}), 400
+        conn = psycopg2.connect(**DB_CONFIG)
+        _ensure_schedule_table(conn)
+        cur = conn.cursor()
+        cur.execute("TRUNCATE TABLE schedule")
+        cols_s = ", ".join(SCHEDULE_COLUMNS)
+        placeholders = ", ".join(["%s"] * len(SCHEDULE_COLUMNS))
+        n = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            vals = [row.get(c) for c in SCHEDULE_COLUMNS]
+            cur.execute("INSERT INTO schedule (" + cols_s + ") VALUES (" + placeholders + ")", vals)
+            n += 1
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'restored': n, 'message': f'Восстановлено записей: {n}'})
+    except json.JSONDecodeError as e:
+        return jsonify({'error': f'Ошибка JSON: {str(e)}'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/schedule/stats', methods=['GET'])
+def schedule_stats():
+    """Возвращает количество записей в schedule."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        _ensure_schedule_table(conn)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM schedule")
+        total = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return jsonify({'total': total})
+    except Exception as e:
+        return jsonify({'error': str(e), 'total': 0}), 500
+
+
+@app.route('/api/schedule/records', methods=['GET'])
+def schedule_records():
+    """Возвращает записи из schedule с пагинацией."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        _ensure_schedule_table(conn)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        page = int(request.args.get('page', 1))
+        limit = min(max(int(request.args.get('limit', 50)), 1), 500)
+        offset = (page - 1) * limit
+        cur.execute("SELECT COUNT(*) as total FROM schedule")
+        total = cur.fetchone()['total']
+        cur.execute("""
+            SELECT id, day_of_week, pair_number, subject_name, lecture_type, audience,
+                   group_name, week_type, subgroup, institute, course, direction,
+                   department, is_external, is_remote, num_subgroups, fio
+            FROM schedule
+            ORDER BY id
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+        records = [dict(r) for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+        return jsonify({
+            'records': records,
+            'total': total,
+            'page': page,
+            'limit': limit,
+            'pages': (total + limit - 1) // limit if total > 0 else 0
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def _allowed_update_fields(table):
     """Разрешённые поля для обновления в зависимости от таблицы. intermediate_timetable — редактируемые поля с синхронизацией в cleaned/teacher и пересчётом ошибок."""
     if table == 'intermediate_timetable':
