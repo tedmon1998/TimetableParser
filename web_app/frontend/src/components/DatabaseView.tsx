@@ -880,7 +880,7 @@ const DatabaseView: React.FC = () => {
       // Debounce будет применен автоматически через useDebounce
       handleFilterChange(filterKey, value);
     }
-  }, [handleFilterChange]);
+  }, [handleFilterChange, columnToFilterMap]);
 
   const clearDatabase = async () => {
     const tableLabel = activeTable === 'timetable_teacher' ? 'Занятость преподавателей' : activeTable === 'intermediate_timetable' ? 'Промежуточное расписание' : 'Спаршенное расписание';
