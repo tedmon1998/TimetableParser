@@ -92,6 +92,15 @@ const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
 
 export type DbTableType = 'timetable_cleaned' | 'timetable_teacher' | 'intermediate_timetable';
 
+export type BackupTableType = DbTableType | 'schedule';
+
+const BACKUP_TABLE_OPTIONS: { id: BackupTableType; label: string }[] = [
+  { id: 'timetable_cleaned', label: 'Спаршенное расписание' },
+  { id: 'timetable_teacher', label: 'Занятость преподавателей' },
+  { id: 'intermediate_timetable', label: 'Промежуточное расписание' },
+  { id: 'schedule', label: 'Расписание' }
+];
+
 // Колонки промежуточного расписания: данные из timetable_cleaned + fio из timetable_teacher + флаги ошибок + старое имя дисциплины
 const INTERMEDIATE_COLUMN_KEYS = ['id', 'day_of_week', 'pair_number', 'subject_name', 'discipline_original', 'lecture_type', 'audience', 'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction', 'department', 'fio', 'week_error', 'audience_error'] as const;
 const INTERMEDIATE_LABELS: Record<string, string> = {
@@ -188,6 +197,11 @@ const DatabaseView: React.FC = () => {
 
   // Состояние для toast уведомлений
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
+  // Состояние для бэкапа/восстановления (унифицированный интерфейс)
+  const [backupTable, setBackupTable] = useState<BackupTableType>('intermediate_timetable');
+  const [restoring, setRestoring] = useState(false);
+  const [dropZoneActive, setDropZoneActive] = useState(false);
 
   // Состояние для контекстного меню
   const [contextMenu, setContextMenu] = useState<{
@@ -899,6 +913,101 @@ const DatabaseView: React.FC = () => {
     }
   };
 
+  const handleBackup = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/db/backup?table=${encodeURIComponent(backupTable)}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || res.statusText);
+      }
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${backupTable}_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+      setToast({ message: `Бэкап ${backupTable} скачан`, type: 'success' });
+    } catch (e) {
+      setToast({ message: (e as Error).message || 'Ошибка скачивания', type: 'error' });
+    }
+  }, [backupTable]);
+
+  const doRestore = useCallback(
+    async (file: File) => {
+      setRestoring(true);
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('table', backupTable);
+        const res = await axios.post(`${API_BASE}/db/restore`, form, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        const data = res.data as { restored?: number; message?: string; error?: string };
+        if (data.error) {
+          setToast({ message: data.error, type: 'error' });
+        } else {
+          setToast({ message: data.message || `Восстановлено записей: ${data.restored ?? 0}`, type: 'success' });
+          queryClient.invalidateQueries({ queryKey: ['db-stats'] });
+          queryClient.invalidateQueries({ queryKey: ['db-records'] });
+          if (backupTable === 'schedule') {
+            queryClient.invalidateQueries({ queryKey: ['schedule-records'] });
+            queryClient.invalidateQueries({ queryKey: ['schedule-stats'] });
+          }
+        }
+      } catch (err: unknown) {
+        const msg = (err as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error
+          || (err as { message?: string })?.message
+          || 'Ошибка восстановления';
+        setToast({ message: String(msg), type: 'error' });
+      } finally {
+        setRestoring(false);
+      }
+    },
+    [backupTable, queryClient]
+  );
+
+  const handleRestoreFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file?.name?.toLowerCase().endsWith('.json')) {
+        setToast({ message: 'Нужен файл .json', type: 'error' });
+        e.target.value = '';
+        return;
+      }
+      doRestore(file);
+      e.target.value = '';
+    },
+    [doRestore]
+  );
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setDropZoneActive(false);
+      const file = e.dataTransfer.files?.[0];
+      if (!file?.name?.toLowerCase().endsWith('.json')) {
+        setToast({ message: 'Нужен файл .json', type: 'error' });
+        return;
+      }
+      doRestore(file);
+    },
+    [doRestore]
+  );
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropZoneActive(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDropZoneActive(false);
+  }, []);
+
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'Нет данных';
     const date = new Date(dateString);
@@ -1198,7 +1307,7 @@ const DatabaseView: React.FC = () => {
       <div className="card">
         <div className="card-header">
           <h2>Статистика базы данных</h2>
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               className="button"
               onClick={() => {
@@ -1272,6 +1381,51 @@ const DatabaseView: React.FC = () => {
             )}
           </>
         )}
+      </div>
+
+      <div className="card">
+        <div className="card-header">
+          <h2>Бэкап и восстановление</h2>
+        </div>
+        <div className="backup-restore-panel">
+          <div className="backup-restore-row">
+            <label>
+              Таблица:
+              <select
+                value={backupTable}
+                onChange={(e) => setBackupTable(e.target.value as BackupTableType)}
+                className="select-table"
+              >
+                {BACKUP_TABLE_OPTIONS.map((opt) => (
+                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                ))}
+              </select>
+            </label>
+            <button className="button" onClick={handleBackup}>
+              Скачать backup
+            </button>
+          </div>
+          <div
+            className={`dropzone ${dropZoneActive ? 'active' : ''} ${restoring ? 'disabled' : ''}`}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <input
+              type="file"
+              accept=".json"
+              id="restore-file-input"
+              style={{ display: 'none' }}
+              disabled={restoring}
+              onChange={handleRestoreFile}
+            />
+            <label htmlFor="restore-file-input" className="dropzone-label">
+              {restoring
+                ? 'Восстановление...'
+                : 'Перетащите JSON-файл бэкапа сюда или нажмите для выбора'}
+            </label>
+          </div>
+        </div>
       </div>
 
       <div className="card">

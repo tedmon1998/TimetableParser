@@ -32,6 +32,7 @@ const ScheduleView: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [restoring, setRestoring] = useState(false);
+  const [pushingToProd, setPushingToProd] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const limit = 50;
 
@@ -149,6 +150,26 @@ const ScheduleView: React.FC = () => {
     [loadStats, loadRecords]
   );
 
+  const handlePushToProd = useCallback(async () => {
+    setPushingToProd(true);
+    try {
+      const res = await axios.post(`${API_BASE}/schedule/push-to-prod`);
+      const data = res.data as { pushed?: number; message?: string; error?: string };
+      if (data.error) {
+        setToast({ message: data.error, type: 'error' });
+      } else {
+        setToast({ message: data.message || `В продакшн отправлено записей: ${data.pushed ?? 0}`, type: 'success' });
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error
+        || (err as { message?: string })?.message
+        || 'Ошибка отправки в продакшн';
+      setToast({ message: String(msg), type: 'error' });
+    } finally {
+      setPushingToProd(false);
+    }
+  }, []);
+
   const columns = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience', 'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction', 'department', 'fio'];
   const pages = Math.max(1, Math.ceil(total / limit));
 
@@ -186,6 +207,14 @@ const ScheduleView: React.FC = () => {
               onChange={handleRestore}
             />
           </label>
+          <button
+            type="button"
+            className="schedule-btn schedule-btn-prod"
+            onClick={handlePushToProd}
+            disabled={pushingToProd || total === 0}
+          >
+            {pushingToProd ? 'Отправка...' : 'Отправить в продакшн БД'}
+          </button>
         </div>
         <p className="schedule-stats">Записей в расписании: <strong>{total}</strong></p>
       </section>

@@ -4,6 +4,12 @@ import json
 import subprocess
 import os
 import sys
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 import glob
 import re
 import shutil
@@ -25,14 +31,27 @@ if _project_root() not in sys.path:
 app = Flask(__name__)
 CORS(app)
 
-# Параметры подключения к БД
+# Параметры подключения к БД (текущая / dev)
 DB_CONFIG = {
-    'host': 'edro.su',
-    'port': 50003,
-    'user': 'edro',
-    'password': 'Pg123!',
-    'database': 'test_sursu_timetable'
+    'host': os.environ.get('DB_HOST', 'edro.su'),
+    'port': int(os.environ.get('DB_PORT', '50003')),
+    'user': os.environ.get('DB_USER', 'edro'),
+    'password': os.environ.get('DB_PASSWORD', 'Pg123!'),
+    'database': os.environ.get('DB_NAME', 'test_sursu_timetable')
 }
+
+# Параметры подключения к продакшн БД (для отправки расписания)
+def _prod_db_config():
+    host = os.environ.get('DB_PROD_HOST')
+    if not host:
+        return None
+    return {
+        'host': host,
+        'port': int(os.environ.get('DB_PROD_PORT', '5432')),
+        'user': os.environ.get('DB_PROD_USER', ''),
+        'password': os.environ.get('DB_PROD_PASSWORD', ''),
+        'database': os.environ.get('DB_PROD_NAME', '')
+    }
 
 # Глобальные переменные для отслеживания прогресса
 script_status = {
@@ -41,11 +60,24 @@ script_status = {
     'load_timetable_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'merge_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'process_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
-    'fetch_teachers': {'running': False, 'progress': 0, 'message': '', 'error': None}
+    'fetch_teachers': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'parse_aspi': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'normalize_aspi': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'load_aspi_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'merge_aspi_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
 
 # Разрешённые таблицы для просмотра записей
 ALLOWED_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable')
+
+# Таблицы для бэкапа/восстановления (включая schedule)
+BACKUP_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'schedule')
+BACKUP_TABLE_LABELS = {
+    'timetable_cleaned': 'Спаршенное расписание',
+    'timetable_teacher': 'Занятость преподавателей',
+    'intermediate_timetable': 'Промежуточное расписание',
+    'schedule': 'Расписание'
+}
 
 def get_table_param():
     """Возвращает имя таблицы из query param (timetable_cleaned, timetable_teacher или intermediate_timetable)."""
@@ -419,7 +451,8 @@ def run_merge_timetable():
                 num_subgroups INTEGER,
                 fio TEXT,
                 week_error BOOLEAN,
-                audience_error BOOLEAN
+                audience_error BOOLEAN,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
@@ -673,6 +706,314 @@ def run_process_timetable_route():
     if script_status['process_timetable']['running']:
         return jsonify({'error': 'Script is already running'}), 400
     thread = threading.Thread(target=run_process_timetable)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
+def run_parse_aspi():
+    """Запускает parse_aspi.py — парсинг расписания аспирантов из .docx в aspi/aspi → JSON в aspi/output."""
+    script_status['parse_aspi']['running'] = True
+    script_status['parse_aspi']['progress'] = 0
+    script_status['parse_aspi']['message'] = 'Начало парсинга расписания аспирантов...'
+    script_status['parse_aspi']['error'] = None
+    try:
+        project_root = get_project_root()
+        aspi_dir = os.path.join(project_root, 'aspi')
+        script_path = os.path.join(aspi_dir, 'parse_aspi.py')
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"Скрипт не найден: {script_path}")
+        script_status['parse_aspi']['progress'] = 10
+        script_status['parse_aspi']['message'] = 'Запуск parse_aspi.py...'
+        process = subprocess.Popen(
+            [sys.executable, script_path],
+            cwd=aspi_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        script_status['parse_aspi']['progress'] = 40
+        script_status['parse_aspi']['message'] = 'Обработка .docx файлов...'
+        output_lines = []
+        while True:
+            out = process.stdout.readline()
+            if out == '' and process.poll() is not None:
+                break
+            if out:
+                line = out.strip()
+                if line:
+                    output_lines.append(line)
+                    script_status['parse_aspi']['progress'] = min(40 + min(len(output_lines) * 5, 50), 90)
+                    script_status['parse_aspi']['message'] = line[:80] if len(line) > 80 else line
+        return_code = process.wait()
+        stderr_output = process.stderr.read()
+        if return_code != 0:
+            error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
+            script_status['parse_aspi']['error'] = error_msg
+            script_status['parse_aspi']['message'] = 'Ошибка при выполнении скрипта'
+            script_status['parse_aspi']['progress'] = 0
+        else:
+            script_status['parse_aspi']['progress'] = 100
+            script_status['parse_aspi']['message'] = 'Парсинг расписания аспирантов завершён. Результаты в aspi/output/'
+    except Exception as e:
+        script_status['parse_aspi']['error'] = str(e)
+        script_status['parse_aspi']['message'] = f'Ошибка: {str(e)}'
+        script_status['parse_aspi']['progress'] = 0
+    finally:
+        script_status['parse_aspi']['running'] = False
+
+
+@app.route('/api/run/parse_aspi', methods=['POST'])
+def run_parse_aspi_route():
+    """Запускает parse_aspi.py (парсинг расписания аспирантов из .docx)."""
+    if script_status['parse_aspi']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_parse_aspi)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
+def run_normalize_aspi():
+    """Запускает normalize_aspi.py — нормализация JSON аспирантов (ФИО, дни, дисциплины, audience)."""
+    script_status['normalize_aspi']['running'] = True
+    script_status['normalize_aspi']['progress'] = 0
+    script_status['normalize_aspi']['message'] = 'Начало нормализации расписания аспирантов...'
+    script_status['normalize_aspi']['error'] = None
+    try:
+        project_root = get_project_root()
+        aspi_dir = os.path.join(project_root, 'aspi')
+        script_path = os.path.join(aspi_dir, 'normalize_aspi.py')
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"Скрипт не найден: {script_path}")
+        script_status['normalize_aspi']['progress'] = 10
+        script_status['normalize_aspi']['message'] = 'Запуск normalize_aspi.py...'
+        process = subprocess.Popen(
+            [sys.executable, script_path],
+            cwd=aspi_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1
+        )
+        script_status['normalize_aspi']['progress'] = 40
+        script_status['normalize_aspi']['message'] = 'Нормализация JSON...'
+        output_lines = []
+        while True:
+            out = process.stdout.readline()
+            if out == '' and process.poll() is not None:
+                break
+            if out:
+                line = out.strip()
+                if line:
+                    output_lines.append(line)
+                    script_status['normalize_aspi']['progress'] = min(40 + min(len(output_lines) * 5, 50), 90)
+                    script_status['normalize_aspi']['message'] = line[:80] if len(line) > 80 else line
+        return_code = process.wait()
+        stderr_output = process.stderr.read()
+        if return_code != 0:
+            error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
+            script_status['normalize_aspi']['error'] = error_msg
+            script_status['normalize_aspi']['message'] = 'Ошибка при выполнении скрипта'
+            script_status['normalize_aspi']['progress'] = 0
+        else:
+            script_status['normalize_aspi']['progress'] = 100
+            script_status['normalize_aspi']['message'] = 'Нормализация завершена. Файлы в aspi/output/ обновлены.'
+    except Exception as e:
+        script_status['normalize_aspi']['error'] = str(e)
+        script_status['normalize_aspi']['message'] = f'Ошибка: {str(e)}'
+        script_status['normalize_aspi']['progress'] = 0
+    finally:
+        script_status['normalize_aspi']['running'] = False
+
+
+@app.route('/api/run/normalize_aspi', methods=['POST'])
+def run_normalize_aspi_route():
+    """Запускает normalize_aspi.py (нормализация JSON аспирантов)."""
+    if script_status['normalize_aspi']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_normalize_aspi)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
+def run_load_aspi_to_db():
+    """Загружает нормализованные JSON из aspi/output в таблицу timetable_aspi."""
+    script_status['load_aspi_to_db']['running'] = True
+    script_status['load_aspi_to_db']['progress'] = 0
+    script_status['load_aspi_to_db']['message'] = 'Подготовка загрузки в БД...'
+    script_status['load_aspi_to_db']['error'] = None
+    try:
+        project_root = get_project_root()
+        aspi_output = os.path.join(project_root, 'aspi', 'output')
+        if not os.path.isdir(aspi_output):
+            raise FileNotFoundError('Папка aspi/output не найдена. Сначала запустите парсер и нормализацию.')
+        json_files = [f for f in glob.glob(os.path.join(aspi_output, '*.json')) if os.path.basename(f) != '_all.json']
+        if not json_files:
+            raise FileNotFoundError('В aspi/output нет JSON-файлов (кроме _all.json). Запустите парсер и нормализацию.')
+        script_status['load_aspi_to_db']['progress'] = 10
+        script_status['load_aspi_to_db']['message'] = 'Чтение нормализованных JSON...'
+        all_rows = []
+        for path in sorted(json_files):
+            with open(path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                all_rows.extend(data)
+        if not all_rows:
+            raise ValueError('Нет записей для загрузки.')
+        script_status['load_aspi_to_db']['progress'] = 30
+        script_status['load_aspi_to_db']['message'] = f'Загрузка в таблицу timetable_aspi ({len(all_rows)} записей)...'
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS timetable_aspi (
+                id SERIAL PRIMARY KEY,
+                day_of_week VARCHAR(50),
+                pair_number TEXT,
+                subject_name TEXT,
+                discipline_original TEXT,
+                audience VARCHAR(255),
+                group_name VARCHAR(100),
+                week_type VARCHAR(50),
+                fio TEXT,
+                course VARCHAR(20),
+                scientific_specialty TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        cursor.execute("ALTER TABLE timetable_aspi ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        conn.commit()
+        cursor.execute("TRUNCATE TABLE timetable_aspi")
+        conn.commit()
+        cols = ['day_of_week', 'pair_number', 'subject_name', 'discipline_original', 'audience',
+                'group_name', 'week_type', 'fio', 'course', 'scientific_specialty']
+        def row_vals(rec):
+            pair = rec.get('pair_number')
+            if pair is not None and not isinstance(pair, str):
+                pair = str(pair)
+            return (
+                (rec.get('day_of_week') or '').strip() or None,
+                pair,
+                (rec.get('subject_name') or '').strip() or None,
+                (rec.get('discipline_original') or '').strip() or None,
+                (rec.get('audience') or '').strip() or None,
+                (rec.get('group_name') or '').strip() or None,
+                (rec.get('week_type') or '').strip() or None,
+                (rec.get('fio') or '').strip() or None,
+                (rec.get('course') or '').strip() or None,
+                (rec.get('scientific_specialty') or rec.get('научная_специальность') or '').strip() or None,
+            )
+        rows_to_insert = [row_vals(rec) for rec in all_rows]
+        insert_sql = """
+            INSERT INTO timetable_aspi (day_of_week, pair_number, subject_name, discipline_original,
+                audience, group_name, week_type, fio, course, scientific_specialty)
+            VALUES %s
+        """
+        execute_values(cursor, insert_sql, rows_to_insert)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        script_status['load_aspi_to_db']['progress'] = 100
+        script_status['load_aspi_to_db']['message'] = f'Готово. Загружено записей в timetable_aspi: {len(rows_to_insert)}'
+    except Exception as e:
+        script_status['load_aspi_to_db']['error'] = str(e)
+        script_status['load_aspi_to_db']['message'] = f'Ошибка: {str(e)}'
+        script_status['load_aspi_to_db']['progress'] = 0
+    finally:
+        script_status['load_aspi_to_db']['running'] = False
+
+
+@app.route('/api/run/load_aspi_to_db', methods=['POST'])
+def run_load_aspi_to_db_route():
+    """Загружает нормализованное расписание аспирантов из aspi/output в timetable_aspi."""
+    if script_status['load_aspi_to_db']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_load_aspi_to_db)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
+def run_merge_aspi_to_intermediate():
+    """Добавляет записи из timetable_aspi в intermediate_timetable."""
+    script_status['merge_aspi_to_intermediate']['running'] = True
+    script_status['merge_aspi_to_intermediate']['progress'] = 0
+    script_status['merge_aspi_to_intermediate']['message'] = 'Добавление расписания аспирантов в intermediate_timetable...'
+    script_status['merge_aspi_to_intermediate']['error'] = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'intermediate_timetable'"
+        )
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            raise RuntimeError('Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания» во вкладке «Бакалавры + магистры».')
+        cursor.execute("ALTER TABLE intermediate_timetable ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        conn.commit()
+        cursor.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'timetable_aspi'"
+        )
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            raise RuntimeError('Таблица timetable_aspi не найдена. Сначала выполните «Добавить в БД» для аспирантов.')
+        script_status['merge_aspi_to_intermediate']['progress'] = 30
+        script_status['merge_aspi_to_intermediate']['message'] = 'Копирование данных timetable_aspi → intermediate_timetable...'
+        cursor.execute("""
+            INSERT INTO intermediate_timetable (
+                cleaned_id, teacher_id, day_of_week, pair_number, subject_name, discipline_original,
+                lecture_type, audience, group_name, week_type, subgroup, institute, course, direction,
+                department, is_external, is_remote, num_subgroups, fio, week_error, audience_error
+            )
+            SELECT
+                NULL,
+                NULL,
+                day_of_week,
+                CASE WHEN pair_number ~ '^\\s*\\d+\\s*$' THEN pair_number::integer ELSE NULL END,
+                subject_name,
+                discipline_original,
+                NULL,
+                audience,
+                group_name,
+                week_type,
+                NULL,
+                NULL,
+                course,
+                scientific_specialty,
+                NULL,
+                FALSE,
+                FALSE,
+                NULL,
+                fio,
+                NULL,
+                NULL
+            FROM timetable_aspi
+        """)
+        conn.commit()
+        n = cursor.rowcount
+        cursor.close()
+        conn.close()
+        script_status['merge_aspi_to_intermediate']['progress'] = 100
+        script_status['merge_aspi_to_intermediate']['message'] = f'Готово. Добавлено записей аспирантов в intermediate_timetable: {n}'
+    except Exception as e:
+        script_status['merge_aspi_to_intermediate']['error'] = str(e)
+        script_status['merge_aspi_to_intermediate']['message'] = f'Ошибка: {str(e)}'
+        script_status['merge_aspi_to_intermediate']['progress'] = 0
+    finally:
+        script_status['merge_aspi_to_intermediate']['running'] = False
+
+
+@app.route('/api/run/merge_aspi_to_intermediate', methods=['POST'])
+def run_merge_aspi_to_intermediate_route():
+    """Добавляет расписание аспирантов из timetable_aspi в intermediate_timetable."""
+    if script_status['merge_aspi_to_intermediate']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_merge_aspi_to_intermediate)
     thread.daemon = True
     thread.start()
     return jsonify({'message': 'Script started'})
@@ -1117,9 +1458,12 @@ def _ensure_schedule_table(conn):
                 is_external BOOLEAN,
                 is_remote BOOLEAN,
                 num_subgroups INTEGER,
-                fio TEXT
+                fio TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.commit()
+        cur.execute("ALTER TABLE schedule ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         conn.commit()
     finally:
         cur.close()
@@ -1204,18 +1548,255 @@ def schedule_restore():
         cur = conn.cursor()
         cur.execute("TRUNCATE TABLE schedule")
         cols_s = ", ".join(SCHEDULE_COLUMNS)
-        placeholders = ", ".join(["%s"] * len(SCHEDULE_COLUMNS))
-        n = 0
+        rows_to_insert = []
         for row in rows:
             if not isinstance(row, dict):
                 continue
-            vals = [row.get(c) for c in SCHEDULE_COLUMNS]
-            cur.execute("INSERT INTO schedule (" + cols_s + ") VALUES (" + placeholders + ")", vals)
-            n += 1
+            vals = tuple(row.get(c) for c in SCHEDULE_COLUMNS)
+            rows_to_insert.append(vals)
+        if rows_to_insert:
+            execute_values(cur, f"INSERT INTO schedule ({cols_s}) VALUES %s", rows_to_insert)
         conn.commit()
+        n = len(rows_to_insert)
         cur.close()
         conn.close()
         return jsonify({'restored': n, 'message': f'Восстановлено записей: {n}'})
+    except json.JSONDecodeError as e:
+        return jsonify({'error': f'Ошибка JSON: {str(e)}'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/schedule/push-to-prod', methods=['POST'])
+def schedule_push_to_prod():
+    """Копирует таблицу schedule из текущей БД в продакшн БД (DB_PROD_*)."""
+    prod_config = _prod_db_config()
+    if not prod_config:
+        return jsonify({'error': 'Продакшн БД не настроена: задайте DB_PROD_HOST в .env'}), 400
+    try:
+        conn_local = psycopg2.connect(**DB_CONFIG)
+        _ensure_schedule_table(conn_local)
+        cur_local = conn_local.cursor(cursor_factory=RealDictCursor)
+        cur_local.execute(
+            f"SELECT {', '.join(SCHEDULE_COLUMNS)} FROM schedule ORDER BY id"
+        )
+        rows = cur_local.fetchall()
+        cur_local.close()
+        conn_local.close()
+        rows_data = [tuple(r[c] for c in SCHEDULE_COLUMNS) for r in rows]
+        conn_prod = psycopg2.connect(**prod_config)
+        _ensure_schedule_table(conn_prod)
+        cur_prod = conn_prod.cursor()
+        cur_prod.execute("TRUNCATE TABLE schedule RESTART IDENTITY")
+        if rows_data:
+            cols_s = ", ".join(SCHEDULE_COLUMNS)
+            execute_values(cur_prod, f"INSERT INTO schedule ({cols_s}) VALUES %s", rows_data)
+        conn_prod.commit()
+        n = len(rows_data)
+        cur_prod.close()
+        conn_prod.close()
+        return jsonify({'pushed': n, 'message': f'В продакшн отправлено записей: {n}'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# Колонки intermediate_timetable для бэкапа (все, кроме id — при restore id генерируется)
+INTERMEDIATE_BACKUP_COLUMNS = [
+    'cleaned_id', 'teacher_id', 'day_of_week', 'pair_number', 'subject_name', 'discipline_original',
+    'lecture_type', 'audience', 'group_name', 'week_type', 'subgroup', 'institute', 'course',
+    'direction', 'department', 'is_external', 'is_remote', 'num_subgroups', 'fio',
+    'week_error', 'audience_error'
+]
+
+
+@app.route('/api/intermediate/backup', methods=['GET'])
+def intermediate_backup():
+    """Возвращает JSON-файл с полным дампом таблицы intermediate_timetable (бэкап)."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'intermediate_timetable'"
+        )
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({'error': 'Таблица intermediate_timetable не найдена'}), 404
+        cur.execute("""
+            SELECT id, cleaned_id, teacher_id, day_of_week, pair_number, subject_name, discipline_original,
+                   lecture_type, audience, group_name, week_type, subgroup, institute, course, direction,
+                   department, is_external, is_remote, num_subgroups, fio, week_error, audience_error
+            FROM intermediate_timetable
+            ORDER BY id
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        data = {'intermediate_timetable': [dict(r) for r in rows], 'version': 1, 'exported_at': datetime.utcnow().isoformat() + 'Z'}
+        from flask import Response
+        return Response(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            mimetype='application/json',
+            headers={'Content-Disposition': 'attachment; filename=intermediate_backup.json'}
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/intermediate/restore', methods=['POST'])
+def intermediate_restore():
+    """Восстанавливает таблицу intermediate_timetable из загруженного JSON-файла бэкапа."""
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'Файл не выбран'}), 400
+        f = request.files['file']
+        if not f.filename or not f.filename.lower().endswith('.json'):
+            return jsonify({'error': 'Нужен файл .json'}), 400
+        data = json.load(f)
+        if not isinstance(data, dict) or 'intermediate_timetable' not in data:
+            return jsonify({'error': 'Неверный формат бэкапа: ожидается объект с полем intermediate_timetable'}), 400
+        rows = data['intermediate_timetable']
+        if not isinstance(rows, list):
+            return jsonify({'error': 'Неверный формат: intermediate_timetable должен быть массивом'}), 400
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'intermediate_timetable'"
+        )
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания».'}), 400
+        cur.execute("TRUNCATE TABLE intermediate_timetable")
+        rows_to_insert = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            vals = tuple(row.get(c) for c in INTERMEDIATE_BACKUP_COLUMNS)
+            rows_to_insert.append(vals)
+        if rows_to_insert:
+            cols_s = ", ".join(INTERMEDIATE_BACKUP_COLUMNS)
+            execute_values(cur, f"INSERT INTO intermediate_timetable ({cols_s}) VALUES %s", rows_to_insert)
+        conn.commit()
+        n = len(rows_to_insert)
+        cur.close()
+        conn.close()
+        return jsonify({'restored': n, 'message': f'Восстановлено записей в intermediate_timetable: {n}'})
+    except json.JSONDecodeError as e:
+        return jsonify({'error': f'Ошибка JSON: {str(e)}'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# --- Унифицированный бэкап и восстановление для всех таблиц ---
+
+BACKUP_COLUMNS = {
+    'timetable_cleaned': [
+        'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
+        'fio', 'teacher', 'group_name', 'week_type', 'subgroup', 'institute', 'course',
+        'direction', 'department', 'is_external', 'is_remote', 'num_subgroups'
+    ],
+    'timetable_teacher': [
+        'fio', 'pair_number', 'day_of_week', 'group_name', 'audience', 'department',
+        'week_type', 'subgroup', 'num_subgroups', 'is_external', 'is_remote', 'subject_name'
+    ],
+    'intermediate_timetable': INTERMEDIATE_BACKUP_COLUMNS,
+    'schedule': SCHEDULE_COLUMNS,
+}
+
+
+@app.route('/api/db/backup-tables', methods=['GET'])
+def backup_tables_list():
+    """Список таблиц для бэкапа/восстановления."""
+    return jsonify({
+        'tables': [
+            {'id': t, 'label': BACKUP_TABLE_LABELS.get(t, t)}
+            for t in BACKUP_TABLES
+        ]
+    })
+
+
+@app.route('/api/db/backup', methods=['GET'])
+def unified_backup():
+    """Бэкап выбранной таблицы (timetable_cleaned, timetable_teacher, intermediate_timetable, schedule)."""
+    table = request.args.get('table', '').strip()
+    if table not in BACKUP_TABLES:
+        return jsonify({'error': f'Неизвестная таблица: {table}. Допустимы: {", ".join(BACKUP_TABLES)}'}), 400
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s",
+            (table,)
+        )
+        if not cur.fetchone():
+            cur.close()
+            conn.close()
+            return jsonify({'error': f'Таблица {table} не найдена'}), 404
+        cols = BACKUP_COLUMNS[table]
+        cols_str = ', '.join(cols)
+        cur.execute(f"SELECT {cols_str} FROM {table} ORDER BY id")
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        data = {table: [dict(r) for r in rows], 'version': 1, 'exported_at': datetime.utcnow().isoformat() + 'Z'}
+        from flask import Response
+        return Response(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            mimetype='application/json',
+            headers={'Content-Disposition': f'attachment; filename={table}_backup.json'}
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/db/restore', methods=['POST'])
+def unified_restore():
+    """Восстановление таблицы из JSON-файла бэкапа."""
+    table = request.form.get('table', '').strip()
+    if table not in BACKUP_TABLES:
+        return jsonify({'error': f'Неизвестная таблица: {table}'}), 400
+    if 'file' not in request.files:
+        return jsonify({'error': 'Файл не выбран'}), 400
+    f = request.files['file']
+    if not f.filename or not f.filename.lower().endswith('.json'):
+        return jsonify({'error': 'Нужен файл .json'}), 400
+    try:
+        data = json.load(f)
+        if not isinstance(data, dict) or table not in data:
+            return jsonify({'error': f'Неверный формат бэкапа: ожидается объект с полем {table}'}), 400
+        rows = data[table]
+        if not isinstance(rows, list):
+            return jsonify({'error': f'{table} должен быть массивом'}), 400
+        cols = BACKUP_COLUMNS[table]
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = %s",
+            (table,)
+        )
+        if not cur.fetchone():
+            if table == 'schedule':
+                _ensure_schedule_table(conn)
+            else:
+                cur.close()
+                conn.close()
+                return jsonify({'error': f'Таблица {table} не найдена'}), 404
+        cur.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY")
+        rows_to_insert = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            vals = tuple(row.get(c) for c in cols)
+            rows_to_insert.append(vals)
+        if rows_to_insert:
+            cols_s = ", ".join(cols)
+            execute_values(cur, f"INSERT INTO {table} ({cols_s}) VALUES %s", rows_to_insert)
+        conn.commit()
+        n = len(rows_to_insert)
+        cur.close()
+        conn.close()
+        return jsonify({'restored': n, 'message': f'Восстановлено записей в {table}: {n}'})
     except json.JSONDecodeError as e:
         return jsonify({'error': f'Ошибка JSON: {str(e)}'}), 400
     except Exception as e:

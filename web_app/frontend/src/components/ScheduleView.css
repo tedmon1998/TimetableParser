@@ -74,6 +74,15 @@
   filter: brightness(1.1);
 }
 
+.schedule-btn-prod {
+  background: #b45309;
+  color: #fff;
+}
+
+.schedule-btn-prod:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
 .schedule-stats {
   margin: 0;
   font-size: 0.95rem;
