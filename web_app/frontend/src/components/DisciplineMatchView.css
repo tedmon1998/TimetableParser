@@ -18,6 +18,38 @@
   color: #333;
 }
 
+.discipline-match-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.discipline-match-tab {
+  padding: 0.5rem 1rem;
+  font-size: 0.95rem;
+  background: #e9ecef;
+  color: #495057;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.discipline-match-tab:hover {
+  background: #dee2e6;
+  color: #212529;
+}
+
+.discipline-match-tab-active {
+  background: var(--primary-color, #1143c0);
+  color: #fff;
+  border-color: var(--primary-color, #1143c0);
+}
+
+.discipline-match-tab-active:hover {
+  background: var(--primary-color, #1143c0);
+  color: #fff;
+}
+
 .discipline-match-desc {
   margin: 0 0 1rem 0;
   font-size: 0.9rem;

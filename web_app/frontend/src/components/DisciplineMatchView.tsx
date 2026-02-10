@@ -17,7 +17,10 @@ export interface MatchItem {
   alternatives: MatchAlternative[];
 }
 
+type DisciplineMatchSource = 'intermediate' | 'aspi';
+
 const DisciplineMatchView: React.FC = () => {
+  const [source, setSource] = useState<DisciplineMatchSource>('intermediate');
   const [threshold, setThreshold] = useState<string>('0.95');
   const [items, setItems] = useState<MatchItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -34,7 +37,8 @@ const DisciplineMatchView: React.FC = () => {
     setLoading(true);
     setStatusMessage('Загрузка несовпадающих дисциплин...');
     try {
-      const res = await axios.get(`${API_BASE}/discipline-match/unmatched`);
+      const table = source === 'aspi' ? 'aspi' : 'intermediate';
+      const res = await axios.get(`${API_BASE}/discipline-match/unmatched?table=${table}`);
       const data = res.data as { items: MatchItem[]; error?: string };
       if (data.error) {
         setStatusMessage(`Ошибка: ${data.error}`);
@@ -62,16 +66,18 @@ const DisciplineMatchView: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [source]);
 
   const replaceWith = useCallback(async (original: string, replacement: string) => {
     if (!replacement?.trim()) return;
     setReplacing(original);
     setStatusMessage('Выполняю замену...');
     try {
+      const table = source === 'aspi' ? 'aspi' : 'intermediate';
       const res = await axios.post(`${API_BASE}/discipline-match/replace`, {
         original,
-        replacement: replacement.trim()
+        replacement: replacement.trim(),
+        table
       });
       const data = res.data as { updated?: number; error?: string };
       if (data.error) {
@@ -95,7 +101,7 @@ const DisciplineMatchView: React.FC = () => {
     } finally {
       setReplacing(null);
     }
-  }, []);
+  }, [source]);
 
   const handleReplaceSuggested = useCallback((item: MatchItem) => {
     replaceWith(item.original, item.suggested);
@@ -115,7 +121,8 @@ const DisciplineMatchView: React.FC = () => {
     setApplying(true);
     setStatusMessage('Применяю порог в БД...');
     try {
-      const res = await axios.post(`${API_BASE}/discipline-match/apply`, { threshold: t });
+      const table = source === 'aspi' ? 'aspi' : 'intermediate';
+      const res = await axios.post(`${API_BASE}/discipline-match/apply`, { threshold: t, table });
       const data = res.data as { replaced?: number; error?: string; message?: string };
       if (data.error) {
         setStatusMessage(`Ошибка: ${data.error}`);
@@ -148,7 +155,7 @@ const DisciplineMatchView: React.FC = () => {
     } finally {
       setApplying(false);
     }
-  }, [threshold, loadUnmatched]);
+  }, [threshold, source, loadUnmatched]);
 
   const visibleItems = showHiddenOnly
     ? items.filter((i) => hiddenOriginals.has(i.original))
@@ -173,13 +180,41 @@ const DisciplineMatchView: React.FC = () => {
     setShowHiddenOnly(false);
   }, []);
 
+  const onSourceChange = useCallback((newSource: DisciplineMatchSource) => {
+    if (newSource === source) return;
+    setSource(newSource);
+    setItems([]);
+    setStatusMessage(newSource === 'aspi' ? 'Выбрана таблица аспирантов (timetable_aspi). Нажмите «Загрузить несовпадающие».' : 'Выбрана таблица бакалавров/магистров. Нажмите «Загрузить несовпадающие».');
+    setHiddenOriginals(new Set());
+    setShowHiddenOnly(false);
+  }, [source]);
+
   return (
     <div className="discipline-match-view">
       <section className="discipline-match-toolbar">
         <h2>Сопоставление дисциплин из БД со справочником</h2>
+        <div className="discipline-match-tabs">
+          <button
+            type="button"
+            className={`discipline-match-tab ${source === 'intermediate' ? 'discipline-match-tab-active' : ''}`}
+            onClick={() => onSourceChange('intermediate')}
+          >
+            Бакалавры и магистры
+          </button>
+          <button
+            type="button"
+            className={`discipline-match-tab ${source === 'aspi' ? 'discipline-match-tab-active' : ''}`}
+            onClick={() => onSourceChange('aspi')}
+          >
+            Аспиранты
+          </button>
+        </div>
         <p className="discipline-match-desc">
-          Загружаются названия из <code>intermediate_timetable</code>, которых нет в <code>info/discipline.json</code>.
-          Кнопка «Применить порог в БД» автоматически заменяет в БД все дисциплины с точностью ≥ порога; остальные — вручную по кнопкам.
+          {source === 'aspi' ? (
+            <>Загружаются названия из <code>timetable_aspi</code>, которых нет в <code>info/discipline.json</code>. Замены применяются только в таблице аспирантов.</>
+          ) : (
+            <>Загружаются названия из <code>intermediate_timetable</code>, которых нет в <code>info/discipline.json</code>. Кнопка «Применить порог в БД» автоматически заменяет в БД все дисциплины с точностью ≥ порога; остальные — вручную по кнопкам.</>
+          )}
         </p>
         <div className="discipline-match-controls">
           <label>

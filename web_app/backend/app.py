@@ -839,6 +839,139 @@ def run_normalize_aspi_route():
     return jsonify({'message': 'Script started'})
 
 
+ASPI_OUTPUT_SKIP = ('_all.json', 'unresolved_fio.json', 'fio_overrides.json', 'unresolved_parse.json')
+
+
+def _aspi_output_dir():
+    """Единый абсолютный путь к aspi/output для чтения/записи и для передачи нормализатору."""
+    return os.path.abspath(os.path.join(get_project_root(), 'aspi', 'output'))
+
+
+@app.route('/api/aspi/unresolved', methods=['GET'])
+def aspi_unresolved():
+    """Возвращает список нераспознанных ФИО (после нормализации)."""
+    try:
+        aspi_output = _aspi_output_dir()
+        path = os.path.join(aspi_output, 'unresolved_fio.json')
+        if not os.path.isfile(path):
+            return jsonify({'items': []})
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            data = json.load(f)
+        items = data if isinstance(data, list) else []
+        return jsonify({'items': items})
+    except Exception as e:
+        return jsonify({'error': str(e), 'items': []}), 500
+
+
+@app.route('/api/aspi/unresolved-parse', methods=['GET'])
+def aspi_unresolved_parse():
+    """Возвращает список записей парсинга для ручной проверки (группа не извлечена, обрыв дисциплины и т.д.)."""
+    try:
+        aspi_output = _aspi_output_dir()
+        path = os.path.join(aspi_output, 'unresolved_parse.json')
+        if not os.path.isfile(path):
+            return jsonify({'items': []})
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            data = json.load(f)
+        items = data if isinstance(data, list) else []
+        return jsonify({'items': items})
+    except Exception as e:
+        return jsonify({'error': str(e), 'items': []}), 500
+
+
+def _apply_fio_overrides_to_record(fio_str, overrides):
+    """В строке fio (например 'A | B') заменяет короткие ФИО на полные по словарю overrides."""
+    if not (fio_str and overrides):
+        return fio_str or ''
+    parts = [p.strip() for p in (fio_str or '').split('|') if p.strip()]
+    out = [overrides.get(p, p) for p in parts]
+    return ' | '.join(out)
+
+
+@app.route('/api/aspi/apply-fio-replacements', methods=['POST'])
+def aspi_apply_fio_replacements():
+    """
+    Дообработка без полной нормализации: принимает замены ФИО, дописывает в fio_overrides.json,
+    применяет их к уже существующим JSON в aspi/output (только поле fio), обновляет unresolved_fio.json
+    и перезагружает в БД. Нормализатор не запускается.
+    """
+    try:
+        data = request.get_json() or {}
+        replacements = data.get('replacements') if isinstance(data.get('replacements'), dict) else {}
+        replacements = {k.strip(): (v or '').strip() for k, v in replacements.items() if (k or '').strip() and (v or '').strip()}
+        if not replacements:
+            return jsonify({'error': 'Нет замен для применения (заполните «Заменить на»)'}), 400
+        aspi_output = _aspi_output_dir()
+        os.makedirs(aspi_output, exist_ok=True)
+        overrides_path = os.path.join(aspi_output, 'fio_overrides.json')
+        existing = {}
+        if os.path.isfile(overrides_path):
+            try:
+                with open(overrides_path, 'r', encoding='utf-8', errors='replace') as f:
+                    existing = json.load(f)
+                if not isinstance(existing, dict):
+                    existing = {}
+            except Exception:
+                existing = {}
+        merged = {**existing, **replacements}
+        with open(overrides_path, 'w', encoding='utf-8') as f:
+            json.dump(merged, f, ensure_ascii=False, indent=2)
+
+        # Применяем замены только к полю fio в существующих JSON (нормализатор не запускаем)
+        json_files = [f for f in glob.glob(os.path.join(aspi_output, '*.json')) if os.path.basename(f) not in ASPI_OUTPUT_SKIP]
+        for path in json_files:
+            try:
+                with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                    records = json.load(f)
+                if not isinstance(records, list):
+                    continue
+                for rec in records:
+                    if isinstance(rec, dict) and 'fio' in rec:
+                        rec['fio'] = _apply_fio_overrides_to_record(rec.get('fio'), merged)
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                return jsonify({'error': f'Ошибка при обновлении {os.path.basename(path)}: {str(e)}'}), 500
+
+        # Обновляем _all.json: перечитываем все курсовые файлы и собираем сводку
+        all_normalized = {}
+        for path in sorted(json_files):
+            try:
+                with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                    all_normalized[os.path.splitext(os.path.basename(path))[0]] = json.load(f)
+            except Exception:
+                pass
+        if all_normalized:
+            summary_path = os.path.join(aspi_output, '_all.json')
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(all_normalized, f, ensure_ascii=False, indent=2)
+
+        # Убираем из unresolved_fio.json те ФИО, для которых добавили замену
+        unresolved_path = os.path.join(aspi_output, 'unresolved_fio.json')
+        current_unresolved = []
+        if os.path.isfile(unresolved_path):
+            try:
+                with open(unresolved_path, 'r', encoding='utf-8', errors='replace') as f:
+                    current_unresolved = json.load(f)
+                if not isinstance(current_unresolved, list):
+                    current_unresolved = []
+            except Exception:
+                pass
+        new_unresolved = [u for u in current_unresolved if (u or '').strip() and (u or '').strip() not in merged]
+        with open(unresolved_path, 'w', encoding='utf-8') as f:
+            json.dump(new_unresolved, f, ensure_ascii=False, indent=2)
+
+        # Загрузка в БД
+        run_load_aspi_to_db()
+
+        return jsonify({
+            'message': f'Применено замен: {len(replacements)}. Дообработка выполнена (нормализатор не запускался).',
+            'items': new_unresolved
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def run_load_aspi_to_db():
     """Загружает нормализованные JSON из aspi/output в таблицу timetable_aspi."""
     script_status['load_aspi_to_db']['running'] = True
@@ -846,18 +979,17 @@ def run_load_aspi_to_db():
     script_status['load_aspi_to_db']['message'] = 'Подготовка загрузки в БД...'
     script_status['load_aspi_to_db']['error'] = None
     try:
-        project_root = get_project_root()
-        aspi_output = os.path.join(project_root, 'aspi', 'output')
+        aspi_output = _aspi_output_dir()
         if not os.path.isdir(aspi_output):
             raise FileNotFoundError('Папка aspi/output не найдена. Сначала запустите парсер и нормализацию.')
-        json_files = [f for f in glob.glob(os.path.join(aspi_output, '*.json')) if os.path.basename(f) != '_all.json']
+        json_files = [f for f in glob.glob(os.path.join(aspi_output, '*.json')) if os.path.basename(f) not in ASPI_OUTPUT_SKIP]
         if not json_files:
             raise FileNotFoundError('В aspi/output нет JSON-файлов (кроме _all.json). Запустите парсер и нормализацию.')
         script_status['load_aspi_to_db']['progress'] = 10
         script_status['load_aspi_to_db']['message'] = 'Чтение нормализованных JSON...'
         all_rows = []
         for path in sorted(json_files):
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
                 data = json.load(f)
             if isinstance(data, list):
                 all_rows.extend(data)
@@ -2564,6 +2696,23 @@ def _intermediate_table_exists(cursor):
     return cursor.fetchone() is not None
 
 
+def _timetable_aspi_exists(cursor):
+    """Проверяет, что таблица timetable_aspi существует."""
+    cursor.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'timetable_aspi'"
+    )
+    return cursor.fetchone() is not None
+
+
+def _discipline_match_table(request_or_args, body_key='table'):
+    """Возвращает 'intermediate' или 'aspi' из query (GET) или body (POST). По умолчанию intermediate."""
+    if hasattr(request_or_args, 'args'):
+        t = (request_or_args.args.get('table') or '').strip().lower()
+    else:
+        t = (request_or_args.get(body_key) or '').strip().lower()
+    return 'aspi' if t == 'aspi' else 'intermediate'
+
+
 def _ensure_intermediate_discipline_original(conn):
     """Добавляет колонку discipline_original в intermediate_timetable, если её ещё нет (миграция для старых БД)."""
     cur = conn.cursor()
@@ -2578,25 +2727,35 @@ def _ensure_intermediate_discipline_original(conn):
 
 @app.route('/api/discipline-match/unmatched', methods=['GET'])
 def get_discipline_match_unmatched():
-    """Список названий из intermediate_timetable, которых нет в discipline.json, с предложениями (алгоритм discipline_validate.py).
+    """Список названий из intermediate_timetable или timetable_aspi (query: table=intermediate|aspi), которых нет в discipline.json.
     Замены в БД не выполняются — только ручная обработка через кнопки на фронте."""
     try:
+        table = _discipline_match_table(request)
         import discipline_validate as match_module
         canonical = read_disciplines()
         canonical_lower = {d.strip().lower() for d in canonical}
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        if not _intermediate_table_exists(cur):
-            cur.close()
-            conn.close()
-            return jsonify({
-                'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания» в разделе загрузки.',
-                'items': []
-            }), 400
-        _ensure_intermediate_discipline_original(conn)
-        cur.execute(
-            "SELECT DISTINCT subject_name FROM intermediate_timetable WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
-        )
+        if table == 'aspi':
+            if not _timetable_aspi_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({
+                    'error': 'Таблица timetable_aspi не найдена. Сначала выполните «Добавить в БД» для аспирантов.',
+                    'items': []
+                }), 400
+            sql = "SELECT DISTINCT subject_name FROM timetable_aspi WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
+        else:
+            if not _intermediate_table_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({
+                    'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания» в разделе загрузки.',
+                    'items': []
+                }), 400
+            _ensure_intermediate_discipline_original(conn)
+            sql = "SELECT DISTINCT subject_name FROM intermediate_timetable WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
+        cur.execute(sql)
         rows = cur.fetchall()
         cur.close()
         conn.close()
@@ -2638,7 +2797,7 @@ def get_discipline_match_unmatched():
 
 @app.route('/api/discipline-match/apply', methods=['POST'])
 def apply_discipline_match():
-    """Для всех несовпадающих в intermediate_timetable: если точность >= threshold, заменить subject_name на предложенное и записать старое в discipline_original."""
+    """Для всех несовпадающих: если точность >= threshold, заменить subject_name на предложенное. body: threshold, table=intermediate|aspi."""
     conn = None
     try:
         data = request.get_json(silent=True) or {}
@@ -2647,21 +2806,30 @@ def apply_discipline_match():
         except (TypeError, ValueError):
             threshold = 0.95
         threshold = max(0.0, min(1.0, threshold))
+        table = _discipline_match_table(data, 'table')
         import discipline_validate as match_module
         canonical = read_disciplines()
         canonical_lower = {d.strip().lower() for d in canonical}
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        if not _intermediate_table_exists(cur):
-            cur.close()
-            conn.close()
-            return jsonify({
-                'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания» в разделе загрузки.'
-            }), 400
-        _ensure_intermediate_discipline_original(conn)
-        cur.execute(
-            "SELECT DISTINCT subject_name FROM intermediate_timetable WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
-        )
+        if table == 'aspi':
+            if not _timetable_aspi_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({
+                    'error': 'Таблица timetable_aspi не найдена. Сначала выполните «Добавить в БД» для аспирантов.'
+                }), 400
+            sql_distinct = "SELECT DISTINCT subject_name FROM timetable_aspi WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
+        else:
+            if not _intermediate_table_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({
+                    'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания» в разделе загрузки.'
+                }), 400
+            _ensure_intermediate_discipline_original(conn)
+            sql_distinct = "SELECT DISTINCT subject_name FROM intermediate_timetable WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
+        cur.execute(sql_distinct)
         rows = cur.fetchall()
         distinct = [r[0].strip() for r in rows if r[0] and str(r[0]).strip()]
         unmatched = list(dict.fromkeys(s for s in distinct if s.lower() not in canonical_lower))
@@ -2676,8 +2844,10 @@ def apply_discipline_match():
             conn.close()
             return jsonify({'error': 'Не удалось загрузить справочник или эмбеддинги. Убедитесь, что Ollama запущен (nomic-embed-text).'}), 500
 
+        table_name = 'timetable_aspi' if table == 'aspi' else 'intermediate_timetable'
         replaced = 0
         for original in unmatched:
+            cleaned_ids = []
             try:
                 top4 = match_module.match_query(original, documents, doc_embeddings, top_k=1)
             except Exception:
@@ -2686,17 +2856,18 @@ def apply_discipline_match():
             if score < threshold - 1e-9:
                 continue
             suggested = top4[0][0]
+            if table == 'intermediate':
+                cur.execute(
+                    "SELECT cleaned_id FROM intermediate_timetable WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                    (original,)
+                )
+                cleaned_ids = [r[0] for r in cur.fetchall() if r[0]]
             cur.execute(
-                "SELECT cleaned_id FROM intermediate_timetable WHERE TRIM(COALESCE(subject_name, '')) = %s",
-                (original,)
-            )
-            cleaned_ids = [r[0] for r in cur.fetchall() if r[0]]
-            cur.execute(
-                "UPDATE intermediate_timetable SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                f"UPDATE {table_name} SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
                 (suggested, original, original)
             )
             replaced += cur.rowcount
-            if cleaned_ids:
+            if table == 'intermediate' and cleaned_ids:
                 cur.execute(
                     "UPDATE timetable_cleaned SET subject_name = %s WHERE id = ANY(%s)",
                     (suggested, cleaned_ids)
@@ -2717,36 +2888,49 @@ def apply_discipline_match():
 
 @app.route('/api/discipline-match/replace', methods=['POST'])
 def replace_discipline_match():
-    """Заменить в intermediate_timetable все вхождения original на replacement (subject_name), записать старое имя в discipline_original; синхронизировать timetable_cleaned."""
+    """Заменить все вхождения original на replacement. body: original, replacement, table=intermediate|aspi. Для intermediate синхронизирует timetable_cleaned."""
     try:
         data = request.get_json(silent=True) or {}
         original = (data.get('original') or '').strip()
         replacement = (data.get('replacement') or '').strip()
+        table = _discipline_match_table(data, 'table')
         if not original:
             return jsonify({'error': 'original is required'}), 400
         new_name = replacement or original
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        if not _intermediate_table_exists(cur):
-            cur.close()
-            conn.close()
-            return jsonify({'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания».'}), 400
-        _ensure_intermediate_discipline_original(conn)
-        cur.execute(
-            "SELECT cleaned_id FROM intermediate_timetable WHERE TRIM(COALESCE(subject_name, '')) = %s",
-            (original,)
-        )
-        cleaned_ids = [r[0] for r in cur.fetchall() if r[0]]
-        cur.execute(
-            "UPDATE intermediate_timetable SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
-            (new_name, original, original)
-        )
-        updated = cur.rowcount
-        if cleaned_ids:
+        if table == 'aspi':
+            if not _timetable_aspi_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({'error': 'Таблица timetable_aspi не найдена. Сначала выполните «Добавить в БД» для аспирантов.'}), 400
+            table_name = 'timetable_aspi'
             cur.execute(
-                "UPDATE timetable_cleaned SET subject_name = %s WHERE id = ANY(%s)",
-                (new_name, cleaned_ids)
+                f"UPDATE {table_name} SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                (new_name, original, original)
             )
+            updated = cur.rowcount
+        else:
+            if not _intermediate_table_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания».'}), 400
+            _ensure_intermediate_discipline_original(conn)
+            cur.execute(
+                "SELECT cleaned_id FROM intermediate_timetable WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                (original,)
+            )
+            cleaned_ids = [r[0] for r in cur.fetchall() if r[0]]
+            cur.execute(
+                "UPDATE intermediate_timetable SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                (new_name, original, original)
+            )
+            updated = cur.rowcount
+            if cleaned_ids:
+                cur.execute(
+                    "UPDATE timetable_cleaned SET subject_name = %s WHERE id = ANY(%s)",
+                    (new_name, cleaned_ids)
+                )
         conn.commit()
         cur.close()
         conn.close()

@@ -1,0 +1,50 @@
+[
+  {
+    "day_of_week": "среда",
+    "pair_number": 7,
+    "subject_name": "Иностранный язык",
+    "discipline_original": "Иностранный язык ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.5.11-25",
+    "week_type": "обе недели",
+    "fio": "Сергиенко Наталья Анатольевна",
+    "course": "1",
+    "scientific_specialty": "1.5.11. Микробиология (биологические науки)"
+  },
+  {
+    "day_of_week": "среда",
+    "pair_number": 8,
+    "subject_name": "Иностранный язык",
+    "discipline_original": "Иностранный язык ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.5.11-25",
+    "week_type": "знаменатель",
+    "fio": "Сергиенко Наталья Анатольевна",
+    "course": "1",
+    "scientific_specialty": "1.5.11. Микробиология (биологические науки)"
+  },
+  {
+    "day_of_week": "пятница",
+    "pair_number": 7,
+    "subject_name": "Микробилогия",
+    "discipline_original": "Микробилогия ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.5.11-25",
+    "week_type": "числитель",
+    "fio": "Ямпольская Татьяна Даниловна",
+    "course": "1",
+    "scientific_specialty": "1.5.11. Микробиология (биологические науки)"
+  },
+  {
+    "day_of_week": "суббота",
+    "pair_number": "13:00",
+    "subject_name": "Школа молодого ученого",
+    "discipline_original": "Школа молодого ученого",
+    "audience": "",
+    "group_name": "1.5.11-25",
+    "week_type": "обе недели",
+    "fio": "Согласно расписанию занятий по модулю",
+    "course": "1",
+    "scientific_specialty": "1.5.11. Микробиология (биологические науки)"
+  }
+]

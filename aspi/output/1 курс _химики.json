@@ -1,0 +1,98 @@
+[
+  {
+    "day_of_week": "понедельник",
+    "pair_number": 7,
+    "subject_name": "Физическая химия",
+    "discipline_original": "Физическая химия ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.4.4-25",
+    "week_type": "числитель",
+    "fio": "Севастьянова Екатерина Викторовна",
+    "course": "1",
+    "scientific_specialty": "1.4.4. Физическая химия"
+  },
+  {
+    "day_of_week": "среда",
+    "pair_number": 7,
+    "subject_name": "Иностранный язык",
+    "discipline_original": "Иностранный язык ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.4.4-25",
+    "week_type": "обе недели",
+    "fio": "Сергиенко Наталья Анатольевна",
+    "course": "1",
+    "scientific_specialty": "1.4.4. Физическая химия"
+  },
+  {
+    "day_of_week": "среда",
+    "pair_number": 8,
+    "subject_name": "Иностранный язык",
+    "discipline_original": "Иностранный язык ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.4.4-25",
+    "week_type": "знаменатель",
+    "fio": "Сергиенко Наталья Анатольевна",
+    "course": "1",
+    "scientific_specialty": "1.4.4. Физическая химия"
+  },
+  {
+    "day_of_week": "суббота",
+    "pair_number": "13:00",
+    "subject_name": "Школа молодого ученого",
+    "discipline_original": "Школа молодого ученого",
+    "audience": "",
+    "group_name": "1.4.4-25",
+    "week_type": "обе недели",
+    "fio": "Согласно расписанию занятий по модулю",
+    "course": "1",
+    "scientific_specialty": "1.4.4. Физическая химия"
+  },
+  {
+    "day_of_week": "среда",
+    "pair_number": 7,
+    "subject_name": "Иностранный язык",
+    "discipline_original": "Иностранный язык ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.4.9-25",
+    "week_type": "обе недели",
+    "fio": "Сергиенко Наталья Анатольевна",
+    "course": "1",
+    "scientific_specialty": "1.4.9. Биоорганическая химия"
+  },
+  {
+    "day_of_week": "среда",
+    "pair_number": 8,
+    "subject_name": "Иностранный язык",
+    "discipline_original": "Иностранный язык ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.4.9-25",
+    "week_type": "знаменатель",
+    "fio": "Сергиенко Наталья Анатольевна",
+    "course": "1",
+    "scientific_specialty": "1.4.9. Биоорганическая химия"
+  },
+  {
+    "day_of_week": "пятница",
+    "pair_number": 7,
+    "subject_name": "Биоорганическая химия",
+    "discipline_original": "Биоорганическая химия ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "1.4.9-25",
+    "week_type": "числитель",
+    "fio": "Кудряшева Надежда Степановна",
+    "course": "1",
+    "scientific_specialty": "1.4.9. Биоорганическая химия"
+  },
+  {
+    "day_of_week": "суббота",
+    "pair_number": "13:00",
+    "subject_name": "Школа молодого ученого",
+    "discipline_original": "Школа молодого ученого",
+    "audience": "",
+    "group_name": "1.4.9-25",
+    "week_type": "обе недели",
+    "fio": "Согласно расписанию занятий по модулю",
+    "course": "1",
+    "scientific_specialty": "1.4.9. Биоорганическая химия"
+  }
+]

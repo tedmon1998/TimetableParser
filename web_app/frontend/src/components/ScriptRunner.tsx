@@ -84,6 +84,23 @@ const ScriptRunner: React.FC = () => {
     error: null
   });
 
+  const [unresolvedFioItems, setUnresolvedFioItems] = useState<string[]>([]);
+  const [unresolvedParseItems, setUnresolvedParseItems] = useState<Array<{ type: string; file: string; specialty?: string; discipline?: string; day: string; para: string }>>([]);
+  const [aspiReplacements, setAspiReplacements] = useState<Record<string, string>>({});
+  const [aspiApplyLoading, setAspiApplyLoading] = useState(false);
+  const [aspiApplyError, setAspiApplyError] = useState<string | null>(null);
+  const [aspiUnresolvedModalOpen, setAspiUnresolvedModalOpen] = useState(false);
+  const [aspiUnresolvedParseModalOpen, setAspiUnresolvedParseModalOpen] = useState(false);
+  const [aspiErrorModalMessage, setAspiErrorModalMessage] = useState<string | null>(null);
+
+  const aspiAnyError =
+    parseAspiStatus.error ||
+    normalizeAspiStatus.error ||
+    loadAspiToDbStatus.error ||
+    mergeAspiToIntermediateStatus.error ||
+    aspiApplyError ||
+    null;
+
   type ScriptRunnerTab = 'bachelor_master' | 'aspi';
 
   const getInitialSubtab = (): ScriptRunnerTab => {
@@ -116,6 +133,97 @@ const ScriptRunner: React.FC = () => {
   }, []);
 
   const API_BASE = import.meta.env.VITE_API_URL || '/api';
+
+  const fetchUnresolvedFio = React.useCallback(async () => {
+    try {
+      const res = await axios.get<{ items?: string[] }>(`${API_BASE}/aspi/unresolved`);
+      setUnresolvedFioItems(res.data?.items ?? []);
+    } catch {
+      setUnresolvedFioItems([]);
+    }
+  }, [API_BASE]);
+
+  const fetchUnresolvedParse = React.useCallback(async () => {
+    try {
+      const res = await axios.get<{ items?: Array<{ type: string; file: string; specialty?: string; discipline?: string; day: string; para: string }> }>(`${API_BASE}/aspi/unresolved-parse`);
+      setUnresolvedParseItems(res.data?.items ?? []);
+    } catch {
+      setUnresolvedParseItems([]);
+    }
+  }, [API_BASE]);
+
+  useEffect(() => {
+    if (activeTab === 'aspi') {
+      fetchUnresolvedFio();
+      fetchUnresolvedParse();
+    }
+  }, [activeTab, fetchUnresolvedFio, fetchUnresolvedParse]);
+
+  useEffect(() => {
+    if (aspiUnresolvedModalOpen) fetchUnresolvedFio();
+  }, [aspiUnresolvedModalOpen, fetchUnresolvedFio]);
+
+  useEffect(() => {
+    if (aspiUnresolvedParseModalOpen) fetchUnresolvedParse();
+  }, [aspiUnresolvedParseModalOpen, fetchUnresolvedParse]);
+
+  useEffect(() => {
+    const err = parseAspiStatus.error || normalizeAspiStatus.error || loadAspiToDbStatus.error || mergeAspiToIntermediateStatus.error || null;
+    if (err && activeTab === 'aspi') setAspiErrorModalMessage(err);
+  }, [parseAspiStatus.error, normalizeAspiStatus.error, loadAspiToDbStatus.error, mergeAspiToIntermediateStatus.error, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === 'aspi' && !normalizeAspiStatus.running && normalizeAspiStatus.progress === 100) {
+      fetchUnresolvedFio();
+    }
+  }, [activeTab, normalizeAspiStatus.running, normalizeAspiStatus.progress, fetchUnresolvedFio]);
+
+  useEffect(() => {
+    if (activeTab === 'aspi' && !parseAspiStatus.running && parseAspiStatus.progress === 100) {
+      fetchUnresolvedParse();
+    }
+  }, [activeTab, parseAspiStatus.running, parseAspiStatus.progress, fetchUnresolvedParse]);
+
+  const handleAspiApplyReplacements = React.useCallback(async () => {
+    const replacements: Record<string, string> = {};
+    unresolvedFioItems.forEach((short) => {
+      const to = (aspiReplacements[short] ?? '').trim();
+      if (to) replacements[short] = to;
+    });
+    if (Object.keys(replacements).length === 0) {
+      setAspiApplyError('Укажите «Заменить на» хотя бы для одного ФИО.');
+      return;
+    }
+    setAspiApplyError(null);
+    setAspiApplyLoading(true);
+    try {
+      const res = await axios.post<{ items?: string[]; message?: string; error?: string }>(
+        `${API_BASE}/aspi/apply-fio-replacements`,
+        { replacements }
+      );
+      if (res.data?.error) {
+        setAspiApplyError(res.data.error);
+        setAspiErrorModalMessage(res.data.error);
+      } else {
+        const newItems = res.data?.items ?? [];
+        setUnresolvedFioItems(newItems);
+        setAspiReplacements((prev) => {
+          const next = { ...prev };
+          Object.keys(replacements).forEach((k) => delete next[k]);
+          return next;
+        });
+        if (newItems.length === 0) setAspiUnresolvedModalOpen(false);
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error
+        || (err as { message?: string })?.message
+        || 'Ошибка дообработки';
+      setAspiApplyError(String(msg));
+      setAspiErrorModalMessage(String(msg));
+    } finally {
+      setAspiApplyLoading(false);
+    }
+  }, [API_BASE, unresolvedFioItems, aspiReplacements]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -621,7 +729,153 @@ const ScriptRunner: React.FC = () => {
             {mergeAspiToIntermediateStatus.message || 'Расписание аспирантов добавлено в intermediate_timetable.'}
           </div>
         )}
+
+        <button
+          type="button"
+          className="button aspi-unresolved-trigger"
+          onClick={() => {
+            setAspiApplyError(null);
+            setAspiErrorModalMessage(null);
+            setAspiUnresolvedModalOpen(true);
+          }}
+        >
+          {unresolvedFioItems.length > 0
+            ? `Нераспознанные ФИО (${unresolvedFioItems.length}) — исправить`
+            : 'Нераспознанные ФИО (загрузить список)'}
+        </button>
+        <button
+          type="button"
+          className="button aspi-unresolved-trigger"
+          onClick={() => {
+            setAspiUnresolvedParseModalOpen(true);
+            fetchUnresolvedParse();
+          }}
+        >
+          {unresolvedParseItems.length > 0
+            ? `Нераспознанные записи парсинга (${unresolvedParseItems.length})`
+            : 'Нераспознанные записи парсинга (загрузить список)'}
+        </button>
+        {aspiAnyError && (
+          <button
+            type="button"
+            className="button aspi-error-trigger"
+            onClick={() => setAspiErrorModalMessage(aspiAnyError)}
+          >
+            Показать ошибку
+          </button>
+        )}
       </div>
+      )}
+
+      {aspiErrorModalMessage && (
+        <div className="aspi-unresolved-overlay" onClick={() => setAspiErrorModalMessage(null)}>
+          <div className="aspi-error-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="aspi-unresolved-modal-header">
+              <h3>Ошибка</h3>
+              <button type="button" className="aspi-unresolved-close" onClick={() => setAspiErrorModalMessage(null)} aria-label="Закрыть">×</button>
+            </div>
+            <div className="aspi-error-body">
+              <pre className="aspi-error-text">{aspiErrorModalMessage}</pre>
+            </div>
+            <div className="aspi-unresolved-modal-footer">
+              <button type="button" className="button" onClick={() => { setAspiErrorModalMessage(null); setAspiUnresolvedModalOpen(true); }}>
+                Открыть нераспознанные ФИО
+              </button>
+              <button type="button" className="button button-primary" onClick={() => setAspiErrorModalMessage(null)}>
+                Закрыть
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {aspiUnresolvedParseModalOpen && (
+        <div className="aspi-unresolved-overlay" onClick={() => setAspiUnresolvedParseModalOpen(false)}>
+          <div className="aspi-unresolved-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="aspi-unresolved-modal-header">
+              <h3>Нераспознанные записи парсинга</h3>
+              <button type="button" className="aspi-unresolved-close" onClick={() => setAspiUnresolvedParseModalOpen(false)} aria-label="Закрыть">×</button>
+            </div>
+            <p className="aspi-unresolved-hint">Записи для ручной проверки: группа не извлечена из специальности или дисциплина похожа на обрыв. Проверьте в исходном .docx и при необходимости исправьте данные вручную.</p>
+            <div className="aspi-unresolved-table-wrap">
+              <table className="aspi-unresolved-table">
+                <thead>
+                  <tr>
+                    <th>Тип</th>
+                    <th>Файл</th>
+                    <th>Специальность / Дисциплина</th>
+                    <th>День</th>
+                    <th>Пара</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unresolvedParseItems.map((item, idx) => (
+                    <tr key={idx}>
+                      <td>{item.type === 'group_not_extracted' ? 'Группа не извлечена' : 'Обрыв дисциплины'}</td>
+                      <td>{item.file}</td>
+                      <td className="aspi-unresolved-fio-cell">{(item.specialty ?? item.discipline) ?? '—'}</td>
+                      <td>{item.day}</td>
+                      <td>{item.para}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {unresolvedParseItems.length === 0 && <p className="aspi-unresolved-hint">Нет записей для проверки или загрузите список после парсинга.</p>}
+            <div className="aspi-unresolved-modal-footer">
+              <button type="button" className="button button-primary" onClick={() => setAspiUnresolvedParseModalOpen(false)}>Закрыть</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {aspiUnresolvedModalOpen && (
+        <div className="aspi-unresolved-overlay" onClick={() => setAspiUnresolvedModalOpen(false)}>
+          <div className="aspi-unresolved-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="aspi-unresolved-modal-header">
+              <h3>Нераспознанные ФИО</h3>
+              <button type="button" className="aspi-unresolved-close" onClick={() => setAspiUnresolvedModalOpen(false)} aria-label="Закрыть">×</button>
+            </div>
+            <p className="aspi-unresolved-hint">Укажите правильный вариант для замены и нажмите «Запустить дообработку».</p>
+            <div className="aspi-unresolved-table-wrap">
+              <table className="aspi-unresolved-table">
+                <thead>
+                  <tr>
+                    <th>Найдено (неверно)</th>
+                    <th>Правильный вариант</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unresolvedFioItems.map((short) => (
+                    <tr key={short}>
+                      <td className="aspi-unresolved-fio-cell">{short}</td>
+                      <td>
+                        <input
+                          type="text"
+                          className="aspi-unresolved-replace"
+                          placeholder="Введите полное ФИО"
+                          value={aspiReplacements[short] ?? ''}
+                          onChange={(e) => setAspiReplacements((prev) => ({ ...prev, [short]: e.target.value }))}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {aspiApplyError && <div className="message error">{aspiApplyError}</div>}
+            <div className="aspi-unresolved-modal-footer">
+              <button
+                type="button"
+                className="button button-primary"
+                onClick={handleAspiApplyReplacements}
+                disabled={aspiApplyLoading}
+              >
+                {aspiApplyLoading ? 'Дообработка...' : 'Запустить дообработку'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {excelViewerOpen && (

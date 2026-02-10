@@ -1,0 +1,50 @@
+[
+  {
+    "day_of_week": "среда",
+    "pair_number": 7,
+    "subject_name": "Иностранный язык",
+    "discipline_original": "Иностранный язык ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "5.1.4-25",
+    "week_type": "обе недели",
+    "fio": "Ситникова Анастасия Юрьевна",
+    "course": "1",
+    "scientific_specialty": "5.1.4. Уголовно-правовые науки"
+  },
+  {
+    "day_of_week": "среда",
+    "pair_number": 8,
+    "subject_name": "Иностранный язык",
+    "discipline_original": "Иностранный язык ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "5.1.4-25",
+    "week_type": "знаменатель",
+    "fio": "Ситникова Анастасия Юрьевна",
+    "course": "1",
+    "scientific_specialty": "5.1.4. Уголовно-правовые науки"
+  },
+  {
+    "day_of_week": "четверг",
+    "pair_number": 7,
+    "subject_name": "Уголовно-правовые науки",
+    "discipline_original": "Уголовно-правовые науки ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "5.1.4-25",
+    "week_type": "числитель",
+    "fio": "Багиров Чингиз Мамедшахович",
+    "course": "1",
+    "scientific_specialty": "5.1.4. Уголовно-правовые науки"
+  },
+  {
+    "day_of_week": "суббота",
+    "pair_number": "13:00",
+    "subject_name": "Школа молодого ученого",
+    "discipline_original": "Школа молодого ученого",
+    "audience": "",
+    "group_name": "5.1.4-25",
+    "week_type": "обе недели",
+    "fio": "Согласно расписанию занятий по модулю",
+    "course": "1",
+    "scientific_specialty": "5.1.4. Уголовно-правовые науки"
+  }
+]

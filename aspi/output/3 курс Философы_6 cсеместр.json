@@ -1,0 +1,50 @@
+[
+  {
+    "day_of_week": "среда",
+    "pair_number": 7,
+    "subject_name": "Онтология и теория познания",
+    "discipline_original": "Онтология и теория познания",
+    "audience": "",
+    "group_name": "5.7.1-23",
+    "week_type": "обе недели",
+    "fio": "Бурханов Рафаэль Айратович",
+    "course": "3",
+    "scientific_specialty": "5.7.1. Онтология и теория познания"
+  },
+  {
+    "day_of_week": "среда",
+    "pair_number": 8,
+    "subject_name": "",
+    "discipline_original": "ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "5.7.1-23",
+    "week_type": "обе недели",
+    "fio": "Бурханов Рафаэль Айратович",
+    "course": "3",
+    "scientific_specialty": "5.7.1. Онтология и теория познания"
+  },
+  {
+    "day_of_week": "четверг",
+    "pair_number": 7,
+    "subject_name": "Философская антропология, философия культуры",
+    "discipline_original": "Философская антропология, философия культуры",
+    "audience": "",
+    "group_name": "5.7.8-23",
+    "week_type": "обе недели",
+    "fio": "Бурханов Рафаэль Айратович",
+    "course": "3",
+    "scientific_specialty": "5.7.8. Философская антропология, философия культуры"
+  },
+  {
+    "day_of_week": "четверг",
+    "pair_number": 8,
+    "subject_name": "",
+    "discipline_original": "ЭОиДОТ*",
+    "audience": "ЭОиДОТ",
+    "group_name": "5.7.8-23",
+    "week_type": "обе недели",
+    "fio": "Бурханов Рафаэль Айратович",
+    "course": "3",
+    "scientific_specialty": "5.7.8. Философская антропология, философия культуры"
+  }
+]
