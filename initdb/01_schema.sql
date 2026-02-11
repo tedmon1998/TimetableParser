@@ -2,7 +2,7 @@
 -- Выполняется при первой инициализации контейнера
 
 CREATE TABLE IF NOT EXISTS intermediate_timetable (
-    id               INTEGER,
+    id               INTEGER PRIMARY KEY,
     cleaned_id       INTEGER,
     teacher_id       INTEGER,
     day_of_week      VARCHAR(50),

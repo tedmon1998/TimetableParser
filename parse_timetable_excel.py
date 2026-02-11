@@ -8,6 +8,13 @@ import json
 
 # Импортируем функции из process_timetable.py
 from process_timetable import load_teacher_names, normalize_short_fio
+# Доп. обработка: пропуск строк, опечатки (///, (лек)/(пр)), аудитории с / (м/зал), очистка названий
+from timetable_extra import (
+    should_skip_row,
+    _normalize_week_separator_typos,
+    get_composite_audiences,
+    clean_subject_trailing_chars,
+)
 
 # Маппинг дней недели
 DAYS_OF_WEEK = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота']
@@ -107,12 +114,17 @@ def normalize_type_slash_for_weeks(text):
     """Если одна группа ходит по числителю один тип, по знаменателю другой (запись через "/"),
     приводим к формату "//": "Название (лек)/(пр), К511" -> "Название (лек), К511 // Название (пр), К511".
     Вызывать до обработки "//". Если в тексте уже есть "//", текст не меняем."""
-    if not text or '//' in text:
+    if not text:
         return text
-    # Паттерн: название (тип1)/(тип2) [, аудитория...]; тип1/тип2 — лек, пр, лаб, л, п и т.д. (длинные первыми)
+    # Доп. обработка: опечатки ///, / /, (лек)/(пр, и т.д.
+    text = _normalize_week_separator_typos(text)
+    if '//' in text:
+        return text
+    # Паттерн: название (тип1)/(тип2) [, аудитория...]; тип1 может быть с " N ч": (лек 8 ч)/(пр)
     type_pattern = r'(лек|пр|лаб|практика|лекция|лабораторная|л|п)'
+    type_first = type_pattern + r'(?:\s*\d+\s*ч)?'  # первый тип: лек, лек 8 ч
     m = re.search(
-        r'^(.+?)\s*\(' + type_pattern + r'\)\s*/\s*\(' + type_pattern + r'\)\s*(.*)$',
+        r'^(.+?)\s*\(' + type_first + r'\)\s*/\s*\(' + type_pattern + r'\)\s*(.*)$',
         text.strip(),
         re.IGNORECASE
     )
@@ -135,6 +147,8 @@ def parse_week_type(text):
         return ['обе недели']
     
     text = text.strip()
+    # Доп. обработка: опечатки разделителя
+    text = _normalize_week_separator_typos(text)
     
     # Если есть "//" (разделитель числитель/знаменатель)
     if '//' in text:
@@ -217,9 +231,15 @@ def extract_audience(text):
         for aud in sorted(valid, key=lambda x: -len(x)):
             # В тексте может быть «С*» — сноска; считаем как «С»
             pattern = r'\b' + re.escape(aud) + r'\*?\b'
-            if re.search(pattern, text, re.IGNORECASE):
+            for m in re.finditer(pattern, text, re.IGNORECASE):
+                # Однобуквенная «С»: не считать предлог «с» (с курсом, с основами) аудиторией
+                if aud == 'С' and m.group(0).lower() == 'с' and m.end() < len(text):
+                    rest = text[m.end():m.end() + 2]
+                    if len(rest) >= 2 and rest[0] in ' \t' and rest[1].isalpha():
+                        continue
                 if aud not in audiences:
                     audiences.append(aud)
+                break
         if audiences:
             return ', '.join(audiences)
     # Fallback без списка: по префиксам
@@ -256,10 +276,21 @@ def extract_audience(text):
 
 def extract_audience_list(part_text):
     """Из одной части (числитель или знаменатель) извлекает список аудиторий по порядку.
-    Напр. 'Дисц (лек), К511/К503' -> ['К511', 'К503']. Разбивает по запятой и по '/' (пробел-слэш-пробел)."""
+    Напр. 'Дисц (лек), К511/К503' -> ['К511', 'К503']. Разбивает по запятой и по '/' (пробел-слэш-пробел).
+    Доп.: аудитории с '/' (м/зал, п/б) не разбиваются при split по '/'."""
     if not part_text or not isinstance(part_text, str):
         return []
     part_text = part_text.strip()
+    # Доп.: убрать пробелы вокруг "/" в аудиториях, чтобы "К625/ м/зал" и "К625 /м/зал" давали [К625, м/зал]
+    part_text = re.sub(r'/\s+', '/', part_text)
+    part_text = re.sub(r'\s+/', '/', part_text)
+    # Доп. обработка: заменяем аудитории с '/' на placeholder, чтобы "К625/м/зал" дало [К625, м/зал]
+    placeholders = {}
+    composite = get_composite_audiences(load_valid_audiences(), AUDIENCE_PREFIXES)
+    for aud in composite:
+        key = '\x00AUD_{}\x00'.format(len(placeholders))
+        placeholders[key] = aud
+        part_text = part_text.replace(aud, key)
     collected = []
     for seg in re.split(r'[,;]', part_text):
         seg = seg.strip()
@@ -267,6 +298,8 @@ def extract_audience_list(part_text):
             continue
         for s in re.split(r'\s*/\s*', seg):
             s = re.sub(r'//+\s*$', '', s.strip()).strip()
+            for ph, aud in placeholders.items():
+                s = s.replace(ph, aud)
             if s and is_audience(s):
                 collected.append(s.rstrip('*').strip() or s)
     return collected
@@ -299,6 +332,36 @@ def week_type_from_single_part(part_text, part_index=None):
         # Только "//" в начале без п/г 2 — контент после "//", т.е. знаменатель
         return 'знаменатель'
     return 'обе недели'
+
+
+def expand_audience_slash_by_list(text, valid_audiences):
+    """Если в конце строки «..., Aud1/Aud2» и обе аудитории из списка — разбить на «Дисциплина Aud1 // Дисциплина Aud2».
+    Пример: «Актерское мастерство (пр), м/зал/К625» -> «Актерское мастерство (пр) м/зал // Актерское мастерство (пр) К625»."""
+    print(f"text : {text}")
+    if not text or not valid_audiences or '//' in text:
+        return text
+    text = text.strip()
+    last_comma = text.rfind(',')
+    if last_comma < 0:
+        return text
+    discipline = text[:last_comma].strip().rstrip(',').strip()
+    audience_part = text[last_comma + 1:].strip()
+    if not discipline or not audience_part or '/' not in audience_part:
+        return text
+    # Сортируем по длине (длинные первыми), чтобы «м/зал» матчился раньше «м»
+    for aud1 in sorted(valid_audiences, key=lambda x: -len(x)):
+        if not audience_part.startswith(aud1):
+            continue
+        rest = audience_part[len(aud1):].lstrip('/').strip()
+        if not rest:
+            continue
+        if rest in valid_audiences:
+            return discipline + ' ' + aud1 + ' // ' + discipline + ' ' + rest
+        # остаток может быть «К625» с пробелами
+        if rest.strip() in valid_audiences:
+            return discipline + ' ' + aud1 + ' // ' + discipline + ' ' + rest.strip()
+    print(f"output text : {text}")
+    return text
 
 
 def build_combined_subject_and_audience(raw_discipline):
@@ -373,6 +436,8 @@ def extract_subject_name(text):
     
     # Убираем информацию о часах в скобках: (24 ч), (36 ч), (48 часов) и т.д.
     text = re.sub(r'\(\d+\s*(?:ч|час|часов|часа)?\)', '', text, flags=re.IGNORECASE)
+    # Убираем тип с часами: (лек 8 ч), (пр 4 ч)
+    text = re.sub(r'\(\s*(?:лек|пр|лаб|практика|лекция|лабораторная|л|п)\s+\d+\s*ч\s*\)', '', text, flags=re.IGNORECASE)
     
     # СНАЧАЛА обрабатываем "//" - это разделитель числителя/знаменателя, может содержать разные дисциплины
     # Разделяем по "//" и обрабатываем каждую часть отдельно
@@ -397,18 +462,19 @@ def extract_subject_name(text):
             # Убираем информацию о часах
             part = re.sub(r'\(\d+\s*(?:ч|час|часов|часа)?\)', '', part, flags=re.IGNORECASE)
             
-            # Убираем "/" (одиночные)
-            part = re.sub(r'\s*/\s*', ' ', part)
-            
-            # Разделяем по запятым (перед вызовом текст нормализуют: «). » -> «), »)
+            # Сначала разбиваем по запятой (до замены "/" на пробел), чтобы "м/зал" не превращался в "м зал" и не попадал в название
             sub_parts = re.split(r'[,;]', part)
             for sub_part in sub_parts:
                 sub_part = sub_part.strip()
                 if not sub_part:
                     continue
+                # Сегмент, который целиком — аудитория (м/зал, К625 и т.д.), не добавляем в название
+                if is_audience(sub_part):
+                    continue
+                # Убираем "/" только в оставшихся сегментах (название дисциплины)
+                sub_part = re.sub(r'\s*/\s*', ' ', sub_part)
                 
-                # Проверяем, не является ли это аудиторией
-                # "ауд" без цифр - это не аудитория, это просто слово
+                # Проверяем, не является ли это аудиторией (по префиксам)
                 is_aud = False
                 for prefix in AUDIENCE_PREFIXES:
                     # Проверяем, что префикс - это не просто первая буква слова
@@ -443,11 +509,8 @@ def extract_subject_name(text):
         
         subject = ', '.join(all_subject_parts) if all_subject_parts else ''
     else:
-        # Если нет "//", обрабатываем как обычно
-        # Убираем "/" (одиночные)
-        text = re.sub(r'\s*/\s*', ' ', text)
-        
-        # Разделяем по запятым
+        # Если нет "//", обрабатываем как обычно. Сначала разбиваем по запятой (до замены "/"),
+        # чтобы "м/зал" не становился "м зал" и не попадал в название.
         parts = re.split(r'[,;]', text)
         subject_parts = []
         
@@ -455,15 +518,17 @@ def extract_subject_name(text):
             part = part.strip()
             if not part:
                 continue
+            if is_audience(part):
+                continue
+            part = re.sub(r'\s*/\s*', ' ', part)
             
-            # Проверяем, не является ли это аудиторией
+            # Проверяем, не является ли это аудиторией (по префиксам)
             is_aud = False
             for prefix in AUDIENCE_PREFIXES:
                 if part.startswith(prefix) or prefix in part:
                     is_aud = True
                     break
             
-            # Проверяем паттерны аудитории
             if not is_aud:
                 if re.search(r'ауд\.?\s*\d+', part, re.IGNORECASE):
                     is_aud = True
@@ -1004,7 +1069,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
         return results
     
     # Обрабатываем каждую таблицу
-    for table in schedule_tables:
+    for table_idx, table in enumerate(schedule_tables):
         start_col = table['start_col']
         end_col = table['end_col']
         disc_col = table['discipline_col']
@@ -1022,11 +1087,37 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
         if not metadata['course'] and course_from_sheet:
             metadata['course'] = course_from_sheet
         
-        # КРИТИЧНО: Сбрасываем current_day при начале каждой новой таблицы
+        # КРИТИЧНО: Сбрасываем current_day и current_pair_numbers при начале каждой новой таблицы
         current_day = None
+        current_pair_numbers = []
         
         for row_idx in range(header_row + 1, ws.max_row + 1):
             row = ws[row_idx]
+            
+            # КРИТИЧНО: Сначала читаем день и обновляем current_day (чтобы пустая первая строка дня не теряла день)
+            day_of_week = None
+            if day_col and day_col <= len(row):
+                day_cell = row[day_col - 1]
+                day_value = get_merged_cell_value(ws, day_cell)
+                if day_value:
+                    day_of_week = parse_day_of_week(day_value)
+                    if day_of_week:
+                        current_day = day_of_week
+            if not day_of_week and len(row) > 0:
+                first_cell = row[0]
+                first_value = get_merged_cell_value(ws, first_cell)
+                if first_value:
+                    parsed_day = parse_day_of_week(first_value)
+                    if parsed_day:
+                        day_of_week = parsed_day
+                        current_day = parsed_day
+            if not day_of_week:
+                day_of_week = current_day
+            
+            # Пропуск строк с подписями (директор института, зав. кафедрой) — из timetable_extra
+            row_text = ' '.join(str(get_merged_cell_value(ws, c) or getattr(c, 'value', '') or '') for c in row)
+            if should_skip_row(row_text):
+                continue
             
             # Пропускаем полностью пустые строки в пределах таблицы
             has_data = False
@@ -1037,42 +1128,11 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             if not has_data:
                 continue
             
-            # КРИТИЧНО: Получаем день недели СРАЗУ и обновляем current_day,
-            # даже если строка будет пропущена из-за пустой дисциплины
-            day_of_week = None
-            
-            # Сначала проверяем колонку "д/н" (с учетом merged ячеек)
-            if day_col and day_col <= len(row):
-                day_cell = row[day_col - 1]
-                # Проверяем merged ячейки
-                day_value = get_merged_cell_value(ws, day_cell)
-                if day_value:
-                    day_of_week = parse_day_of_week(day_value)
-                    if day_of_week:
-                        # КРИТИЧНО: Обновляем current_day немедленно, даже если строка будет пропущена
-                        current_day = day_of_week
-            
-            # Если не нашли, проверяем первую колонку (колонка 1, где обычно находится день)
-            # КРИТИЧНО: колонка "д/н" может быть в первой колонке, которая находится ДО start_col
-            if not day_of_week and len(row) > 0:
-                first_cell = row[0]  # Первая колонка листа (не таблицы)
-                first_value = get_merged_cell_value(ws, first_cell)
-                if first_value:
-                    parsed_day = parse_day_of_week(first_value)
-                    if parsed_day:
-                        day_of_week = parsed_day
-                        # КРИТИЧНО: Обновляем current_day немедленно
-                        current_day = parsed_day
-            
-            # Если день недели не найден в этой строке, используем день из предыдущей строки
-            if not day_of_week:
-                day_of_week = current_day
-            
-            # Если день недели все еще не найден, пропускаем строку
+            # Если день недели не найден, пропускаем строку
             if not day_of_week:
                 continue
             
-            # Получаем номер пары (ОБЯЗАТЕЛЬНО)
+            # Получаем номер пары (из строки или из предыдущей, если ячейка пустая — merged/продолжение)
             pair_numbers = []
             if pair_col and pair_col <= len(row):
                 pair_cell = row[pair_col - 1]
@@ -1090,7 +1150,13 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                 if second_cell.value:
                     pair_numbers = parse_pair_number(second_cell.value)
             
-            # Если номер пары не найден, пропускаем строку
+            # Если в строке нет номера пары — берём из предыдущей строки (как с днём недели)
+            if not pair_numbers and current_pair_numbers:
+                pair_numbers = current_pair_numbers
+            elif pair_numbers:
+                current_pair_numbers = pair_numbers
+            
+            # Если номер пары так и не найден, пропускаем строку
             if not pair_numbers:
                 continue
             
@@ -1137,7 +1203,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                         part_clean = normalize_type_slash_for_weeks(part_clean) or part_clean
                     if not part_clean:
                         continue
-                    subject_name_for_record = part_clean.lstrip('/').strip()
+                    subject_name_for_record = clean_subject_trailing_chars(part_clean.lstrip('/').strip())
                     audience = extract_audience(part_clean)
                     if audience:
                         audience = re.sub(r',?\s*//\s*,?', '//', audience).strip(',').strip()
@@ -1180,25 +1246,85 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             raw_discipline = ' '.join(discipline_parts).strip()
             raw_discipline = raw_discipline.replace('). ', '), ')
             raw_discipline = normalize_type_slash_for_weeks(raw_discipline)
-            
+            raw_discipline = expand_audience_slash_by_list(raw_discipline, load_valid_audiences())
             if not raw_discipline:
                 continue
             
-            subject_name_for_record = raw_discipline.strip()
+            subject_name_for_record = clean_subject_trailing_chars(raw_discipline.strip())
             audience = extract_audience(raw_discipline)
             week_types = parse_week_type(raw_discipline)
             # Если в ячейке "//" (числитель/знаменатель) — одна запись, формат "Часть1, К511 // Часть2, К503" и "К511//К503"
             if '//' in raw_discipline:
                 sn, au = build_combined_subject_and_audience(raw_discipline)
-                if sn and au is not None:
-                    subject_name_for_record = sn
-                    audience = au
-                    week_types = ['обе недели']
                 parts_for_type = [p.strip() for p in raw_discipline.split('//') if p.strip()]
                 if len(parts_for_type) >= 2:
                     lecture_type = ' // '.join(parse_lecture_type(p) for p in parts_for_type)
                 else:
                     lecture_type = parse_lecture_type(raw_discipline)
+                # Формат "(лек)/(пр), К625/м/зал" -> две записи: числитель = лекция в К625, знаменатель = практика в м/зал
+                if len(parts_for_type) >= 2:
+                    # Аудитории и тип берём напрямую из каждой части (не из au), чтобы гарантированно спарсить К625 и м/зал
+                    aud_lists_by_part = [extract_audience_list(p) for p in parts_for_type]
+                    chosen_auds = []
+                    for i in range(min(2, len(parts_for_type))):
+                        al = aud_lists_by_part[i] if i < len(aud_lists_by_part) else []
+                        if i < len(al):
+                            chosen_auds.append((al[i] or '').strip())
+                        elif al:
+                            chosen_auds.append((al[0] or '').strip())
+                        else:
+                            chosen_auds.append('')
+                    if len(chosen_auds) >= 2 and (chosen_auds[0] or chosen_auds[1]):
+                        subgroups_list = extract_subgroups_from_text(raw_discipline)
+                        num_subgroups = len(subgroups_list) if subgroups_list else 0
+                        if not subgroups_list:
+                            subgroups_list = [None]
+                        elif len(subgroups_list) > 1:
+                            subgroups_list = [None]
+                        is_remote = 'ЭОиДОТ' in raw_discipline.upper() or 'эоидот' in raw_discipline.lower()
+                        for pair_num in pair_numbers:
+                            for group_val in group_values:
+                                for subgroup_num in subgroups_list:
+                                    # Если одна из частей — только аудитория (напр. "К625" после "м/зал//К625"), берём название из другой части
+                                    base_subject_from_parts = None
+                                    for p in parts_for_type:
+                                        if p:
+                                            s = clean_subject_trailing_chars(extract_subject_name(p).strip())
+                                            if s and not is_audience(s):
+                                                base_subject_from_parts = s
+                                                break
+                                    for idx, wt in enumerate(['числитель', 'знаменатель']):
+                                        part_text = parts_for_type[idx] if idx < len(parts_for_type) else ''
+                                        subject_for_record = clean_subject_trailing_chars(extract_subject_name(part_text).strip()) if part_text else ''
+                                        if not subject_for_record or is_audience(subject_for_record):
+                                            subject_for_record = base_subject_from_parts or subject_for_record
+                                        aud_val = (chosen_auds[idx] if idx < len(chosen_auds) else '') or ''
+                                        type_val = parse_lecture_type(part_text) if part_text else 'практика'
+                                        result_entry = {
+                                            'day_of_week': day_of_week,
+                                            'pair_number': pair_num,
+                                            'subject_name': subject_for_record,
+                                            'teacher': teacher_fio,
+                                            'audience': aud_val,
+                                            'lecture_type': type_val,
+                                            'week_type': wt,
+                                            'is_remote': is_remote,
+                                            'is_external': False,
+                                            'department': '',
+                                            'group': group_val,
+                                            'institute': metadata.get('institute', ''),
+                                            'course': metadata.get('course', ''),
+                                            'direction': metadata.get('direction', ''),
+                                            'profile': metadata.get('profile', ''),
+                                            'subgroup': subgroup_num,
+                                            'num_subgroups': num_subgroups
+                                        }
+                                        results.append(result_entry)
+                        continue
+                if sn and au is not None:
+                    subject_name_for_record = clean_subject_trailing_chars(sn)
+                    audience = au
+                    week_types = ['обе недели']
             else:
                 lecture_type = parse_lecture_type(raw_discipline)
             if not week_types:
@@ -1330,9 +1456,9 @@ def save_results_to_excel(results, output_file):
     ws = wb.active
     ws.title = "Расписание"
     
-    # Заголовки (включая институт, курс, направление, профиль)
+    # Заголовки (включая институт, курс, направление, профиль, тип занятия)
     headers = [
-        'fio', 'pair_number', 'day_of_week', 'group', 'audience', 'department',
+        'fio', 'pair_number', 'day_of_week', 'group', 'audience', 'lecture_type', 'department',
         'week_type', 'subgroup', 'num_subgroups', 'is_external', 'is_remote',
         'institute', 'course', 'direction', 'profile', 'subject_name'
     ]
@@ -1354,6 +1480,7 @@ def save_results_to_excel(results, output_file):
             'day_of_week': result.get('day_of_week', ''),
             'group': result.get('group', ''),
             'audience': result.get('audience', ''),
+            'lecture_type': result.get('lecture_type', ''),
             'department': result.get('department', ''),
             'week_type': wt,
             'subgroup': result.get('subgroup', ''),
@@ -1402,7 +1529,6 @@ def save_results_to_excel(results, output_file):
 
 def main():
     import os
-    
     # Создаем папки
     os.makedirs('input/timetable', exist_ok=True)
     os.makedirs('output/timetable', exist_ok=True)
@@ -1441,14 +1567,11 @@ def main():
             import traceback
             traceback.print_exc()
     
-    # Сохраняем все результаты в один файл
+    # Сохраняем все результаты в CSV и Excel
     if all_results:
-        # Сохраняем в CSV с обязательными полями
         csv_output_file = os.path.join('output/timetable', 'timetable_processed.csv')
         save_results_to_csv(all_results, csv_output_file)
         print(f"CSV сохранен в: {csv_output_file}")
-        
-        # Сохраняем в Excel с полными данными
         excel_output_file = os.path.join('output/timetable', 'timetable_processed.xlsx')
         save_results_to_excel(all_results, excel_output_file)
         print(f"\nВсего обработано записей: {len(all_results)}")

@@ -1,9 +1,17 @@
 import os
 import re
+import sys
 import json
 import csv
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, Alignment
+
+# Вывод в консоль в UTF-8 (для кириллицы на Windows)
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
 
 def load_audiences():
     """Загружает список валидных аудиторий из info/aud.json"""
@@ -709,8 +717,34 @@ def _split_group_value(group_str):
     return parts if parts else [s]
 
 
+def _write_results_to_excel(results, new_headers, path):
+    """Записывает список словарей в Excel файл."""
+    wb_new = Workbook()
+    ws_new = wb_new.active
+    for col_idx, header in enumerate(new_headers, 1):
+        cell = ws_new.cell(1, col_idx, value=header)
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    for row_idx, row_data in enumerate(results, 2):
+        for col_idx, header in enumerate(new_headers, 1):
+            value = row_data.get(header, '')
+            ws_new.cell(row_idx, col_idx, value=value)
+    for col in ws_new.columns:
+        max_length = 0
+        col_letter = col[0].column_letter
+        for cell in col:
+            try:
+                if cell.value and (length := len(str(cell.value))) > max_length:
+                    max_length = length
+            except Exception:
+                pass
+        ws_new.column_dimensions[col_letter].width = min(max_length + 2, 50)
+    ws_new.freeze_panes = 'A2'
+    wb_new.save(path)
+
+
 def process_csv_file(input_file, output_file, valid_audiences):
-    """Обрабатывает CSV файл и создает очищенную версию"""
+    """Обрабатывает CSV файл и создает очищенную версию (только в Excel)."""
     results = []
     
     with open(input_file, 'r', encoding='utf-8-sig') as f:
@@ -724,7 +758,19 @@ def process_csv_file(input_file, output_file, valid_audiences):
             teacher_fio = row.get('fio', '') or row.get('teacher', '')
             existing_week_type = row.get('week_type', '') or row.get('week', '')
             existing_lecture_type = row.get('lecture_type', '') or ''
-            processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type, existing_lecture_type)
+            existing_audience = (row.get('audience') or '').strip()
+            # Строки, уже разбитые парсером (числитель/знаменатель с аудиторией), не переразбирать — иначе аудитория теряется
+            if existing_week_type in ('числитель', 'знаменатель') and existing_audience:
+                processed_list = [{
+                    'audience': existing_audience,
+                    'subject_name': clean_subject_name_final(subject_name, valid_audiences),
+                    'lecture_type': existing_lecture_type or '',
+                    'week_type': existing_week_type
+                }]
+                if teacher_fio:
+                    processed_list[0]['teacher'] = teacher_fio
+            else:
+                processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type, existing_lecture_type)
             
             # Для каждой группы — отдельные записи (501-33,501-34,501-35 -> три записи)
             for group_val in group_parts:
@@ -835,17 +881,18 @@ def process_csv_file(input_file, output_file, valid_audiences):
                     break
     
     # Логируем финальные заголовки для отладки
-    print(f"DEBUG: Финальные заголовки CSV: {new_fieldnames}")
+    print(f"DEBUG: Финальные заголовки: {new_fieldnames}")
     if results:
         print(f"DEBUG: Первая запись результата: {list(results[0].keys())}")
         print(f"DEBUG: Значения первой записи - fio: {results[0].get('fio')}, teacher: {results[0].get('teacher')}, group_name: {results[0].get('group_name')}, week_type: {results[0].get('week_type')}")
     
-    # Сохраняем результат
-    with open(output_file, 'w', encoding='utf-8-sig', newline='') as f:
+    # Сохраняем результат в Excel и в CSV
+    _write_results_to_excel(results, new_fieldnames, output_file)
+    csv_path = output_file.replace('.xlsx', '.csv')
+    with open(csv_path, 'w', encoding='utf-8-sig', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=new_fieldnames)
         writer.writeheader()
         writer.writerows(results)
-    
     return len(results)
 
 def process_excel_file(input_file, output_file, valid_audiences):
@@ -905,9 +952,19 @@ def process_excel_file(input_file, output_file, valid_audiences):
         teacher_fio = row_data.get(headers[teacher_idx], '') if teacher_idx is not None else ''
         existing_week_type = row_data.get('week_type', '') or row_data.get('week', '') or ''
         existing_lecture_type = row_data.get('lecture_type', '') or ''
-        
-        # Обрабатываем текст дисциплины - получаем список записей
-        processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type, existing_lecture_type)
+        existing_audience = str(row_data.get('audience', '') or '').strip()
+        # Строки, уже разбитые парсером (числитель/знаменатель с аудиторией), не переразбирать — сохраняем аудиторию
+        if existing_week_type in ('числитель', 'знаменатель') and existing_audience:
+            processed_list = [{
+                'audience': existing_audience,
+                'subject_name': clean_subject_name_final(subject_name, valid_audiences),
+                'lecture_type': existing_lecture_type or '',
+                'week_type': existing_week_type
+            }]
+            if teacher_fio:
+                processed_list[0]['teacher'] = teacher_fio
+        else:
+            processed_list = process_discipline_text(subject_name, valid_audiences, teacher_fio, existing_week_type, existing_lecture_type)
         
         # Создаем отдельную запись для каждой дисциплины/аудитории
         for processed in processed_list:
@@ -1010,16 +1067,107 @@ def process_excel_file(input_file, output_file, valid_audiences):
     wb_new.save(output_file)
     return len(results)
 
-def save_to_database(csv_file):
-    """Сохраняет данные из CSV файла в PostgreSQL базу данных"""
+
+def _to_int(value):
+    if not value or value == '':
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+
+def _to_bool(value):
+    if not value or value == '':
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ('true', '1', 'yes', 't')
+    return bool(value)
+
+
+def _row_dict_to_insert_tuple(row, valid_audiences, last_good_subject_name):
+    """Преобразует одну строку (dict) в кортеж для INSERT в timetable_cleaned."""
+    week_type_value = (row.get('week_type', '') or row.get('week', '') or row.get('week_ru', '') or None)
+    group_name_value = (row.get('group_name', '') or row.get('group', '') or None)
+    fio_value = (row.get('fio', '') or row.get('teacher', '') or None)
+    teacher_value = (row.get('teacher', '') or row.get('fio', '') or None)
+    subject_name_val = (row.get('subject_name', '') or '').strip() or None
+    if subject_name_val and (subject_name_val == 'м зал' or subject_name_val in valid_audiences):
+        subject_name_val = last_good_subject_name
+    elif subject_name_val:
+        last_good_subject_name = subject_name_val
+    values = (
+        row.get('day_of_week', '') or None,
+        _to_int(row.get('pair_number', '')),
+        subject_name_val,
+        row.get('lecture_type', '') or None,
+        row.get('audience', '') or None,
+        fio_value,
+        teacher_value,
+        group_name_value,
+        week_type_value,
+        _to_int(row.get('subgroup', '')),
+        row.get('institute', '') or None,
+        row.get('course', '') or None,
+        row.get('direction', '') or None,
+        row.get('department', '') or None,
+        _to_bool(row.get('is_external', '')),
+        _to_bool(row.get('is_remote', '')),
+        _to_int(row.get('num_subgroups', ''))
+    )
+    return values, last_good_subject_name
+
+
+def read_excel_to_rows(excel_path):
+    """Читает Excel в список словарей (учёт объединённых ячеек)."""
+    wb = load_workbook(excel_path, data_only=True)
+    ws = wb.active
+    headers = []
+    for col in range(1, ws.max_column + 1):
+        cell = ws.cell(1, col)
+        if cell.value:
+            headers.append(str(cell.value))
+    merged_ranges = list(ws.merged_cells.ranges) if getattr(ws, 'merged_cells', None) and ws.merged_cells else []
+
+    def cell_value(row_idx, col_idx, header):
+        cell = ws.cell(row=row_idx, column=col_idx)
+        val = cell.value
+        if val is not None and str(val).strip() != '':
+            return val
+        for mrange in merged_ranges:
+            if mrange.min_row <= row_idx <= mrange.max_row and mrange.min_col <= col_idx <= mrange.max_col:
+                top = ws.cell(row=mrange.min_row, column=mrange.min_col).value
+                if header == 'pair_number' and mrange.max_row > mrange.min_row and row_idx > mrange.min_row:
+                    try:
+                        base = int(top) if top is not None else 1
+                        return base + (row_idx - mrange.min_row)
+                    except (TypeError, ValueError):
+                        return top
+                return top if top is not None else ''
+        return ''
+
+    rows_data = []
+    for row_idx in range(2, ws.max_row + 1):
+        row_data = {}
+        for col_idx, header in enumerate(headers, 1):
+            row_data[header] = cell_value(row_idx, col_idx, header)
+        rows_data.append(row_data)
+    return rows_data
+
+
+def save_to_database(csv_file=None, rows_data=None):
+    """Сохраняет данные в PostgreSQL. Либо rows_data (список dict), либо чтение из csv_file (устаревший путь)."""
+    if rows_data is None and csv_file is None:
+        return False
     try:
         import psycopg2
         from psycopg2.extras import execute_values
     except ImportError:
         print("Ошибка: библиотека psycopg2 не установлена. Установите её командой: pip install psycopg2-binary")
         return False
-    
-    # Параметры подключения к БД
+
     db_config = {
         'host': 'edro.su',
         'port': 50003,
@@ -1027,13 +1175,26 @@ def save_to_database(csv_file):
         'password': 'Pg123!',
         'database': 'test_sursu_timetable'
     }
-    
+
+    valid_audiences = load_audiences()
+    last_good_subject_name = None
+    rows_to_insert = []
+
+    if rows_data is not None:
+        for row in rows_data:
+            values, last_good_subject_name = _row_dict_to_insert_tuple(row, valid_audiences, last_good_subject_name)
+            rows_to_insert.append(values)
+    else:
+        with open(csv_file, 'r', encoding='utf-8-sig') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                values, last_good_subject_name = _row_dict_to_insert_tuple(row, valid_audiences, last_good_subject_name)
+                rows_to_insert.append(values)
+
     try:
-        # Подключаемся к БД
         conn = psycopg2.connect(**db_config)
         cursor = conn.cursor()
-        
-        # Создаем таблицу, если её нет
+
         create_table_query = """
         CREATE TABLE IF NOT EXISTS timetable_cleaned (
             id SERIAL PRIMARY KEY,
@@ -1060,90 +1221,11 @@ def save_to_database(csv_file):
         cursor.execute(create_table_query)
         conn.commit()
         print("Таблица timetable_cleaned создана или уже существует")
-        
-        # Очищаем таблицу перед вставкой новых данных
+
         cursor.execute("TRUNCATE TABLE timetable_cleaned")
         conn.commit()
         print("Таблица timetable_cleaned очищена")
-        
-        # Читаем данные из CSV файла
-        rows_to_insert = []
-        with open(csv_file, 'r', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            fieldnames = reader.fieldnames
 
-            
-            for row in reader:
-                # Вспомогательная функция для преобразования в int
-                def to_int(value):
-                    if not value or value == '':
-                        return None
-                    try:
-                        return int(value)
-                    except (ValueError, TypeError):
-                        return None
-                
-                # Вспомогательная функция для преобразования в bool
-                def to_bool(value):
-                    if not value or value == '':
-                        return False
-                    if isinstance(value, bool):
-                        return value
-                    if isinstance(value, str):
-                        return value.lower() in ('true', '1', 'yes', 't')
-                    return bool(value)
-                
-                # Подготавливаем данные для вставки
-                # Получаем week_type из разных возможных полей
-                week_type_value = (row.get('week_type', '') or 
-                                 row.get('week', '') or 
-                                 row.get('week_ru', '') or 
-                                 None)
-                
-                # Получаем group_name из разных возможных полей
-                group_name_value = (row.get('group_name', '') or 
-                                  row.get('group', '') or 
-                                  None)
-                
-                # Получаем fio и teacher
-                fio_value = (row.get('fio', '') or 
-                           row.get('teacher', '') or 
-                           None)
-                teacher_value = (row.get('teacher', '') or 
-                               row.get('fio', '') or 
-                               None)
-                
-                # Логируем первую строку для отладки
-                if len(rows_to_insert) == 0:
-                    print(f"DEBUG: Первая строка из CSV:")
-                    print(f"  fio={row.get('fio')}, teacher={row.get('teacher')}")
-                    print(f"  group={row.get('group')}, group_name={row.get('group_name')}")
-                    print(f"  week={row.get('week')}, week_type={row.get('week_type')}")
-                    print(f"  fio_value={fio_value}, teacher_value={teacher_value}")
-                    print(f"  group_name_value={group_name_value}, week_type_value={week_type_value}")
-                
-                values = (
-                    row.get('day_of_week', '') or None,
-                    to_int(row.get('pair_number', '')),
-                    row.get('subject_name', '') or None,
-                    row.get('lecture_type', '') or None,
-                    row.get('audience', '') or None,
-                    fio_value,
-                    teacher_value,
-                    group_name_value,
-                    week_type_value,
-                    to_int(row.get('subgroup', '')),
-                    row.get('institute', '') or None,
-                    row.get('course', '') or None,
-                    row.get('direction', '') or None,
-                    row.get('department', '') or None,
-                    to_bool(row.get('is_external', '')),
-                    to_bool(row.get('is_remote', '')),
-                    to_int(row.get('num_subgroups', ''))
-                )
-                rows_to_insert.append(values)
-        
-        # Вставляем данные пакетами
         if rows_to_insert:
             insert_query = """
             INSERT INTO timetable_cleaned (
@@ -1153,16 +1235,27 @@ def save_to_database(csv_file):
                 is_external, is_remote, num_subgroups
             ) VALUES %s
             """
-            
+            col_names = ('day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
+                        'fio', 'teacher', 'group_name', 'week_type', 'subgroup',
+                        'institute', 'course', 'direction', 'department',
+                        'is_external', 'is_remote', 'num_subgroups')
+            log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output', 'timetable')
+            os.makedirs(log_dir, exist_ok=True)
+            log_path = os.path.join(log_dir, 'load_to_db_log.jsonl')
+            with open(log_path, 'w', encoding='utf-8') as log_f:
+                for i, row_vals in enumerate(rows_to_insert):
+                    row_dict = {col_names[j]: row_vals[j] for j in range(len(col_names))}
+                    log_obj = {"insert_index": i + 1, "table": "timetable_cleaned", "row": row_dict}
+                    log_f.write(json.dumps(log_obj, ensure_ascii=False) + '\n')
+            print(f"Лог вставок записан в {log_path} ({len(rows_to_insert)} записей)")
             execute_values(cursor, insert_query, rows_to_insert)
             conn.commit()
-            
             print(f"Успешно сохранено {len(rows_to_insert)} записей в базу данных")
-        
+
         cursor.close()
         conn.close()
         return True
-        
+
     except psycopg2.Error as e:
         print(f"Ошибка при работе с базой данных: {e}")
         import traceback
@@ -1180,74 +1273,39 @@ def main():
 
     parser = argparse.ArgumentParser(description='Очистка аудиторий в расписании')
     parser.add_argument('--no-db', action='store_true', help='Только обработка файлов, без загрузки в БД')
-    parser.add_argument('--db-only', action='store_true', help='Только загрузить timetable_processed_cleaned.csv в БД (без обработки)')
+    parser.add_argument('--db-only', action='store_true', help='Только загрузить timetable_processed_cleaned.xlsx в БД (без обработки)')
     args = parser.parse_args()
 
     csv_output = 'output/timetable/timetable_processed_cleaned.csv'
     excel_output = 'output/timetable/timetable_processed_cleaned.xlsx'
 
-    # Режим: только загрузка в БД
+    # Режим: только загрузка в БД (из Excel или CSV)
     if args.db_only:
         if os.path.exists(csv_output):
-            print("Загрузка данных в базу данных...")
+            print("Загрузка данных в базу данных из CSV...")
             try:
-                if save_to_database(csv_output):
+                if save_to_database(csv_file=csv_output):
                     print("Данные успешно сохранены в базу данных")
                 else:
                     print("Не удалось сохранить данные в базу данных")
             except Exception as e:
-                print(f"Ошибка при сохранении в базу данных: {e}")
+                print(f"Ошибка: {e}")
+                import traceback
+                traceback.print_exc()
+        elif os.path.exists(excel_output):
+            print("Загрузка данных в базу данных из Excel...")
+            try:
+                rows_data = read_excel_to_rows(excel_output)
+                if save_to_database(rows_data=rows_data):
+                    print("Данные успешно сохранены в базу данных")
+                else:
+                    print("Не удалось сохранить данные в базу данных")
+            except Exception as e:
+                print(f"Ошибка: {e}")
                 import traceback
                 traceback.print_exc()
         else:
-            # Пробуем Excel -> временный CSV
-            if os.path.exists(excel_output):
-                print("Создаем временный CSV для сохранения в БД...")
-                try:
-                    wb = load_workbook(excel_output, data_only=True)
-                    ws = wb.active
-                    headers = []
-                    for col in range(1, ws.max_column + 1):
-                        cell = ws.cell(1, col)
-                        if cell.value:
-                            headers.append(str(cell.value))
-                    merged_ranges = list(ws.merged_cells.ranges) if getattr(ws, 'merged_cells', None) and ws.merged_cells else []
-                    def cell_value(row_idx, col_idx, header):
-                        cell = ws.cell(row=row_idx, column=col_idx)
-                        val = cell.value
-                        if val is not None and str(val).strip() != '':
-                            return val
-                        for mrange in merged_ranges:
-                            if mrange.min_row <= row_idx <= mrange.max_row and mrange.min_col <= col_idx <= mrange.max_col:
-                                top = ws.cell(row=mrange.min_row, column=mrange.min_col).value
-                                if header == 'pair_number' and mrange.max_row > mrange.min_row and row_idx > mrange.min_row:
-                                    try:
-                                        base = int(top) if top is not None else 1
-                                        return base + (row_idx - mrange.min_row)
-                                    except (TypeError, ValueError):
-                                        return top
-                                return top if top is not None else ''
-                        return ''
-                    temp_csv = csv_output.replace('.csv', '_temp_for_db.csv')
-                    with open(temp_csv, 'w', encoding='utf-8-sig', newline='') as f:
-                        writer = csv.DictWriter(f, fieldnames=headers)
-                        writer.writeheader()
-                        for row_idx in range(2, ws.max_row + 1):
-                            row_data = {}
-                            for col_idx, header in enumerate(headers, 1):
-                                row_data[header] = cell_value(row_idx, col_idx, header)
-                            writer.writerow(row_data)
-                    if save_to_database(temp_csv):
-                        print("Данные успешно сохранены в базу данных")
-                        os.remove(temp_csv)
-                    else:
-                        print("Не удалось сохранить данные в базу данных")
-                except Exception as e:
-                    print(f"Ошибка: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"Не найден файл {csv_output} или {excel_output}. Сначала выполните обработку (clean_audiences).")
+            print(f"Не найден файл {excel_output} или {csv_output}. Сначала выполните обработку (clean_audiences).")
         return
 
     # Загружаем валидные аудитории
@@ -1271,13 +1329,13 @@ def main():
         print("Не найдены файлы timetable_processed.csv или timetable_processed.xlsx в output/timetable/")
         return
 
-    # Обрабатываем CSV
+    # Обрабатываем CSV (результат в Excel и CSV)
     if csv_input:
         print(f"\nОбрабатываем CSV файл: {csv_input}")
         try:
-            count = process_csv_file(csv_input, csv_output, valid_audiences)
+            count = process_csv_file(csv_input, excel_output, valid_audiences)
             print(f"Обработано записей: {count}")
-            print(f"Результат сохранен в: {csv_output}")
+            print(f"Результат сохранен в: {csv_output}, {excel_output}")
         except Exception as e:
             print(f"Ошибка при обработке CSV файла: {e}")
             import traceback
@@ -1298,9 +1356,9 @@ def main():
     # Сохраняем в базу данных только если не указан --no-db
     if not args.no_db:
         if os.path.exists(csv_output):
-            print(f"\nСохраняем данные в базу данных...")
+            print(f"\nСохраняем данные в базу данных из CSV...")
             try:
-                if save_to_database(csv_output):
+                if save_to_database(csv_file=csv_output):
                     print("Данные успешно сохранены в базу данных")
                 else:
                     print("Не удалось сохранить данные в базу данных")
@@ -1309,32 +1367,15 @@ def main():
                 import traceback
                 traceback.print_exc()
         elif os.path.exists(excel_output):
-            print(f"\nСоздаем временный CSV для сохранения в БД...")
+            print(f"\nСохраняем данные в базу данных из Excel...")
             try:
-                wb = load_workbook(excel_output, data_only=True)
-                ws = wb.active
-                headers = []
-                for col in range(1, ws.max_column + 1):
-                    cell = ws.cell(1, col)
-                    if cell.value:
-                        headers.append(str(cell.value))
-                temp_csv = csv_output.replace('.csv', '_temp_for_db.csv')
-                with open(temp_csv, 'w', encoding='utf-8-sig', newline='') as f:
-                    writer = csv.DictWriter(f, fieldnames=headers)
-                    writer.writeheader()
-                    for row_idx in range(2, ws.max_row + 1):
-                        row_data = {}
-                        for col_idx, header in enumerate(headers, 1):
-                            cell = ws.cell(row_idx, col_idx)
-                            row_data[header] = cell.value if cell.value else ''
-                        writer.writerow(row_data)
-                if save_to_database(temp_csv):
+                rows_data = read_excel_to_rows(excel_output)
+                if save_to_database(rows_data=rows_data):
                     print("Данные успешно сохранены в базу данных")
-                    os.remove(temp_csv)
                 else:
                     print("Не удалось сохранить данные в базу данных")
             except Exception as e:
-                print(f"Ошибка при создании временного CSV или сохранении в БД: {e}")
+                print(f"Ошибка при сохранении в базу данных: {e}")
                 import traceback
                 traceback.print_exc()
 

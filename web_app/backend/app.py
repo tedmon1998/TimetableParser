@@ -5,6 +5,15 @@ import subprocess
 import os
 import sys
 
+# Вывод консоли в UTF-8 (кириллица без кракозябр)
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        if hasattr(sys.stderr, 'reconfigure'):
+            sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -195,7 +204,7 @@ def save_teachers(teachers):
         json.dump(teachers, f, ensure_ascii=False, indent=2)
 
 def cleanup_output_files():
-    """Удаляет все файлы в output/timetable"""
+    """Удаляет файлы в output/timetable (кроме заблокированных — например открытых в Excel)."""
     output_dir = os.path.join(get_project_root(), 'output', 'timetable')
     if os.path.exists(output_dir):
         deleted_count = 0
@@ -205,6 +214,11 @@ def cleanup_output_files():
                     os.remove(file)
                     deleted_count += 1
                     print(f"Удален файл: {file}")
+                except OSError as e:
+                    if e.winerror == 32 if hasattr(e, 'winerror') else getattr(e, 'errno', None) == 32:
+                        print(f"Файл занят, пропуск: {os.path.basename(file)} (закройте в Excel при необходимости)")
+                    else:
+                        print(f"Ошибка при удалении {file}: {e}")
                 except Exception as e:
                     print(f"Ошибка при удалении {file}: {e}")
         print(f"Удалено файлов: {deleted_count}")
@@ -231,13 +245,17 @@ def run_parse_timetable():
         script_status['parse_timetable']['progress'] = 20
         script_status['parse_timetable']['message'] = 'Запуск скрипта парсинга...'
         
-        # Запускаем скрипт
+        # Запускаем скрипт с UTF-8, чтобы в консоли был читаемый русский текст
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
             ['python', script_path],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
             bufsize=1
         )
         
@@ -309,19 +327,26 @@ def run_clean_audiences():
             if os.path.isfile(file):
                 try:
                     os.remove(file)
+                except OSError as e:
+                    if getattr(e, 'winerror', None) == 32:
+                        print(f"Файл занят, пропуск: {os.path.basename(file)}")
                 except Exception as e:
                     print(f"Ошибка при удалении {file}: {e}")
         
         script_status['clean_audiences']['progress'] = 20
         script_status['clean_audiences']['message'] = 'Запуск скрипта очистки...'
         
-        # Запускаем скрипт без загрузки в БД (только обработка)
+        # Запускаем скрипт без загрузки в БД (только обработка); UTF-8 для вывода с кириллицей
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
             ['python', script_path, '--no-db'],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
             bufsize=1
         )
         
@@ -368,35 +393,46 @@ def run_clean_audiences():
         script_status['clean_audiences']['running'] = False
 
 def run_load_timetable_to_db():
-    """Загружает timetable_processed_cleaned.csv в таблицу timetable_cleaned (clean_audiences.py --db-only)"""
+    """Загружает timetable_processed_cleaned.xlsx в таблицу timetable_cleaned (clean_audiences.py --db-only)"""
     script_status['load_timetable_to_db']['running'] = True
     script_status['load_timetable_to_db']['progress'] = 0
     script_status['load_timetable_to_db']['message'] = 'Подготовка загрузки в БД...'
     script_status['load_timetable_to_db']['error'] = None
     try:
         project_root = get_project_root()
-        csv_path = os.path.join(project_root, 'output', 'timetable', 'timetable_processed_cleaned.csv')
         excel_path = os.path.join(project_root, 'output', 'timetable', 'timetable_processed_cleaned.xlsx')
-        if not os.path.isfile(csv_path) and not os.path.isfile(excel_path):
+        if not os.path.isfile(excel_path):
             raise FileNotFoundError(
-                'Не найден файл timetable_processed_cleaned.csv (или .xlsx). '
-                'Сначала выполните «Очистка аудиторий».'
+                'Не найден файл timetable_processed_cleaned.xlsx. Сначала выполните «Очистка аудиторий».'
             )
         script_path = os.path.join(project_root, 'clean_audiences.py')
         if not os.path.exists(script_path):
             raise FileNotFoundError(f"Скрипт не найден: {script_path}")
         script_status['load_timetable_to_db']['progress'] = 20
         script_status['load_timetable_to_db']['message'] = 'Загрузка в БД (timetable_cleaned)...'
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
             ['python', script_path, '--db-only'],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
             bufsize=1
         )
         stdout_output, stderr_output = process.communicate()
         return_code = process.returncode
+        # Выводим в консоль бэкенда, что скрипт вставляет в БД (UTF-8)
+        if stdout_output:
+            for line in stdout_output.splitlines():
+                if line.strip():
+                    print(f"[LOAD_DB] {line}", flush=True)
+        if stderr_output and stderr_output.strip():
+            for line in stderr_output.splitlines():
+                if line.strip():
+                    print(f"[LOAD_DB stderr] {line}", flush=True)
         if return_code != 0:
             error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
             script_status['load_timetable_to_db']['error'] = error_msg
@@ -603,12 +639,16 @@ def run_process_timetable():
             raise FileNotFoundError(f"Скрипт не найден: {script_path}")
         script_status['process_timetable']['progress'] = 10
         script_status['process_timetable']['message'] = 'Запуск process_timetable.py...'
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
             ['python', script_path],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
             bufsize=1
         )
         script_status['process_timetable']['progress'] = 40
@@ -725,12 +765,16 @@ def run_parse_aspi():
             raise FileNotFoundError(f"Скрипт не найден: {script_path}")
         script_status['parse_aspi']['progress'] = 10
         script_status['parse_aspi']['message'] = 'Запуск parse_aspi.py...'
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
             [sys.executable, script_path],
             cwd=aspi_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
             bufsize=1
         )
         script_status['parse_aspi']['progress'] = 40
@@ -789,12 +833,16 @@ def run_normalize_aspi():
             raise FileNotFoundError(f"Скрипт не найден: {script_path}")
         script_status['normalize_aspi']['progress'] = 10
         script_status['normalize_aspi']['message'] = 'Запуск normalize_aspi.py...'
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
             [sys.executable, script_path],
             cwd=aspi_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
             bufsize=1
         )
         script_status['normalize_aspi']['progress'] = 40
@@ -1190,12 +1238,16 @@ def run_fetch_teachers():
         script_path = os.path.join(project_root, 'get_teacher_data.py')
         if not os.path.exists(script_path):
             raise FileNotFoundError(f'Скрипт не найден: {script_path}')
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
             ['python', script_path],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
             bufsize=1
         )
         output_lines = []

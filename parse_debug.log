@@ -1,0 +1,196 @@
+
+=== main() запущен ===
+[DEBUG СТРОКА] row_idx=12 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=13 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек)/(пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625 // Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=14 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=15 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (лек)/(пр), К625/ м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (лек), К625/ м/зал // Искусство звучащего слова (пр), К625/ м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=16 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (пр), м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (пр), м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=28 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Менеджмент и маркетинг в медиасреде (лек)/(пр), К426'"]
+[DEBUG СТРОКА] row_idx=17 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Основы проектной деятельности (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Основы проектной деятельности (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+
+=== main() запущен ===
+[DEBUG СТРОКА] row_idx=12 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=13 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек)/(пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625 // Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=14 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=15 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (лек)/(пр), К625/ м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (лек), К625/ м/зал // Искусство звучащего слова (пр), К625/ м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=16 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (пр), м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (пр), м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=28 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Менеджмент и маркетинг в медиасреде (лек)/(пр), К426'"]
+[DEBUG СТРОКА] row_idx=17 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Основы проектной деятельности (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Основы проектной деятельности (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+
+=== main() запущен ===
+[DEBUG СТРОКА] row_idx=12 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=13 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек)/(пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625 // Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=14 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=15 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (лек)/(пр), К625/ м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (лек), К625/ м/зал // Искусство звучащего слова (пр), К625/ м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=16 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (пр), м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (пр), м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=28 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Менеджмент и маркетинг в медиасреде (лек)/(пр), К426'"]
+[DEBUG СТРОКА] row_idx=17 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Основы проектной деятельности (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Основы проектной деятельности (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+
+=== main() запущен ===
+[DEBUG СТРОКА] row_idx=12 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=13 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек)/(пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625 // Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=14 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=15 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (лек)/(пр), К625/ м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (лек), К625/ м/зал // Искусство звучащего слова (пр), К625/ м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=16 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (пр), м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (пр), м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=28 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Менеджмент и маркетинг в медиасреде (лек)/(пр), К426'"]
+[DEBUG СТРОКА] row_idx=17 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Основы проектной деятельности (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Основы проектной деятельности (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+
+=== main() запущен ===
+[DEBUG СТРОКА] row_idx=12 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=13 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек)/(пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625 // Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=14 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=15 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (лек)/(пр), К625/ м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (лек), К625/ м/зал // Искусство звучащего слова (пр), К625/ м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=16 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (пр), м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (пр), м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=28 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Менеджмент и маркетинг в медиасреде (лек)/(пр), К426'"]
+[DEBUG СТРОКА] row_idx=17 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Основы проектной деятельности (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Основы проектной деятельности (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+
+=== main() запущен ===
+[DEBUG СТРОКА] row_idx=12 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=13 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек)/(пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625 // Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=14 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=15 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (лек)/(пр), К625/ м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (лек), К625/ м/зал // Искусство звучащего слова (пр), К625/ м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=16 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (пр), м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (пр), м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=28 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Менеджмент и маркетинг в медиасреде (лек)/(пр), К426'"]
+[DEBUG СТРОКА] row_idx=17 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Основы проектной деятельности (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Основы проектной деятельности (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+
+=== main() запущен ===
+[DEBUG СТРОКА] row_idx=12 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=13 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (лек)/(пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (лек), К625 // Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=14 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Мировая художественная культура (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Мировая художественная культура (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=15 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (лек)/(пр), К625/ м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (лек), К625/ м/зал // Искусство звучащего слова (пр), К625/ м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? True
+[DEBUG СТРОКА] row_idx=16 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Искусство звучащего слова (пр), м/зал'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Искусство звучащего слова (пр), м/зал'
+[DEBUG СТРОКА] "//" in raw_discipline? False
+[DEBUG СТРОКА] row_idx=28 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Менеджмент и маркетинг в медиасреде (лек)/(пр), К426'"]
+[DEBUG СТРОКА] row_idx=17 len(discipline_parts)=1
+[DEBUG СТРОКА] discipline_parts: ["'Основы проектной деятельности (пр), К625'"]
+[DEBUG СТРОКА] Ветка: ОДНА (или 3+) ячеек. raw_discipline: 'Основы проектной деятельности (пр), К625'
+[DEBUG СТРОКА] "//" in raw_discipline? False
