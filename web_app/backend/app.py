@@ -2188,9 +2188,9 @@ def update_record(record_id):
             conn.commit()
             cursor.close()
             conn.close()
-        if updated_record:
-            return jsonify({'message': 'Record updated successfully', 'record': dict(updated_record)})
-        return jsonify({'error': 'Record not found'}), 404
+            if updated_record:
+                return jsonify({'message': 'Record updated successfully', 'record': dict(updated_record)})
+            return jsonify({'error': 'Record not found'}), 404
 
         # Обычное обновление для timetable_cleaned / timetable_teacher
         update_fields = []
@@ -2765,6 +2765,41 @@ def _discipline_match_table(request_or_args, body_key='table'):
     return 'aspi' if t == 'aspi' else 'intermediate'
 
 
+def _strip_for_match(s, strip_text, strip_at):
+    """Удаляет strip_text из начала или конца строки s. strip_at: 'start' или 'end'."""
+    if not s or not strip_text:
+        return (s or '').strip()
+    s = str(s).strip()
+    if strip_at == 'end':
+        if s.endswith(strip_text):
+            return s[:-len(strip_text)].strip()
+    else:
+        if s.startswith(strip_text):
+            return s[len(strip_text):].strip()
+    return s
+
+
+def _is_matched_by_canonical(original, canonical_lower, canonical_list, strip_text, strip_at, match_full):
+    """Проверяет, считается ли original уже совпавшим со справочником.
+    match_full=True: точное совпадение (после strip).
+    match_full=False: частичное — строка справочника входит в original или наоборот."""
+    if not original:
+        return False
+    o = original.strip()
+    o_lower = o.lower()
+    stripped = _strip_for_match(o, strip_text, strip_at) if strip_text else o
+    stripped_lower = stripped.lower()
+    if match_full:
+        return stripped_lower in canonical_lower or o_lower in canonical_lower
+    for c in canonical_list:
+        c_lower = c.strip().lower()
+        if not c_lower:
+            continue
+        if c_lower in stripped_lower or stripped_lower in c_lower:
+            return True
+    return False
+
+
 def _ensure_intermediate_discipline_original(conn):
     """Добавляет колонку discipline_original в intermediate_timetable, если её ещё нет (миграция для старых БД)."""
     cur = conn.cursor()
@@ -2780,9 +2815,14 @@ def _ensure_intermediate_discipline_original(conn):
 @app.route('/api/discipline-match/unmatched', methods=['GET'])
 def get_discipline_match_unmatched():
     """Список названий из intermediate_timetable или timetable_aspi (query: table=intermediate|aspi), которых нет в discipline.json.
-    Замены в БД не выполняются — только ручная обработка через кнопки на фронте."""
+    Параметры: strip_text — удалить перед сравнением, strip_at — start|end, match_full — 1|0 (полное/частичное)."""
     try:
         table = _discipline_match_table(request)
+        strip_text = (request.args.get('strip_text') or '').strip()
+        strip_at = (request.args.get('strip_at') or 'start').strip().lower()
+        if strip_at not in ('start', 'end'):
+            strip_at = 'start'
+        match_full = request.args.get('match_full', '1') in ('1', 'true', 'yes')
         import discipline_validate as match_module
         canonical = read_disciplines()
         canonical_lower = {d.strip().lower() for d in canonical}
@@ -2812,7 +2852,11 @@ def get_discipline_match_unmatched():
         cur.close()
         conn.close()
         distinct = [r[0].strip() for r in rows if r[0] and str(r[0]).strip()]
-        unmatched = list(dict.fromkeys(s for s in distinct if s.lower() not in canonical_lower))
+        # Фильтр «несовпадающие» — только по исходной строке, без strip (не убираем строки из списка)
+        unmatched = list(dict.fromkeys(
+            s for s in distinct
+            if not _is_matched_by_canonical(s, canonical_lower, canonical, '', 'start', match_full)
+        ))
         if not unmatched:
             return jsonify({'items': [], 'message': 'Нет несовпадающих дисциплин'})
 
@@ -2822,8 +2866,9 @@ def get_discipline_match_unmatched():
 
         items = []
         for original in unmatched:
+            query_text = _strip_for_match(original, strip_text, strip_at) if strip_text else original
             try:
-                top4 = match_module.match_query(original, documents, doc_embeddings, top_k=4)
+                top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=4)
             except Exception:
                 top4 = []
             if not top4:
@@ -2849,7 +2894,7 @@ def get_discipline_match_unmatched():
 
 @app.route('/api/discipline-match/apply', methods=['POST'])
 def apply_discipline_match():
-    """Для всех несовпадающих: если точность >= threshold, заменить subject_name на предложенное. body: threshold, table=intermediate|aspi."""
+    """Для всех несовпадающих: если точность >= threshold, заменить subject_name на предложенное. body: threshold, table, strip_text, strip_at, match_full."""
     conn = None
     try:
         data = request.get_json(silent=True) or {}
@@ -2859,6 +2904,11 @@ def apply_discipline_match():
             threshold = 0.95
         threshold = max(0.0, min(1.0, threshold))
         table = _discipline_match_table(data, 'table')
+        strip_text = (data.get('strip_text') or '').strip()
+        strip_at = (str(data.get('strip_at') or 'start')).strip().lower()
+        if strip_at not in ('start', 'end'):
+            strip_at = 'start'
+        match_full = data.get('match_full', True) in (True, 1, '1', 'true', 'yes')
         import discipline_validate as match_module
         canonical = read_disciplines()
         canonical_lower = {d.strip().lower() for d in canonical}
@@ -2884,7 +2934,11 @@ def apply_discipline_match():
         cur.execute(sql_distinct)
         rows = cur.fetchall()
         distinct = [r[0].strip() for r in rows if r[0] and str(r[0]).strip()]
-        unmatched = list(dict.fromkeys(s for s in distinct if s.lower() not in canonical_lower))
+        # Фильтр «несовпадающие» — только по исходной строке, без strip
+        unmatched = list(dict.fromkeys(
+            s for s in distinct
+            if not _is_matched_by_canonical(s, canonical_lower, canonical, '', 'start', match_full)
+        ))
         if not unmatched:
             cur.close()
             conn.close()
@@ -2900,8 +2954,9 @@ def apply_discipline_match():
         replaced = 0
         for original in unmatched:
             cleaned_ids = []
+            query_text = _strip_for_match(original, strip_text, strip_at) if strip_text else original
             try:
-                top4 = match_module.match_query(original, documents, doc_embeddings, top_k=1)
+                top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=1)
             except Exception:
                 continue
             score = top4[0][1] if top4 else 0.0

@@ -79,6 +79,27 @@
   color: #444;
 }
 
+.discipline-match-strip-input {
+  width: 140px;
+  padding: 0.4rem 0.5rem;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+}
+
+.discipline-match-radio-label,
+.discipline-match-checkbox-label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.discipline-match-radio-label input,
+.discipline-match-checkbox-label input {
+  margin: 0;
+}
+
 .discipline-match-threshold {
   width: 80px;
   padding: 0.4rem 0.5rem;

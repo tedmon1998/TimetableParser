@@ -310,7 +310,8 @@ def clean_subject_name_final(text, valid_audiences=None):
     
     # Убираем разделители "//" в середине текста
     text = re.sub(r'\s*//\s*', ' ', text)
-    
+    # Убираем апостроф из названия дисциплины
+    text = text.replace("'", '')
     # Убираем лишние пробелы и запятые
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r',\s*,', ',', text)  # Двойные запятые
@@ -759,7 +760,7 @@ def process_csv_file(input_file, output_file, valid_audiences):
             existing_week_type = row.get('week_type', '') or row.get('week', '')
             existing_lecture_type = row.get('lecture_type', '') or ''
             existing_audience = (row.get('audience') or '').strip()
-            # Строки, уже разбитые парсером (числитель/знаменатель с аудиторией), не переразбирать — иначе аудитория теряется
+            # Строки, уже разбитые парсером (числитель/знаменатель с аудиторией), не переразбирать
             if existing_week_type in ('числитель', 'знаменатель') and existing_audience:
                 processed_list = [{
                     'audience': existing_audience,
@@ -953,7 +954,7 @@ def process_excel_file(input_file, output_file, valid_audiences):
         existing_week_type = row_data.get('week_type', '') or row_data.get('week', '') or ''
         existing_lecture_type = row_data.get('lecture_type', '') or ''
         existing_audience = str(row_data.get('audience', '') or '').strip()
-        # Строки, уже разбитые парсером (числитель/знаменатель с аудиторией), не переразбирать — сохраняем аудиторию
+        # Строки, уже разбитые парсером (числитель/знаменатель с аудиторией), не переразбирать
         if existing_week_type in ('числитель', 'знаменатель') and existing_audience:
             processed_list = [{
                 'audience': existing_audience,

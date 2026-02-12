@@ -22,6 +22,9 @@ type DisciplineMatchSource = 'intermediate' | 'aspi';
 const DisciplineMatchView: React.FC = () => {
   const [source, setSource] = useState<DisciplineMatchSource>('intermediate');
   const [threshold, setThreshold] = useState<string>('0.95');
+  const [stripText, setStripText] = useState<string>('');
+  const [stripAt, setStripAt] = useState<'start' | 'end'>('start');
+  const [matchFull, setMatchFull] = useState<boolean>(true);
   const [items, setItems] = useState<MatchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -38,7 +41,13 @@ const DisciplineMatchView: React.FC = () => {
     setStatusMessage('Загрузка несовпадающих дисциплин...');
     try {
       const table = source === 'aspi' ? 'aspi' : 'intermediate';
-      const res = await axios.get(`${API_BASE}/discipline-match/unmatched?table=${table}`);
+      const params = new URLSearchParams({ table });
+      if (stripText.trim()) {
+        params.set('strip_text', stripText.trim());
+        params.set('strip_at', stripAt);
+      }
+      params.set('match_full', matchFull ? '1' : '0');
+      const res = await axios.get(`${API_BASE}/discipline-match/unmatched?${params.toString()}`);
       const data = res.data as { items: MatchItem[]; error?: string };
       if (data.error) {
         setStatusMessage(`Ошибка: ${data.error}`);
@@ -66,7 +75,7 @@ const DisciplineMatchView: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [source]);
+  }, [source, stripText, stripAt, matchFull]);
 
   const replaceWith = useCallback(async (original: string, replacement: string) => {
     if (!replacement?.trim()) return;
@@ -122,7 +131,12 @@ const DisciplineMatchView: React.FC = () => {
     setStatusMessage('Применяю порог в БД...');
     try {
       const table = source === 'aspi' ? 'aspi' : 'intermediate';
-      const res = await axios.post(`${API_BASE}/discipline-match/apply`, { threshold: t, table });
+      const body: Record<string, unknown> = { threshold: t, table, match_full: matchFull };
+      if (stripText.trim()) {
+        body.strip_text = stripText.trim();
+        body.strip_at = stripAt;
+      }
+      const res = await axios.post(`${API_BASE}/discipline-match/apply`, body);
       const data = res.data as { replaced?: number; error?: string; message?: string };
       if (data.error) {
         setStatusMessage(`Ошибка: ${data.error}`);
@@ -155,7 +169,7 @@ const DisciplineMatchView: React.FC = () => {
     } finally {
       setApplying(false);
     }
-  }, [threshold, source, loadUnmatched]);
+  }, [threshold, source, stripText, stripAt, matchFull, loadUnmatched]);
 
   const visibleItems = showHiddenOnly
     ? items.filter((i) => hiddenOriginals.has(i.original))
@@ -217,6 +231,42 @@ const DisciplineMatchView: React.FC = () => {
           )}
         </p>
         <div className="discipline-match-controls">
+          <label>
+            Удалить перед сравнением
+            <input
+              type="text"
+              placeholder="например: ФТД: "
+              value={stripText}
+              onChange={e => setStripText(e.target.value)}
+              className="discipline-match-strip-input"
+            />
+          </label>
+          <label className="discipline-match-radio-label">
+            <input
+              type="radio"
+              name="strip_at"
+              checked={stripAt === 'start'}
+              onChange={() => setStripAt('start')}
+            />
+            в начале
+          </label>
+          <label className="discipline-match-radio-label">
+            <input
+              type="radio"
+              name="strip_at"
+              checked={stripAt === 'end'}
+              onChange={() => setStripAt('end')}
+            />
+            в конце
+          </label>
+          <label className="discipline-match-checkbox-label">
+            <input
+              type="checkbox"
+              checked={matchFull}
+              onChange={e => setMatchFull(e.target.checked)}
+            />
+            полное сравнение
+          </label>
           <label>
             Порог точности (0–1)
             <input
