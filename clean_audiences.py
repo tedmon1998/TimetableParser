@@ -767,13 +767,17 @@ def process_csv_file(input_file, output_file, valid_audiences):
             existing_week_type = row.get('week_type', '') or row.get('week', '')
             existing_lecture_type = row.get('lecture_type', '') or ''
             existing_audience = (row.get('audience') or '').strip()
-            # Строки, уже разбитые парсером (числитель/знаменатель с аудиторией), не переразбирать
-            if existing_week_type in ('числитель', 'знаменатель') and existing_audience:
+            # Сохраняем аудиторию и тип занятия, если они уже заполнены (в т.ч. при двух колонках, week_type = "обе недели")
+            keep_as_is = (
+                (existing_week_type in ('числитель', 'знаменатель') and existing_audience)
+                or ((existing_audience or existing_lecture_type) and '//' not in str(subject_name or ''))
+            )
+            if keep_as_is:
                 processed_list = [{
-                    'audience': existing_audience,
+                    'audience': existing_audience or '',
                     'subject_name': clean_subject_name_final(subject_name, valid_audiences),
                     'lecture_type': existing_lecture_type or '',
-                    'week_type': existing_week_type
+                    'week_type': existing_week_type or 'обе недели'
                 }]
                 if teacher_fio:
                     processed_list[0]['teacher'] = teacher_fio
@@ -963,13 +967,18 @@ def process_excel_file(input_file, output_file, valid_audiences):
         existing_week_type = row_data.get('week_type', '') or row_data.get('week', '') or ''
         existing_lecture_type = row_data.get('lecture_type', '') or ''
         existing_audience = str(row_data.get('audience', '') or '').strip()
-        # Строки, уже разбитые парсером (числитель/знаменатель с аудиторией), не переразбирать
-        if existing_week_type in ('числитель', 'знаменатель') and existing_audience:
+        # Сохраняем аудиторию и тип занятия, если они уже заполнены парсером (в т.ч. при двух колонках, когда week_type = "обе недели")
+        # Не переразбираем, если: числитель/знаменатель с аудиторией ИЛИ уже есть аудитория/тип и в тексте нет "//" (одна запись)
+        keep_as_is = (
+            (existing_week_type in ('числитель', 'знаменатель') and existing_audience)
+            or ((existing_audience or existing_lecture_type) and '//' not in str(subject_name or ''))
+        )
+        if keep_as_is:
             processed_list = [{
-                'audience': existing_audience,
+                'audience': existing_audience or '',
                 'subject_name': clean_subject_name_final(subject_name, valid_audiences),
                 'lecture_type': existing_lecture_type or '',
-                'week_type': existing_week_type
+                'week_type': existing_week_type or 'обе недели'
             }]
             if teacher_fio:
                 processed_list[0]['teacher'] = teacher_fio
