@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Парсинг расписания из .docx в папке aspi → JSON в output/aspi.
-Поля: группа, научная_специальность, год_обучения, день_недели, пара, дисциплина, фио, предмет, неделя.
+Поля: группа, научная_специальность, год_обучения, institute, день_недели, пара, дисциплина, фио, предмет, неделя.
 Из блока над таблицей: «Группа:», «Научная специальность:», «N год обучения».
 """
 import json
@@ -27,6 +27,45 @@ except ImportError:
 
 ASPI_DIR = Path(__file__).resolve().parent / "aspi"
 OUTPUT_DIR = Path(__file__).resolve().parent / "output"
+INSTITUTE_BY_SPECIALTY_PATH = Path(__file__).resolve().parent / "institute_by_specialty.json"
+
+# Направление (научная специальность) -> институт (загружается из institute_by_specialty.json)
+_SPECIALTY_TO_INSTITUTE: dict[str, str] = {}
+
+
+def _load_specialty_to_institute() -> dict[str, str]:
+    """Строит словарь направление -> институт из institute_by_specialty.json."""
+    global _SPECIALTY_TO_INSTITUTE
+    if _SPECIALTY_TO_INSTITUTE:
+        return _SPECIALTY_TO_INSTITUTE
+    if not INSTITUTE_BY_SPECIALTY_PATH.is_file():
+        return {}
+    try:
+        with open(INSTITUTE_BY_SPECIALTY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    for institute, directions in (data or {}).items():
+        inst_lower = (institute or "").strip().lower()
+        if not inst_lower:
+            continue
+        for d in directions:
+            if isinstance(d, str) and d.strip():
+                key = " ".join(d.strip().lower().split())
+                if key:
+                    _SPECIALTY_TO_INSTITUTE[key] = inst_lower
+    return _SPECIALTY_TO_INSTITUTE
+
+
+def get_institute_for_specialty(specialty: str) -> str:
+    """По строке направления (научная специальность) возвращает институт в нижнем регистре или пустую строку. Сверка без учёта регистра."""
+    if not (specialty or "").strip():
+        return ""
+    key = " ".join((specialty or "").strip().lower().split())
+    if not key:
+        return ""
+    _load_specialty_to_institute()
+    return _SPECIALTY_TO_INSTITUTE.get(key, "")
 
 # Заголовки таблицы расписания (для определения столбцов)
 HEADER_DAY = "день недели"
@@ -326,8 +365,9 @@ def _parse_table_rows(
     scientific_specialty: str = "",
     year_of_study: str = "",
 ) -> list[dict]:
-    """Парсит одну таблицу расписания; все строки получают группу, специальность и год обучения."""
+    """Парсит одну таблицу расписания; все строки получают группу, специальность, год обучения и институт."""
     rows_out = []
+    institute = get_institute_for_specialty(scientific_specialty)
     rows_list = list(table.rows)
     i = 0
     while i < len(rows_list):
@@ -386,6 +426,7 @@ def _parse_table_rows(
                     "группа": group,
                     "научная_специальность": scientific_specialty,
                     "год_обучения": year_of_study,
+                    "institute": institute,
                     "день_недели": day,
                     "пара": use_para,
                     "дисциплина": clean(disc_line),
@@ -408,6 +449,7 @@ def _parse_table_rows(
                 "группа": group,
                 "научная_специальность": scientific_specialty,
                 "год_обучения": year_of_study,
+                "institute": institute,
                 "день_недели": day,
                 "пара": para,
                 "дисциплина": one_disc,
@@ -456,6 +498,7 @@ def _parse_table_rows(
                 "группа": group,
                 "научная_специальность": scientific_specialty,
                 "год_обучения": year_of_study,
+                "institute": institute,
                 "день_недели": day,
                 "пара": para,
                 "дисциплина": item["дисциплина"],

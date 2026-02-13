@@ -6,11 +6,13 @@ import os
 import sys
 
 # Вывод консоли в UTF-8 (кириллица без кракозябр)
-if hasattr(sys.stdout, 'reconfigure'):
+_reconfigure = getattr(sys.stdout, 'reconfigure', None)
+if _reconfigure is not None:
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
-        if hasattr(sys.stderr, 'reconfigure'):
-            sys.stderr.reconfigure(encoding='utf-8')
+        _reconfigure(encoding='utf-8')
+        _reconfigure_err = getattr(sys.stderr, 'reconfigure', None)
+        if _reconfigure_err is not None:
+            _reconfigure_err(encoding='utf-8')
     except Exception:
         pass
 
@@ -26,6 +28,7 @@ import threading
 import time
 import csv
 from datetime import datetime
+from decimal import Decimal
 import psycopg2
 from psycopg2.extras import RealDictCursor, execute_values
 
@@ -76,20 +79,32 @@ script_status = {
     'merge_aspi_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
 
-# Разрешённые таблицы для просмотра записей
-ALLOWED_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable')
+def _make_json_serializable(obj):
+    """Рекурсивно приводит данные к типам, сериализуемым в JSON (Decimal -> int/float)."""
+    if isinstance(obj, dict):
+        return {k: _make_json_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_make_json_serializable(x) for x in obj]
+    if isinstance(obj, Decimal):
+        return int(obj) if obj % 1 == 0 else float(obj)
+    return obj
 
-# Таблицы для бэкапа/восстановления (включая schedule)
-BACKUP_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'schedule')
+
+# Разрешённые таблицы для просмотра записей (включая расписание аспирантов)
+ALLOWED_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'timetable_aspi')
+
+# Таблицы для бэкапа/восстановления (включая schedule и расписание аспирантов)
+BACKUP_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'timetable_aspi', 'schedule')
 BACKUP_TABLE_LABELS = {
     'timetable_cleaned': 'Спаршенное расписание',
     'timetable_teacher': 'Занятость преподавателей',
     'intermediate_timetable': 'Промежуточное расписание',
+    'timetable_aspi': 'Расписание аспирантов',
     'schedule': 'Расписание'
 }
 
 def get_table_param():
-    """Возвращает имя таблицы из query param (timetable_cleaned, timetable_teacher или intermediate_timetable)."""
+    """Возвращает имя таблицы из query param (timetable_cleaned, timetable_teacher, intermediate_timetable, timetable_aspi)."""
     table = request.args.get('table', '').strip()
     if table in ALLOWED_TABLES:
         return table
@@ -266,8 +281,9 @@ def run_parse_timetable():
         output_lines = []
         
         # Простой способ чтения вывода
+        stdout_stream = process.stdout
         while True:
-            output = process.stdout.readline()
+            output = stdout_stream.readline() if stdout_stream is not None else ''
             if output == '' and process.poll() is not None:
                 break
             if output:
@@ -284,7 +300,8 @@ def run_parse_timetable():
         return_code = process.wait()
         
         # Читаем ошибки, если есть
-        stderr_output = process.stderr.read()
+        stderr_stream = process.stderr
+        stderr_output = stderr_stream.read() if stderr_stream is not None else ''
         if stderr_output:
             print(f"Stderr: {stderr_output}")
         
@@ -355,8 +372,9 @@ def run_clean_audiences():
         
         # Читаем вывод в реальном времени
         output_lines = []
+        stdout_stream = process.stdout
         while True:
-            output = process.stdout.readline()
+            output = stdout_stream.readline() if stdout_stream is not None else ''
             if output == '' and process.poll() is not None:
                 break
             if output:
@@ -373,7 +391,8 @@ def run_clean_audiences():
         return_code = process.wait()
         
         # Читаем ошибки, если есть
-        stderr_output = process.stderr.read()
+        stderr_stream = process.stderr
+        stderr_output = stderr_stream.read() if stderr_stream is not None else ''
         if stderr_output:
             print(f"Stderr: {stderr_output}")
         
@@ -709,8 +728,9 @@ def run_process_timetable():
         script_status['process_timetable']['progress'] = 40
         script_status['process_timetable']['message'] = 'Обработка файла занятости...'
         output_lines = []
+        stdout_stream = process.stdout
         while True:
-            out = process.stdout.readline()
+            out = stdout_stream.readline() if stdout_stream is not None else ''
             if out == '' and process.poll() is not None:
                 break
             if out:
@@ -720,7 +740,8 @@ def run_process_timetable():
                     script_status['process_timetable']['progress'] = min(40 + min(len(output_lines) * 2, 50), 90)
                     script_status['process_timetable']['message'] = f'Обработано строк: {len(output_lines)}'
         return_code = process.wait()
-        stderr_output = process.stderr.read()
+        stderr_stream = process.stderr
+        stderr_output = stderr_stream.read() if stderr_stream is not None else ''
         if return_code != 0:
             error_msg = stderr_output if stderr_output else f'Код возврата: {return_code}'
             script_status['process_timetable']['error'] = error_msg
@@ -835,8 +856,9 @@ def run_parse_aspi():
         script_status['parse_aspi']['progress'] = 40
         script_status['parse_aspi']['message'] = 'Обработка .docx файлов...'
         output_lines = []
+        stdout_stream = process.stdout
         while True:
-            out = process.stdout.readline()
+            out = stdout_stream.readline() if stdout_stream is not None else ''
             if out == '' and process.poll() is not None:
                 break
             if out:
@@ -846,7 +868,8 @@ def run_parse_aspi():
                     script_status['parse_aspi']['progress'] = min(40 + min(len(output_lines) * 5, 50), 90)
                     script_status['parse_aspi']['message'] = line[:80] if len(line) > 80 else line
         return_code = process.wait()
-        stderr_output = process.stderr.read()
+        stderr_stream = process.stderr
+        stderr_output = stderr_stream.read() if stderr_stream is not None else ''
         if return_code != 0:
             error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
             script_status['parse_aspi']['error'] = error_msg
@@ -903,8 +926,9 @@ def run_normalize_aspi():
         script_status['normalize_aspi']['progress'] = 40
         script_status['normalize_aspi']['message'] = 'Нормализация JSON...'
         output_lines = []
+        stdout_stream = process.stdout
         while True:
-            out = process.stdout.readline()
+            out = stdout_stream.readline() if stdout_stream is not None else ''
             if out == '' and process.poll() is not None:
                 break
             if out:
@@ -914,7 +938,8 @@ def run_normalize_aspi():
                     script_status['normalize_aspi']['progress'] = min(40 + min(len(output_lines) * 5, 50), 90)
                     script_status['normalize_aspi']['message'] = line[:80] if len(line) > 80 else line
         return_code = process.wait()
-        stderr_output = process.stderr.read()
+        stderr_stream = process.stderr
+        stderr_output = stderr_stream.read() if stderr_stream is not None else ''
         if return_code != 0:
             error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
             script_status['normalize_aspi']['error'] = error_msg
@@ -1000,7 +1025,8 @@ def aspi_apply_fio_replacements():
     """
     try:
         data = request.get_json() or {}
-        replacements = data.get('replacements') if isinstance(data.get('replacements'), dict) else {}
+        raw_replacements = data.get('replacements')
+        replacements = raw_replacements if isinstance(raw_replacements, dict) else {}
         replacements = {k.strip(): (v or '').strip() for k, v in replacements.items() if (k or '').strip() and (v or '').strip()}
         if not replacements:
             return jsonify({'error': 'Нет замен для применения (заполните «Заменить на»)'}), 400
@@ -1115,16 +1141,19 @@ def run_load_aspi_to_db():
                 fio TEXT,
                 course VARCHAR(20),
                 scientific_specialty TEXT,
+                institute TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         conn.commit()
         cursor.execute("ALTER TABLE timetable_aspi ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         conn.commit()
+        cursor.execute("ALTER TABLE timetable_aspi ADD COLUMN IF NOT EXISTS institute TEXT")
+        conn.commit()
         cursor.execute("TRUNCATE TABLE timetable_aspi")
         conn.commit()
         cols = ['day_of_week', 'pair_number', 'subject_name', 'discipline_original', 'audience',
-                'group_name', 'week_type', 'fio', 'course', 'scientific_specialty']
+                'group_name', 'week_type', 'fio', 'course', 'scientific_specialty', 'institute']
         def row_vals(rec):
             pair = rec.get('pair_number')
             if pair is not None and not isinstance(pair, str):
@@ -1140,11 +1169,12 @@ def run_load_aspi_to_db():
                 (rec.get('fio') or '').strip() or None,
                 (rec.get('course') or '').strip() or None,
                 (rec.get('scientific_specialty') or rec.get('научная_специальность') or '').strip() or None,
+                (rec.get('institute') or '').strip() or None,
             )
         rows_to_insert = [row_vals(rec) for rec in all_rows]
         insert_sql = """
             INSERT INTO timetable_aspi (day_of_week, pair_number, subject_name, discipline_original,
-                audience, group_name, week_type, fio, course, scientific_specialty)
+                audience, group_name, week_type, fio, course, scientific_specialty, institute)
             VALUES %s
         """
         execute_values(cursor, insert_sql, rows_to_insert)
@@ -1217,7 +1247,7 @@ def run_merge_aspi_to_intermediate():
                 group_name,
                 week_type,
                 NULL,
-                NULL,
+                institute,
                 course,
                 scientific_specialty,
                 NULL,
@@ -1306,8 +1336,9 @@ def run_fetch_teachers():
             bufsize=1
         )
         output_lines = []
+        stdout_stream = process.stdout
         while True:
-            out = process.stdout.readline()
+            out = stdout_stream.readline() if stdout_stream is not None else ''
             if out == '' and process.poll() is not None:
                 break
             if out:
@@ -1318,7 +1349,8 @@ def run_fetch_teachers():
                     script_status['fetch_teachers']['message'] = f'Обработано страниц: {i}'
             output_lines.append(out)
         return_code = process.wait()
-        stderr_output = process.stderr.read()
+        stderr_stream = process.stderr
+        stderr_output = stderr_stream.read() if stderr_stream is not None else ''
         if return_code == 0:
             script_status['fetch_teachers']['progress'] = 100
             script_status['fetch_teachers']['message'] = 'Готово. Данные сохранены в info/teacher_all.json'
@@ -1347,7 +1379,7 @@ def run_fetch_teachers_route():
 
 @app.route('/api/db/stats', methods=['GET'])
 def get_db_stats():
-    """Возвращает статистику из базы данных (timetable_cleaned, timetable_teacher или intermediate_timetable)"""
+    """Возвращает статистику из базы данных (timetable_cleaned, timetable_teacher, intermediate_timetable, timetable_aspi)"""
     try:
         table = get_table_param()
         conn = psycopg2.connect(**DB_CONFIG)
@@ -1356,7 +1388,19 @@ def get_db_stats():
         cursor.execute(f"SELECT COUNT(*) as total FROM {table}")
         total = cursor.fetchone()['total']
         
-        if table == 'intermediate_timetable':
+        if table == 'timetable_aspi':
+            cursor.execute("""
+                SELECT day_of_week, COUNT(*) as count
+                FROM timetable_aspi
+                GROUP BY day_of_week
+                ORDER BY day_of_week
+            """)
+            by_day = cursor.fetchall()
+            by_type = []
+            cursor.execute("SELECT MAX(created_at) as last_update FROM timetable_aspi")
+            row = cursor.fetchone()
+            last_update = row['last_update'] if row else None
+        elif table == 'intermediate_timetable':
             cursor.execute("""
                 SELECT day_of_week, COUNT(*) as count
                 FROM intermediate_timetable
@@ -1474,9 +1518,9 @@ def get_db_records():
             where_conditions.append("audience ILIKE %s")
             query_params.append(f"%{filters['audience']}%")
         
-        # Фильтр по ФИО преподавателя (intermediate — только fio из занятости)
+        # Фильтр по ФИО преподавателя (intermediate, aspi — только fio)
         if filters['fio']:
-            if table == 'timetable_teacher' or table == 'intermediate_timetable':
+            if table in ('timetable_teacher', 'intermediate_timetable', 'timetable_aspi'):
                 where_conditions.append("fio ILIKE %s")
                 query_params.append(f"%{filters['fio']}%")
             else:
@@ -1486,7 +1530,7 @@ def get_db_records():
         
         # Фильтр по преподавателю
         if filters['teacher']:
-            if table == 'timetable_teacher' or table == 'intermediate_timetable':
+            if table in ('timetable_teacher', 'intermediate_timetable', 'timetable_aspi'):
                 where_conditions.append("fio ILIKE %s")
                 query_params.append(f"%{filters['teacher']}%")
             else:
@@ -1499,8 +1543,8 @@ def get_db_records():
             where_conditions.append("group_name ILIKE %s")
             query_params.append(f"%{filters['group_name']}%")
         
-        # Фильтр по подгруппе
-        if filters['subgroup']:
+        # Фильтр по подгруппе (в timetable_aspi нет столбца subgroup)
+        if filters['subgroup'] and table != 'timetable_aspi':
             try:
                 sub_num = int(filters['subgroup'])
                 where_conditions.append("subgroup = %s")
@@ -1523,13 +1567,13 @@ def get_db_records():
             if filters['audience_error'] and filters['audience_error'].lower() in ('1', 'true', 'yes', 'да'):
                 where_conditions.append("audience_error = TRUE")
         
-        # Фильтр по институту (timetable_cleaned и intermediate_timetable)
-        if filters['institute'] and table in ('timetable_cleaned', 'intermediate_timetable'):
+        # Фильтр по институту (timetable_cleaned, intermediate_timetable, timetable_aspi)
+        if filters['institute'] and table in ('timetable_cleaned', 'intermediate_timetable', 'timetable_aspi'):
             where_conditions.append("institute ILIKE %s")
             query_params.append(f"%{filters['institute']}%")
         
         # Фильтр по курсу
-        if filters['course'] and table in ('timetable_cleaned', 'intermediate_timetable'):
+        if filters['course'] and table in ('timetable_cleaned', 'intermediate_timetable', 'timetable_aspi'):
             where_conditions.append("course ILIKE %s")
             query_params.append(f"%{filters['course']}%")
         
@@ -1543,6 +1587,12 @@ def get_db_records():
             where_conditions.append("profile ILIKE %s")
             query_params.append(f"%{filters['profile']}%")
         
+        # Фильтр по научной специальности (timetable_aspi)
+        if table == 'timetable_aspi' and request.args.get('scientific_specialty', '').strip():
+            scientific_specialty = request.args.get('scientific_specialty', '').strip()
+            where_conditions.append("scientific_specialty ILIKE %s")
+            query_params.append(f"%{scientific_specialty}%")
+        
         # Формируем SQL запрос
         where_clause = ""
         if where_conditions:
@@ -1555,7 +1605,10 @@ def get_db_records():
         sort_order_list = [s.strip().upper() for s in sort_order_raw.split(',') if s.strip()]
         
         # Валидация параметров сортировки
-        if table == 'intermediate_timetable':
+        if table == 'timetable_aspi':
+            allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'discipline_original',
+                                  'audience', 'group_name', 'week_type', 'fio', 'course', 'scientific_specialty', 'institute']
+        elif table == 'intermediate_timetable':
             allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
                                   'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction',
                                   'department', 'fio', 'week_error', 'audience_error']
@@ -1585,7 +1638,16 @@ def get_db_records():
             order_parts = ['id DESC']
         order_clause = ', '.join(order_parts)
         
-        if table == 'intermediate_timetable':
+        if table == 'timetable_aspi':
+            query = f"""
+                SELECT id, day_of_week, pair_number, subject_name, discipline_original, audience,
+                    group_name, week_type, fio, course, scientific_specialty, institute, created_at
+                FROM timetable_aspi
+                {where_clause}
+                ORDER BY {order_clause}
+                LIMIT %s OFFSET %s
+            """
+        elif table == 'intermediate_timetable':
             query = f"""
                 SELECT *
                 FROM intermediate_timetable
@@ -1757,6 +1819,7 @@ def schedule_backup():
         cur.close()
         conn.close()
         data = {'schedule': [dict(r) for r in rows], 'version': 1, 'exported_at': datetime.utcnow().isoformat() + 'Z'}
+        data = _make_json_serializable(data)
         from flask import Response
         return Response(
             json.dumps(data, ensure_ascii=False, indent=2),
@@ -1776,7 +1839,8 @@ def schedule_restore():
         f = request.files['file']
         if not f.filename or not f.filename.lower().endswith('.json'):
             return jsonify({'error': 'Нужен файл .json'}), 400
-        data = json.load(f)
+        content = f.read()
+        data = json.loads(content.decode('utf-8') if isinstance(content, bytes) else content)
         if not isinstance(data, dict) or 'schedule' not in data:
             return jsonify({'error': 'Неверный формат бэкапа: ожидается объект с полем schedule'}), 400
         rows = data['schedule']
@@ -1872,6 +1936,7 @@ def intermediate_backup():
         cur.close()
         conn.close()
         data = {'intermediate_timetable': [dict(r) for r in rows], 'version': 1, 'exported_at': datetime.utcnow().isoformat() + 'Z'}
+        data = _make_json_serializable(data)
         from flask import Response
         return Response(
             json.dumps(data, ensure_ascii=False, indent=2),
@@ -1891,7 +1956,8 @@ def intermediate_restore():
         f = request.files['file']
         if not f.filename or not f.filename.lower().endswith('.json'):
             return jsonify({'error': 'Нужен файл .json'}), 400
-        data = json.load(f)
+        content = f.read()
+        data = json.loads(content.decode('utf-8') if isinstance(content, bytes) else content)
         if not isinstance(data, dict) or 'intermediate_timetable' not in data:
             return jsonify({'error': 'Неверный формат бэкапа: ожидается объект с полем intermediate_timetable'}), 400
         rows = data['intermediate_timetable']
@@ -1930,6 +1996,11 @@ def intermediate_restore():
 
 # --- Унифицированный бэкап и восстановление для всех таблиц ---
 
+ASPI_BACKUP_COLUMNS = [
+    'day_of_week', 'pair_number', 'subject_name', 'discipline_original', 'audience',
+    'group_name', 'week_type', 'fio', 'course', 'scientific_specialty', 'institute'
+]
+
 BACKUP_COLUMNS = {
     'timetable_cleaned': [
         'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
@@ -1941,6 +2012,7 @@ BACKUP_COLUMNS = {
         'week_type', 'subgroup', 'num_subgroups', 'is_external', 'is_remote', 'subject_name'
     ],
     'intermediate_timetable': INTERMEDIATE_BACKUP_COLUMNS,
+    'timetable_aspi': ASPI_BACKUP_COLUMNS,
     'schedule': SCHEDULE_COLUMNS,
 }
 
@@ -1980,6 +2052,7 @@ def unified_backup():
         cur.close()
         conn.close()
         data = {table: [dict(r) for r in rows], 'version': 1, 'exported_at': datetime.utcnow().isoformat() + 'Z'}
+        data = _make_json_serializable(data)
         from flask import Response
         return Response(
             json.dumps(data, ensure_ascii=False, indent=2),
@@ -2002,7 +2075,8 @@ def unified_restore():
     if not f.filename or not f.filename.lower().endswith('.json'):
         return jsonify({'error': 'Нужен файл .json'}), 400
     try:
-        data = json.load(f)
+        content = f.read()
+        data = json.loads(content.decode('utf-8') if isinstance(content, bytes) else content)
         if not isinstance(data, dict) or table not in data:
             return jsonify({'error': f'Неверный формат бэкапа: ожидается объект с полем {table}'}), 400
         rows = data[table]
@@ -2018,6 +2092,25 @@ def unified_restore():
         if not cur.fetchone():
             if table == 'schedule':
                 _ensure_schedule_table(conn)
+            elif table == 'timetable_aspi':
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS timetable_aspi (
+                        id SERIAL PRIMARY KEY,
+                        day_of_week VARCHAR(50),
+                        pair_number TEXT,
+                        subject_name TEXT,
+                        discipline_original TEXT,
+                        audience VARCHAR(255),
+                        group_name VARCHAR(100),
+                        week_type VARCHAR(50),
+                        fio TEXT,
+                        course VARCHAR(20),
+                        scientific_specialty TEXT,
+                        institute TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.commit()
             else:
                 cur.close()
                 conn.close()
@@ -3220,6 +3313,54 @@ def delete_discipline(index):
         disciplines.pop(index)
         save_disciplines(disciplines)
         return jsonify({'message': 'OK', 'total': len(disciplines)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# Редактируемые JSON-файлы из info/ (skip_row_phrases, slash_protected, strip_from_subject)
+INFO_EDITABLE_FILES = ('skip_row_phrases', 'slash_protected', 'strip_from_subject', 'replace_in_subject')
+
+
+def _info_file_path(name):
+    """Путь к файлу info/<name>.json в корне проекта."""
+    if name not in INFO_EDITABLE_FILES:
+        return None
+    return os.path.join(get_project_root(), 'info', name + '.json')
+
+
+@app.route('/api/info-files/<name>', methods=['GET'])
+def get_info_file(name):
+    """Прочитать JSON-файл из info/ (skip_row_phrases, slash_protected, strip_from_subject)."""
+    path = _info_file_path(name)
+    if not path or not os.path.isfile(path):
+        return jsonify({'error': 'File not found or not allowed'}), 404
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return jsonify({'content': data, 'raw': json.dumps(data, ensure_ascii=False, indent=2)})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/info-files/<name>', methods=['PUT'])
+def put_info_file(name):
+    """Сохранить JSON-файл в info/. Тело: { "content": <массив или объект> } или { "raw": "строка JSON" }."""
+    path = _info_file_path(name)
+    if not path:
+        return jsonify({'error': 'Not allowed'}), 400
+    try:
+        body = request.get_json() or {}
+        if 'raw' in body:
+            data = json.loads(body['raw'])
+        elif 'content' in body:
+            data = body['content']
+        else:
+            return jsonify({'error': 'Need "content" or "raw" in body'}), 400
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        return jsonify({'message': 'OK', 'raw': json.dumps(data, ensure_ascii=False, indent=2)})
+    except json.JSONDecodeError as e:
+        return jsonify({'error': f'Invalid JSON: {e}'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

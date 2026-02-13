@@ -7,6 +7,7 @@ import TeachersView from './components/TeachersView';
 import DisciplinesView from './components/DisciplinesView';
 import DisciplineMatchView from './components/DisciplineMatchView';
 import ScheduleView from './components/ScheduleView';
+import InfoFilesView from './components/InfoFilesView';
 import logoImage from '../assets/SurSU.png';
 
 // Создаем QueryClient с настройками для оптимизации
@@ -24,11 +25,11 @@ const queryClient = new QueryClient({
 });
 
 function App() {
-  type TabType = 'scripts' | 'database' | 'teachers' | 'disciplines' | 'discipline-match' | 'schedule';
+  type TabType = 'scripts' | 'database' | 'teachers' | 'disciplines' | 'discipline-match' | 'schedule' | 'info-files';
   const getInitialTab = (): TabType => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
-    return (tab === 'scripts' || tab === 'database' || tab === 'teachers' || tab === 'disciplines' || tab === 'discipline-match' || tab === 'schedule') ? tab : 'scripts';
+    return (tab === 'scripts' || tab === 'database' || tab === 'teachers' || tab === 'disciplines' || tab === 'discipline-match' || tab === 'schedule' || tab === 'info-files') ? tab : 'scripts';
   };
 
   const [activeTab, setActiveTab] = useState<TabType>(getInitialTab);
@@ -106,6 +107,12 @@ function App() {
             >
               Расписание
             </button>
+            <button
+              className={activeTab === 'info-files' ? 'active' : ''}
+              onClick={() => handleTabChange('info-files')}
+            >
+              Настройки парсера
+            </button>
           </nav>
         </header>
         <main className="App-main">
@@ -115,6 +122,7 @@ function App() {
           {activeTab === 'disciplines' && <DisciplinesView />}
           {activeTab === 'discipline-match' && <DisciplineMatchView />}
           {activeTab === 'schedule' && <ScheduleView />}
+          {activeTab === 'info-files' && <InfoFilesView />}
         </main>
       </div>
     </QueryClientProvider>

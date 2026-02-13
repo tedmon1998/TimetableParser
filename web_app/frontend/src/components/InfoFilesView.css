@@ -1,0 +1,199 @@
+.info-files-view {
+  padding: 0;
+  max-width: 700px;
+}
+
+.info-files-subnav {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.info-files-subtab {
+  padding: 0.5rem 1rem;
+  font-size: 1rem;
+  background: var(--card-bg, #f8f9fa);
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #333;
+}
+
+.info-files-subtab:hover {
+  background: #eee;
+  border-color: #ccc;
+}
+
+.info-files-subtab.active {
+  background: var(--primary-color, #1143c0);
+  color: white;
+  border-color: var(--primary-color, #1143c0);
+}
+
+.info-files-editor {
+  padding: 1.5rem;
+}
+
+.info-files-description {
+  margin: 0 0 1rem 0;
+  font-size: 0.95rem;
+  color: #555;
+}
+
+.info-files-loading,
+.info-files-error {
+  margin: 0;
+  padding: 1rem;
+  font-size: 1rem;
+}
+
+.info-files-error {
+  color: #c00;
+}
+
+.info-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.info-files-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #eee;
+}
+
+.info-files-row:last-child {
+  border-bottom: none;
+}
+
+.info-files-row-num {
+  flex-shrink: 0;
+  width: 2rem;
+  font-size: 0.9rem;
+  color: #888;
+  text-align: right;
+}
+
+.info-files-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.info-files-input:focus {
+  outline: none;
+  border-color: var(--primary-color, #1143c0);
+  box-shadow: 0 0 0 2px rgba(17, 67, 192, 0.12);
+}
+
+.info-files-input::placeholder {
+  color: #aaa;
+}
+
+.info-files-remove-btn {
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  font-size: 1.4rem;
+  line-height: 1;
+  color: #888;
+  background: transparent;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.info-files-remove-btn:hover {
+  color: #c00;
+  background: #fff0f0;
+  border-color: #e0a0a0;
+}
+
+.info-files-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid #eee;
+}
+
+.info-files-add-btn {
+  padding: 0.5rem 1rem;
+  font-size: 0.95rem;
+  background: #f0f0f0;
+  color: #333;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.info-files-add-btn:hover {
+  background: #e5e5e5;
+  border-color: #bbb;
+}
+
+.info-files-save-btn {
+  padding: 0.5rem 1.5rem;
+  font-size: 1rem;
+  background: var(--primary-color, #1143c0);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.info-files-save-btn:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.info-files-save-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Замена в названии: две колонки «Заменить» / «На» */
+.info-files-list-replace {
+  margin-bottom: 1rem;
+}
+
+.info-files-row-header {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #555;
+  padding-bottom: 0.5rem;
+  border-bottom: 2px solid #ddd;
+}
+
+.info-files-row-header .info-files-replace-from,
+.info-files-row-header .info-files-replace-to {
+  padding: 0 0.25rem;
+}
+
+.info-files-row-replace {
+  gap: 0.5rem;
+}
+
+.info-files-row-replace .info-files-replace-from,
+.info-files-row-replace .info-files-replace-to {
+  flex: 1;
+  min-width: 0;
+}
+
+.info-files-remove-btn-placeholder {
+  flex-shrink: 0;
+  width: 2rem;
+}

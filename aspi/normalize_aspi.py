@@ -216,6 +216,7 @@ def normalize_record(rec: dict, teacher_mapping: dict, unresolved_fio: set | Non
         'fio': full_fio,
         'course': rec.get('год_обучения', ''),
         'scientific_specialty': specialty_raw,
+        'institute': (rec.get('institute') or '').strip(),
     }
     return out
 
