@@ -1,19 +1,22 @@
 import os
 import re
 import glob
-from openpyxl import load_workbook
-from openpyxl import Workbook
+from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
 import json
 
 # Импортируем функции из process_timetable.py
 from process_timetable import load_teacher_names, normalize_short_fio
+from duration_pairs import apply_duration_pairs
 # Доп. обработка: пропуск строк, опечатки (///, (лек)/(пр)), аудитории с / (м/зал), очистка названий
 from timetable_extra import (
     should_skip_row,
     _normalize_week_separator_typos,
     get_composite_audiences,
     clean_subject_trailing_chars,
+    strip_phrases_from_text,
+    apply_replace_in_subject,
 )
 
 # Маппинг дней недели
@@ -25,6 +28,29 @@ AUDIENCE_PREFIXES = ['У', 'К', 'А', 'Г', 'м/зал', 'бассейн', 'п/
 
 # Список валидных аудиторий из info/aud.json (ваш список) — загружается при первом обращении
 _valid_audiences = None
+# Строки с "/", которые не считать разделителем числитель/знаменатель (оставлять как аудиторию)
+_slash_protected = None
+_PLACEHOLDER_SLASH = '\uE000'  # символ подстановки для "/" внутри защищённых токенов
+
+
+def load_slash_protected():
+    """Загружает список из info/slash_protected.json — строки с «/», которые не разбивать на числитель/знаменатель."""
+    global _slash_protected
+    if _slash_protected is not None:
+        return _slash_protected
+    for base in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
+        path = os.path.join(base, 'info', 'slash_protected.json')
+        if os.path.isfile(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    _slash_protected = [s for s in data if s and isinstance(s, str) and '/' in s]
+                return _slash_protected
+            except Exception:
+                pass
+    _slash_protected = []
+    return _slash_protected
+
 
 def load_valid_audiences():
     """Загружает список валидных аудиторий из info/aud.json (тот же список, что в clean_audiences)."""
@@ -365,21 +391,33 @@ def expand_audience_slash_by_list(text, valid_audiences):
 
 
 def normalize_subject_slash_to_double(text):
-    """Если один '/' разделяет две дисциплины (не п/г, не м/зал, не (лек)/(пр)), приводим к '//'.
-    Пример: «Плавание с методикой преподавания/Спортивно-педагогические дисциплины, (с 12.30)» -> «... // ...»."""
+    """Если один '/' разделяет две дисциплины (не п/г, не защищённый токен из slash_protected, не аудитория, не (лек)/(пр)), приводим к '//'.
+    Фразы из info/slash_protected.json (напр. «м/зал») и аудитории из aud.json не разбиваются на числитель/знаменатель."""
     if not text or '//' in text or '/' not in text:
         return text
-    parts = text.split('/', 1)
+    protected = load_slash_protected()
+    valid_audiences = load_valid_audiences()
+    # Временно заменяем "/" внутри защищённых токенов, чтобы не разбивать по ним
+    text_work = text
+    for token in protected:
+        if token in text_work:
+            text_work = text_work.replace(token, token.replace('/', _PLACEHOLDER_SLASH))
+    if '/' not in text_work:
+        return text
+    parts = text_work.split('/', 1)
     if len(parts) != 2:
         return text
-    left, right = parts[0].strip(), parts[1].strip()
+    left = parts[0].replace(_PLACEHOLDER_SLASH, '/').strip()
+    right = parts[1].replace(_PLACEHOLDER_SLASH, '/').strip()
     if not left or not right:
+        return text
+    # Не разбивать, если одна из частей — аудитория или защищённый токен
+    if valid_audiences and (left in valid_audiences or right in valid_audiences):
+        return text
+    if protected and (left in protected or right in protected):
         return text
     # Не разбивать п/г (слева заканчивается на "п", справа "г" или "г 1")
     if left.endswith('п') and re.match(r'^г\s*(\d|$|,)', right):
-        return text
-    # Не разбивать м/зал, л/б, п/б (короткая часть справа)
-    if right in ('зал', 'б') or (len(right) <= 2 and right.isalpha()):
         return text
     # Уже обработано как (лек)/(пр) в normalize_type_slash_for_weeks
     if re.search(r'\(\s*(лек|пр|лаб|п|л|практика|лекция|лабораторная)\s*\)\s*$', left, re.IGNORECASE):
@@ -459,10 +497,10 @@ def build_combined_subject_and_audience(raw_discipline):
 
 
 def extract_subject_name(text):
-    """Извлекает название предмета из текста, убирая лишние символы"""
+    """Извлекает название предмета из текста, убирая лишние символы. Аудитории с '/' (м/зал, л/б) заменяются на placeholder до разбиения, чтобы не превращались в «м зал»."""
     if not text or not isinstance(text, str):
         return ''
-    
+
     text = text.strip()
     
     # Убираем маркеры типа занятия
@@ -1207,13 +1245,15 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                 else (table.get('next_day_col') or end_col)
             )
             
-            # Собираем сырой текст всех ячеек от дисциплины до преподавателя
+            # Собираем сырой текст всех ячеек от дисциплины до преподавателя (сразу убираем фразы из strip_from_subject.json)
             discipline_parts = []
             for col_idx in range(disc_col, min(discipline_end_col, len(row) + 1)):
                 if col_idx <= len(row):
                     cell = row[col_idx - 1]
                     if cell and cell.value:
                         disc_text = str(cell.value).strip()
+                        disc_text = strip_phrases_from_text(disc_text)
+                        disc_text = apply_replace_in_subject(disc_text)
                         if disc_text and disc_text.lower() not in ['none', 'null', '']:
                             discipline_parts.append(disc_text)
             
@@ -1239,6 +1279,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
             # Две ячейки дисциплины (числитель в одной, знаменатель в другой) — две отдельные записи
             if len(discipline_parts) == 2:
                 for part_idx, part in enumerate(discipline_parts):
+                    discipline_slot = part_idx  # колонка ячейки (0 = левая, 1 = правая)
                     part_clean = part.replace('). ', '), ').strip()
                     if '//' not in part_clean:
                         part_clean = normalize_type_slash_for_weeks(part_clean) or part_clean
@@ -1249,6 +1290,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                     if '//' in part_clean:
                         parts_flat = split_by_double_slash_flat(part_clean)
                         if len(parts_flat) >= 2:
+                            slot = part_idx
                             is_remote = 'ЭОиДОТ' in part_clean.upper() or 'эоидот' in part_clean.lower()
                             subgroups_list = extract_subgroups_from_text(part_clean)
                             num_subgroups = len(subgroups_list) if subgroups_list else 0
@@ -1299,7 +1341,8 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                                                     'direction': metadata.get('direction', ''),
                                                     'profile': metadata.get('profile', ''),
                                                     'subgroup': subgroup_num,
-                                                    'num_subgroups': num_subgroups
+                                                    'num_subgroups': num_subgroups,
+                                                    '_discipline_slot': slot
                                                 })
                             continue
                     subject_name_for_record = clean_subject_trailing_chars(part_clean.lstrip('/').strip())
@@ -1308,7 +1351,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                         audience = re.sub(r',?\s*//\s*,?', '//', audience).strip(',').strip()
                         audience = re.sub(r'//+\s*$', '', audience).strip()
                     lecture_type = parse_lecture_type(part_clean)
-                    week_type = week_type_from_single_part(part_clean, part_index=part_idx)
+                    week_type = week_type_from_single_part(part_clean, part_index=discipline_slot)
                     is_remote = 'ЭОиДОТ' in part_clean.upper() or 'эоидот' in part_clean.lower()
                     subgroups_list = extract_subgroups_from_text(part_clean)
                     num_subgroups = len(subgroups_list) if subgroups_list else 0
@@ -1316,6 +1359,7 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                         subgroups_list = [None]
                     elif len(subgroups_list) > 1:
                         subgroups_list = [None]
+                    slot_val = part_idx
                     for pair_num in pair_numbers:
                         for group_val in group_values:
                             for subgroup_num in subgroups_list:
@@ -1336,7 +1380,8 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                                     'direction': metadata.get('direction', ''),
                                     'profile': metadata.get('profile', ''),
                                     'subgroup': subgroup_num,
-                                    'num_subgroups': num_subgroups
+                                    'num_subgroups': num_subgroups,
+                                    '_discipline_slot': slot_val
                                 }
                                 results.append(result_entry)
                 continue
@@ -1409,7 +1454,8 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                                             'direction': metadata.get('direction', ''),
                                             'profile': metadata.get('profile', ''),
                                             'subgroup': subgroup_num,
-                                            'num_subgroups': num_subgroups
+                                            'num_subgroups': num_subgroups,
+                                            '_discipline_slot': 0
                                         })
                     continue
                 sn, au = build_combined_subject_and_audience(raw_discipline)
@@ -1455,7 +1501,8 @@ def parse_excel_sheet(ws, teacher_name_mapping, course_from_sheet=None):
                                 'direction': metadata.get('direction', ''),
                                 'profile': metadata.get('profile', ''),
                                 'subgroup': subgroup_num,
-                                'num_subgroups': num_subgroups
+                                'num_subgroups': num_subgroups,
+                                '_discipline_slot': 0
                             }
                             results.append(result_entry)
     
@@ -1484,12 +1531,17 @@ def parse_excel_file(file_path, teacher_name_mapping):
     return all_results
 
 def save_results_to_csv(results, output_file):
-    """Сохраняет результаты в CSV файл со всеми доступными полями"""
+    """Сохраняет результаты в CSV (при пустом results — только заголовки)."""
     import csv
-    
+    output_file = os.path.abspath(output_file)
+    out_dir = os.path.dirname(output_file)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     if not results:
+        fieldnames = ['day_of_week', 'pair_number', 'subject_name', 'teacher', 'fio', 'audience', 'lecture_type', 'week_type', 'group', 'group_name', 'subgroup', 'num_subgroups', 'duration_pairs', 'is_external', 'is_remote', 'department', 'institute', 'course', 'direction', 'profile']
+        with open(output_file, 'w', encoding='utf-8-sig', newline='') as f:
+            csv.DictWriter(f, fieldnames=fieldnames).writeheader()
         return
-    
     # Собираем все уникальные поля из всех результатов
     all_fields = set()
     for result in results:
@@ -1500,8 +1552,8 @@ def save_results_to_csv(results, output_file):
         'day_of_week', 'pair_number', 'subject_name', 
         'teacher', 'fio', 'audience', 'lecture_type', 
         'week_type', 'group', 'group_name',
-        'subgroup', 'num_subgroups', 'is_external', 
-        'is_remote', 'department', 'institute', 
+        'subgroup', 'num_subgroups', 'duration_pairs',
+        'is_external', 'is_remote', 'department', 'institute', 
         'course', 'direction', 'profile'
     ]
     
@@ -1543,27 +1595,30 @@ def save_results_to_csv(results, output_file):
     print(f"CSV сохранен с полями: {fieldnames}")
 
 def save_results_to_excel(results, output_file):
-    """Сохраняет результаты в Excel файл в формате, похожем на timetable_processed.csv"""
-    if not results:
-        return
-    
+    """Сохраняет результаты в Excel (при пустом results — только заголовки)."""
+    output_file = os.path.abspath(output_file)
+    out_dir = os.path.dirname(output_file)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     wb = Workbook()
     ws = wb.active
+    if ws is None:
+        raise RuntimeError("Workbook has no active sheet")
     ws.title = "Расписание"
-    
-    # Заголовки (включая институт, курс, направление, профиль, тип занятия)
+
+    # Заголовки (включая институт, курс, направление, профиль, тип занятия, duration_pairs)
     headers = [
         'fio', 'pair_number', 'day_of_week', 'group', 'audience', 'lecture_type', 'department',
-        'week_type', 'subgroup', 'num_subgroups', 'is_external', 'is_remote',
+        'week_type', 'subgroup', 'num_subgroups', 'duration_pairs', 'is_external', 'is_remote',
         'institute', 'course', 'direction', 'profile', 'subject_name'
     ]
-    
+
     # Записываем заголовки
     for col_num, header in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_num, value=header)
         cell.font = Font(bold=True)
         cell.alignment = Alignment(horizontal='center', vertical='center')
-    
+
     # Записываем данные
     for row_num, result in enumerate(results, 2):
         # week_type: если пусто — «обе недели»
@@ -1580,6 +1635,7 @@ def save_results_to_excel(results, output_file):
             'week_type': wt,
             'subgroup': result.get('subgroup', ''),
             'num_subgroups': result.get('num_subgroups', ''),
+            'duration_pairs': result.get('duration_pairs', ''),
             'is_external': result.get('is_external', False),
             'is_remote': result.get('is_remote', False),
             'institute': result.get('institute', ''),
@@ -1588,91 +1644,87 @@ def save_results_to_excel(results, output_file):
             'profile': result.get('profile', ''),
             'subject_name': result.get('subject_name', '')
         }
-        
+
         for col_num, header in enumerate(headers, 1):
             value = values.get(header, '')
+            # duration_pairs: 1.5 как число (Excel отобразит по локали)
+            if header == 'duration_pairs' and isinstance(value, (int, float)):
+                pass
             # Преобразуем булевы значения в строки как в CSV
-            if isinstance(value, bool):
+            elif isinstance(value, bool):
                 value = 'True' if value else 'False'
-            # Преобразуем числа в строки
+            # Преобразуем остальные числа в строки
             elif isinstance(value, (int, float)):
                 value = str(value)
             # Пустые значения оставляем пустыми
             elif value == '' or value is None:
                 value = ''
             ws.cell(row=row_num, column=col_num, value=value)
-    
+
     # Автоподбор ширины столбцов
-    for col in ws.columns:
+    for col_idx, col in enumerate(ws.columns, 1):
         max_length = 0
-        col_letter = col[0].column_letter
         for cell in col:
             try:
                 if cell.value:
                     length = len(str(cell.value))
                     if length > max_length:
                         max_length = length
-            except:
+            except Exception:
                 pass
         adjusted_width = min(max_length + 2, 50)
+        col_letter = get_column_letter(col_idx)
         ws.column_dimensions[col_letter].width = adjusted_width
-    
-    # Замораживаем первую строку
+
     ws.freeze_panes = 'A2'
-    
     wb.save(output_file)
 
 def main():
-    import os
-    # Создаем папки
-    os.makedirs('input/timetable', exist_ok=True)
-    os.makedirs('output/timetable', exist_ok=True)
-    
-    # Загружаем маппинг ФИО преподавателей
+    # Пути всегда от каталога скрипта — не зависят от cwd
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    input_dir = os.path.join(project_root, 'input', 'timetable')
+    output_dir = os.path.join(project_root, 'output', 'timetable')
+    os.makedirs(input_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    print(f"Вход: {input_dir}")
+    print(f"Выход: {output_dir}")
+
     teacher_name_mapping = load_teacher_names()
     if teacher_name_mapping:
         print(f"Загружено {len(teacher_name_mapping)} полных ФИО преподавателей")
-    
-    # Ищем все Excel файлы в папке input/timetable
-    excel_files = glob.glob("input/timetable/*.xlsx")
-    
-    # Фильтруем временные файлы Excel (начинающиеся с ~$)
-    excel_files = [f for f in excel_files if not os.path.basename(f).startswith('~$')]
-    
+
+    excel_files = glob.glob(os.path.join(input_dir, "*.xlsx"))
+    excel_files = [f for f in excel_files if not os.path.basename(f).startswith("~$")]
+
     if not excel_files:
-        print("Не найдены Excel файлы в папке input/timetable/")
+        print(f"Не найдены Excel в {input_dir}")
         return
-    
+
     print(f"Найдено файлов: {len(excel_files)}")
-    
-    # Собираем все результаты из всех файлов
     all_results = []
-    
-    # Обрабатываем каждый файл
+
     for file_path in excel_files:
         filename = os.path.basename(file_path)
-        print(f"\nОбрабатываем файл: {filename}")
-        
+        print(f"Обрабатываем: {filename}")
         try:
             results = parse_excel_file(file_path, teacher_name_mapping)
-            print(f"Обработано записей: {len(results)}")
+            print(f"Записей: {len(results)}")
             all_results.extend(results)
         except Exception as e:
-            print(f"Ошибка при обработке файла {filename}: {e}")
+            print(f"Ошибка {filename}: {e}")
             import traceback
             traceback.print_exc()
-    
-    # Сохраняем все результаты в CSV и Excel
-    if all_results:
-        csv_output_file = os.path.join('output/timetable', 'timetable_processed.csv')
-        save_results_to_csv(all_results, csv_output_file)
-        print(f"CSV сохранен в: {csv_output_file}")
-        excel_output_file = os.path.join('output/timetable', 'timetable_processed.xlsx')
-        save_results_to_excel(all_results, excel_output_file)
-        print(f"\nВсего обработано записей: {len(all_results)}")
-        print(f"Excel сохранен в: {excel_output_file}")
-    else:
-        print("Не удалось извлечь данные из файлов")
 
-if __name__ == '__main__':
+    if all_results:
+        all_results = apply_duration_pairs(all_results)
+
+    csv_path = os.path.join(output_dir, "timetable_processed.csv")
+    xlsx_path = os.path.join(output_dir, "timetable_processed.xlsx")
+    save_results_to_csv(all_results, csv_path)
+    save_results_to_excel(all_results, xlsx_path)
+    print(f"Сохранено записей: {len(all_results)}")
+    print(f"CSV: {csv_path}")
+    print(f"Excel: {xlsx_path}")
+
+if __name__ == "__main__":
     main()

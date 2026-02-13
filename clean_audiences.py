@@ -5,11 +5,13 @@ import json
 import csv
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
 
 # Вывод в консоль в UTF-8 (для кириллицы на Windows)
-if hasattr(sys.stdout, 'reconfigure'):
+_reconfigure = getattr(sys.stdout, 'reconfigure', None)
+if _reconfigure is not None:
     try:
-        sys.stdout.reconfigure(encoding='utf-8')
+        _reconfigure(encoding='utf-8')
     except Exception:
         pass
 
@@ -720,8 +722,13 @@ def _split_group_value(group_str):
 
 def _write_results_to_excel(results, new_headers, path):
     """Записывает список словарей в Excel файл."""
+    out_dir = os.path.dirname(path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     wb_new = Workbook()
     ws_new = wb_new.active
+    if ws_new is None:
+        raise RuntimeError("Workbook has no active sheet")
     for col_idx, header in enumerate(new_headers, 1):
         cell = ws_new.cell(1, col_idx, value=header)
         cell.font = Font(bold=True)
@@ -730,15 +737,15 @@ def _write_results_to_excel(results, new_headers, path):
         for col_idx, header in enumerate(new_headers, 1):
             value = row_data.get(header, '')
             ws_new.cell(row_idx, col_idx, value=value)
-    for col in ws_new.columns:
+    for col_idx, col in enumerate(ws_new.columns, 1):
         max_length = 0
-        col_letter = col[0].column_letter
         for cell in col:
             try:
                 if cell.value and (length := len(str(cell.value))) > max_length:
                     max_length = length
             except Exception:
                 pass
+        col_letter = get_column_letter(col_idx)
         ws_new.column_dimensions[col_letter].width = min(max_length + 2, 50)
     ws_new.freeze_panes = 'A2'
     wb_new.save(path)
@@ -750,8 +757,8 @@ def process_csv_file(input_file, output_file, valid_audiences):
     
     with open(input_file, 'r', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
-        fieldnames = reader.fieldnames
-        
+        fieldnames = reader.fieldnames or []
+
         for row in reader:
             group_raw = row.get('group_name', '') or row.get('group', '') or ''
             group_parts = _split_group_value(group_raw)
@@ -900,6 +907,8 @@ def process_excel_file(input_file, output_file, valid_audiences):
     """Обрабатывает Excel файл и создает очищенную версию"""
     wb = load_workbook(input_file, data_only=True)
     ws = wb.active
+    if ws is None:
+        raise RuntimeError("Workbook has no active sheet")
     
     # Читаем заголовки
     headers = []
@@ -1034,6 +1043,8 @@ def process_excel_file(input_file, output_file, valid_audiences):
     # Создаем новый файл
     wb_new = Workbook()
     ws_new = wb_new.active
+    if ws_new is None:
+        raise RuntimeError("Workbook has no active sheet")
     
     # Записываем заголовки
     for col_idx, header in enumerate(new_headers, 1):
@@ -1048,18 +1059,18 @@ def process_excel_file(input_file, output_file, valid_audiences):
             ws_new.cell(row_idx, col_idx, value=value)
     
     # Автоподбор ширины столбцов
-    for col in ws_new.columns:
+    for col_idx, col in enumerate(ws_new.columns, 1):
         max_length = 0
-        col_letter = col[0].column_letter
         for cell in col:
             try:
                 if cell.value:
                     length = len(str(cell.value))
                     if max_length < length:
                         max_length = length
-            except:
+            except Exception:
                 pass
         adjusted_width = min(max_length + 2, 50)
+        col_letter = get_column_letter(col_idx)
         ws_new.column_dimensions[col_letter].width = adjusted_width
     
     # Замораживаем первую строку
@@ -1086,6 +1097,21 @@ def _to_bool(value):
     if isinstance(value, str):
         return value.lower() in ('true', '1', 'yes', 't')
     return bool(value)
+
+
+def _to_duration_pairs(val):
+    """Преобразует значение в duration_pairs: 1, 1.5 или None."""
+    if val is None or val == '':
+        return None
+    if isinstance(val, (int, float)):
+        return float(val) if val else None
+    s = str(val).strip().replace(',', '.')
+    if not s:
+        return None
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
 
 
 def _row_dict_to_insert_tuple(row, valid_audiences, last_good_subject_name):
@@ -1116,7 +1142,8 @@ def _row_dict_to_insert_tuple(row, valid_audiences, last_good_subject_name):
         row.get('department', '') or None,
         _to_bool(row.get('is_external', '')),
         _to_bool(row.get('is_remote', '')),
-        _to_int(row.get('num_subgroups', ''))
+        _to_int(row.get('num_subgroups', '')),
+        _to_duration_pairs(row.get('duration_pairs', ''))
     )
     return values, last_good_subject_name
 
@@ -1125,6 +1152,8 @@ def read_excel_to_rows(excel_path):
     """Читает Excel в список словарей (учёт объединённых ячеек)."""
     wb = load_workbook(excel_path, data_only=True)
     ws = wb.active
+    if ws is None:
+        raise RuntimeError("Workbook has no active sheet")
     headers = []
     for col in range(1, ws.max_column + 1):
         cell = ws.cell(1, col)
@@ -1141,11 +1170,13 @@ def read_excel_to_rows(excel_path):
             if mrange.min_row <= row_idx <= mrange.max_row and mrange.min_col <= col_idx <= mrange.max_col:
                 top = ws.cell(row=mrange.min_row, column=mrange.min_col).value
                 if header == 'pair_number' and mrange.max_row > mrange.min_row and row_idx > mrange.min_row:
-                    try:
-                        base = int(top) if top is not None else 1
-                        return base + (row_idx - mrange.min_row)
-                    except (TypeError, ValueError):
-                        return top
+                    base = 1
+                    if top is not None:
+                        try:
+                            base = int(str(top))
+                        except (TypeError, ValueError):
+                            pass
+                    return base + (row_idx - mrange.min_row)
                 return top if top is not None else ''
         return ''
 
@@ -1163,18 +1194,18 @@ def save_to_database(csv_file=None, rows_data=None):
     if rows_data is None and csv_file is None:
         return False
     try:
-        import psycopg2
-        from psycopg2.extras import execute_values
+        import psycopg2  # type: ignore[import-untyped]
+        from psycopg2.extras import execute_values  # type: ignore[import-untyped]
     except ImportError:
         print("Ошибка: библиотека psycopg2 не установлена. Установите её командой: pip install psycopg2-binary")
         return False
 
     db_config = {
-        'host': 'edro.su',
-        'port': 50003,
-        'user': 'edro',
-        'password': 'Pg123!',
-        'database': 'test_sursu_timetable'
+        'host': os.environ.get('DB_HOST', 'edro.su'),
+        'port': int(os.environ.get('DB_PORT', '50003')),
+        'user': os.environ.get('DB_USER', 'edro'),
+        'password': os.environ.get('DB_PASSWORD', 'Pg123!'),
+        'database': os.environ.get('DB_NAME', 'test_sursu_timetable')
     }
 
     valid_audiences = load_audiences()
@@ -1186,11 +1217,17 @@ def save_to_database(csv_file=None, rows_data=None):
             values, last_good_subject_name = _row_dict_to_insert_tuple(row, valid_audiences, last_good_subject_name)
             rows_to_insert.append(values)
     else:
+        if csv_file is None:
+            return False
         with open(csv_file, 'r', encoding='utf-8-sig') as f:
             reader = csv.DictReader(f)
             for row in reader:
                 values, last_good_subject_name = _row_dict_to_insert_tuple(row, valid_audiences, last_good_subject_name)
                 rows_to_insert.append(values)
+
+    if not rows_to_insert:
+        print("Нет данных для загрузки в БД (пустой файл или 0 строк). Таблица не изменена.")
+        return False
 
     try:
         conn = psycopg2.connect(**db_config)
@@ -1216,12 +1253,15 @@ def save_to_database(csv_file=None, rows_data=None):
             is_external BOOLEAN,
             is_remote BOOLEAN,
             num_subgroups INTEGER,
+            duration_pairs NUMERIC(3,1),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         """
         cursor.execute(create_table_query)
         conn.commit()
         print("Таблица timetable_cleaned создана или уже существует")
+        cursor.execute("ALTER TABLE timetable_cleaned ADD COLUMN IF NOT EXISTS duration_pairs NUMERIC(3,1)")
+        conn.commit()
 
         cursor.execute("TRUNCATE TABLE timetable_cleaned")
         conn.commit()
@@ -1233,13 +1273,13 @@ def save_to_database(csv_file=None, rows_data=None):
                 day_of_week, pair_number, subject_name, lecture_type, audience,
                 fio, teacher, group_name, week_type, subgroup,
                 institute, course, direction, department,
-                is_external, is_remote, num_subgroups
+                is_external, is_remote, num_subgroups, duration_pairs
             ) VALUES %s
             """
             col_names = ('day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
                         'fio', 'teacher', 'group_name', 'week_type', 'subgroup',
                         'institute', 'course', 'direction', 'department',
-                        'is_external', 'is_remote', 'num_subgroups')
+                        'is_external', 'is_remote', 'num_subgroups', 'duration_pairs')
             log_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'output', 'timetable')
             os.makedirs(log_dir, exist_ok=True)
             log_path = os.path.join(log_dir, 'load_to_db_log.jsonl')
@@ -1277,14 +1317,18 @@ def main():
     parser.add_argument('--db-only', action='store_true', help='Только загрузить timetable_processed_cleaned.xlsx в БД (без обработки)')
     args = parser.parse_args()
 
-    csv_output = 'output/timetable/timetable_processed_cleaned.csv'
-    excel_output = 'output/timetable/timetable_processed_cleaned.xlsx'
+    project_root = os.path.dirname(os.path.abspath(__file__))
+    csv_output = os.path.join(project_root, 'output', 'timetable', 'timetable_processed_cleaned.csv')
+    excel_output = os.path.join(project_root, 'output', 'timetable', 'timetable_processed_cleaned.xlsx')
 
     # Режим: только загрузка в БД (из Excel или CSV)
     if args.db_only:
         if os.path.exists(csv_output):
             print("Загрузка данных в базу данных из CSV...")
             try:
+                with open(csv_output, 'r', encoding='utf-8-sig') as f:
+                    n_csv_rows = sum(1 for _ in csv.DictReader(f))
+                print(f"Строк в CSV для загрузки: {n_csv_rows}")
                 if save_to_database(csv_file=csv_output):
                     print("Данные успешно сохранены в базу данных")
                 else:
@@ -1297,6 +1341,7 @@ def main():
             print("Загрузка данных в базу данных из Excel...")
             try:
                 rows_data = read_excel_to_rows(excel_output)
+                print(f"Прочитано строк из Excel: {len(rows_data)}")
                 if save_to_database(rows_data=rows_data):
                     print("Данные успешно сохранены в базу данных")
                 else:
@@ -1309,7 +1354,8 @@ def main():
             print(f"Не найден файл {excel_output} или {csv_output}. Сначала выполните обработку (clean_audiences).")
         return
 
-    # Загружаем валидные аудитории
+    # Загружаем валидные аудитории (скрипт должен запускаться из корня проекта)
+    os.chdir(project_root)
     valid_audiences = load_audiences()
     print(f"Загружено {len(valid_audiences)} валидных аудиторий")
 
@@ -1317,11 +1363,11 @@ def main():
     csv_input = None
     excel_input = None
 
-    csv_files = glob.glob('output/timetable/timetable_processed.csv')
+    csv_files = glob.glob(os.path.join(project_root, 'output', 'timetable', 'timetable_processed.csv'))
     if csv_files:
         csv_input = csv_files[0]
 
-    excel_files = [f for f in glob.glob('output/timetable/timetable_processed.xlsx')
+    excel_files = [f for f in glob.glob(os.path.join(project_root, 'output', 'timetable', 'timetable_processed.xlsx'))
                    if not os.path.basename(f).startswith('~$')]
     if excel_files:
         excel_input = excel_files[0]
@@ -1329,6 +1375,9 @@ def main():
     if not csv_input and not excel_input:
         print("Не найдены файлы timetable_processed.csv или timetable_processed.xlsx в output/timetable/")
         return
+
+    # Гарантируем, что каталог для очищенных файлов существует
+    os.makedirs(os.path.dirname(excel_output), exist_ok=True)
 
     # Обрабатываем CSV (результат в Excel и CSV)
     if csv_input:

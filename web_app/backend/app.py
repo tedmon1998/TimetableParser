@@ -393,24 +393,76 @@ def run_clean_audiences():
         script_status['clean_audiences']['running'] = False
 
 def run_load_timetable_to_db():
-    """Загружает timetable_processed_cleaned.xlsx в таблицу timetable_cleaned (clean_audiences.py --db-only)"""
+    """Загружает данные в timetable_cleaned. Если очищенного файла нет — сначала запускает очистку (clean_audiences без --no-db)."""
     script_status['load_timetable_to_db']['running'] = True
     script_status['load_timetable_to_db']['progress'] = 0
     script_status['load_timetable_to_db']['message'] = 'Подготовка загрузки в БД...'
     script_status['load_timetable_to_db']['error'] = None
     try:
         project_root = get_project_root()
-        excel_path = os.path.join(project_root, 'output', 'timetable', 'timetable_processed_cleaned.xlsx')
-        if not os.path.isfile(excel_path):
-            raise FileNotFoundError(
-                'Не найден файл timetable_processed_cleaned.xlsx. Сначала выполните «Очистка аудиторий».'
-            )
+        excel_cleaned = os.path.join(project_root, 'output', 'timetable', 'timetable_processed_cleaned.xlsx')
+        excel_processed = os.path.join(project_root, 'output', 'timetable', 'timetable_processed.xlsx')
         script_path = os.path.join(project_root, 'clean_audiences.py')
         if not os.path.exists(script_path):
             raise FileNotFoundError(f"Скрипт не найден: {script_path}")
+        # Если очищенного файла нет, но есть спаршенный — сначала выполняем очистку (она же сохранит в БД)
+        if not os.path.isfile(excel_cleaned):
+            if os.path.isfile(excel_processed):
+                script_status['load_timetable_to_db']['message'] = 'Очистка аудиторий и загрузка в БД...'
+                script_status['load_timetable_to_db']['progress'] = 15
+                env = {
+                    **os.environ,
+                    'PYTHONIOENCODING': 'utf-8',
+                    'DB_HOST': str(DB_CONFIG.get('host', '')),
+                    'DB_PORT': str(DB_CONFIG.get('port', '')),
+                    'DB_USER': str(DB_CONFIG.get('user', '')),
+                    'DB_PASSWORD': str(DB_CONFIG.get('password', '')),
+                    'DB_NAME': str(DB_CONFIG.get('database', '')),
+                }
+                process = subprocess.Popen(
+                    ['python', script_path],
+                    cwd=project_root,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    env=env,
+                    bufsize=1
+                )
+                stdout_output, stderr_output = process.communicate()
+                return_code = process.returncode
+                if stdout_output:
+                    for line in stdout_output.splitlines():
+                        if line.strip():
+                            print(f"[LOAD_DB] {line}", flush=True)
+                if stderr_output and stderr_output.strip():
+                    for line in stderr_output.splitlines():
+                        if line.strip():
+                            print(f"[LOAD_DB stderr] {line}", flush=True)
+                if return_code != 0:
+                    error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
+                    script_status['load_timetable_to_db']['error'] = error_msg
+                    script_status['load_timetable_to_db']['message'] = 'Ошибка при очистке или загрузке в БД'
+                    script_status['load_timetable_to_db']['progress'] = 0
+                    return
+                script_status['load_timetable_to_db']['progress'] = 100
+                script_status['load_timetable_to_db']['message'] = 'Данные расписания загружены в БД.'
+                return
+            raise FileNotFoundError(
+                'Нет файла timetable_processed.xlsx. Сначала выполните «Парсинг расписания», затем «Загрузить в БД» или «Очистка аудиторий».'
+            )
         script_status['load_timetable_to_db']['progress'] = 20
         script_status['load_timetable_to_db']['message'] = 'Загрузка в БД (timetable_cleaned)...'
-        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
+        env = {
+            **os.environ,
+            'PYTHONIOENCODING': 'utf-8',
+            'DB_HOST': str(DB_CONFIG.get('host', '')),
+            'DB_PORT': str(DB_CONFIG.get('port', '')),
+            'DB_USER': str(DB_CONFIG.get('user', '')),
+            'DB_PASSWORD': str(DB_CONFIG.get('password', '')),
+            'DB_NAME': str(DB_CONFIG.get('database', '')),
+        }
         process = subprocess.Popen(
             ['python', script_path, '--db-only'],
             cwd=project_root,
@@ -424,7 +476,6 @@ def run_load_timetable_to_db():
         )
         stdout_output, stderr_output = process.communicate()
         return_code = process.returncode
-        # Выводим в консоль бэкенда, что скрипт вставляет в БД (UTF-8)
         if stdout_output:
             for line in stdout_output.splitlines():
                 if line.strip():
@@ -487,6 +538,7 @@ def run_merge_timetable():
                 num_subgroups INTEGER,
                 fio TEXT,
                 week_error BOOLEAN,
+                duration_pairs NUMERIC(3,1),
                 audience_error BOOLEAN,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -494,6 +546,8 @@ def run_merge_timetable():
         conn.commit()
         script_status['merge_timetable']['progress'] = 30
         script_status['merge_timetable']['message'] = 'Очистка и слияние данных...'
+        cursor.execute("ALTER TABLE timetable_cleaned ADD COLUMN IF NOT EXISTS duration_pairs NUMERIC(3,1)")
+        conn.commit()
         # Основа — вся timetable_cleaned; из timetable_teacher только fio и флаги ошибок (по одному преподавателю на день/пара/группа).
         cursor.execute("""
             INSERT INTO intermediate_timetable (
@@ -501,7 +555,7 @@ def run_merge_timetable():
                 day_of_week, pair_number, subject_name, discipline_original, lecture_type, audience,
                 group_name, week_type, subgroup, institute, course, direction,
                 department, is_external, is_remote, num_subgroups,
-                fio, week_error, audience_error
+                fio, week_error, duration_pairs, audience_error
             )
             SELECT
                 c.id,
@@ -524,6 +578,7 @@ def run_merge_timetable():
                 c.num_subgroups,
                 t.fio,
                 CASE WHEN t.id IS NULL THEN NULL ELSE (NULLIF(TRIM(c.week_type), '') IS DISTINCT FROM NULLIF(TRIM(t.week_type), '')) END AS week_error,
+                c.duration_pairs,
                 CASE WHEN t.id IS NULL THEN NULL ELSE (NULLIF(TRIM(c.audience), '') IS DISTINCT FROM NULLIF(TRIM(t.audience), '')) END AS audience_error
             FROM timetable_cleaned c
             LEFT JOIN (
@@ -1554,7 +1609,7 @@ def get_db_records():
                 SELECT id, day_of_week, pair_number, subject_name, lecture_type, audience,
                     fio, teacher, group_name, week_type, subgroup,
                     institute, course, direction, department,
-                    is_external, is_remote, num_subgroups
+                    is_external, is_remote, num_subgroups, duration_pairs
                 FROM timetable_cleaned
                 {where_clause}
                 ORDER BY {order_clause}
@@ -1789,7 +1844,7 @@ INTERMEDIATE_BACKUP_COLUMNS = [
     'cleaned_id', 'teacher_id', 'day_of_week', 'pair_number', 'subject_name', 'discipline_original',
     'lecture_type', 'audience', 'group_name', 'week_type', 'subgroup', 'institute', 'course',
     'direction', 'department', 'is_external', 'is_remote', 'num_subgroups', 'fio',
-    'week_error', 'audience_error'
+    'week_error', 'duration_pairs', 'audience_error'
 ]
 
 
@@ -1809,7 +1864,7 @@ def intermediate_backup():
         cur.execute("""
             SELECT id, cleaned_id, teacher_id, day_of_week, pair_number, subject_name, discipline_original,
                    lecture_type, audience, group_name, week_type, subgroup, institute, course, direction,
-                   department, is_external, is_remote, num_subgroups, fio, week_error, audience_error
+                   department, is_external, is_remote, num_subgroups, fio, week_error, duration_pairs, audience_error
             FROM intermediate_timetable
             ORDER BY id
         """)
@@ -1851,6 +1906,7 @@ def intermediate_restore():
             cur.close()
             conn.close()
             return jsonify({'error': 'Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания».'}), 400
+        cur.execute("ALTER TABLE intermediate_timetable ADD COLUMN IF NOT EXISTS duration_pairs NUMERIC(3,1)")
         cur.execute("TRUNCATE TABLE intermediate_timetable")
         rows_to_insert = []
         for row in rows:
@@ -1878,7 +1934,7 @@ BACKUP_COLUMNS = {
     'timetable_cleaned': [
         'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
         'fio', 'teacher', 'group_name', 'week_type', 'subgroup', 'institute', 'course',
-        'direction', 'department', 'is_external', 'is_remote', 'num_subgroups'
+        'direction', 'department', 'is_external', 'is_remote', 'num_subgroups', 'duration_pairs'
     ],
     'timetable_teacher': [
         'fio', 'pair_number', 'day_of_week', 'group_name', 'audience', 'department',
@@ -1966,6 +2022,9 @@ def unified_restore():
                 cur.close()
                 conn.close()
                 return jsonify({'error': f'Таблица {table} не найдена'}), 404
+        if table == 'timetable_cleaned':
+            cur.execute("ALTER TABLE timetable_cleaned ADD COLUMN IF NOT EXISTS duration_pairs NUMERIC(3,1)")
+            conn.commit()
         cur.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY")
         rows_to_insert = []
         for row in rows:
@@ -2043,7 +2102,7 @@ def _allowed_update_fields(table):
         return [
             'week_type', 'audience', 'subject_name', 'discipline_original', 'lecture_type',
             'day_of_week', 'pair_number', 'group_name', 'subgroup',
-            'institute', 'course', 'direction', 'department'
+            'institute', 'course', 'direction', 'department', 'duration_pairs'
         ]
     if table == 'timetable_teacher':
         return [
@@ -2069,6 +2128,13 @@ def _normalize_update_value(field, value):
             return None
     if field in ['is_external', 'is_remote']:
         return bool(value) if value is not None else None
+    if field == 'duration_pairs':
+        if value is None or value == '':
+            return None
+        try:
+            return float(str(value).replace(',', '.'))
+        except (ValueError, TypeError):
+            return None
     return str(value) if value is not None else None
 
 
@@ -2112,7 +2178,7 @@ def update_record(record_id):
             cleaned_fields = [
                 'day_of_week', 'pair_number', 'subject_name', 'lecture_type',
                 'audience', 'group_name', 'week_type', 'subgroup',
-                'institute', 'course', 'direction', 'department'
+                'institute', 'course', 'direction', 'department', 'duration_pairs'
             ]
             # Поля, которые есть в timetable_teacher
             teacher_fields = [
@@ -2343,7 +2409,7 @@ def _create_record_intermediate(reference_id, position, empty=False):
     cursor.execute(
         "SELECT cleaned_id, teacher_id, day_of_week, pair_number, subject_name, lecture_type, audience, "
         "group_name, week_type, subgroup, institute, course, direction, department, "
-        "is_external, is_remote, num_subgroups, fio FROM intermediate_timetable WHERE id = %s",
+        "is_external, is_remote, num_subgroups, fio, duration_pairs FROM intermediate_timetable WHERE id = %s",
         (reference_id,)
     )
     ref_row = cursor.fetchone()
@@ -2358,7 +2424,7 @@ def _create_record_intermediate(reference_id, position, empty=False):
         'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
         'fio', 'teacher', 'group_name', 'week_type', 'subgroup',
         'institute', 'course', 'direction', 'department',
-        'is_external', 'is_remote', 'num_subgroups'
+        'is_external', 'is_remote', 'num_subgroups', 'duration_pairs'
     ]
     teacher_cols = [
         'fio', 'pair_number', 'day_of_week', 'group_name', 'audience', 'department',
@@ -2370,7 +2436,7 @@ def _create_record_intermediate(reference_id, position, empty=False):
         cleaned_vals = [
             ref_row.get('day_of_week'), ref_row.get('pair_number'), None, None, None,
             None, None, ref_row.get('group_name'), ref_row.get('week_type'), ref_row.get('subgroup'),
-            None, None, None, None, None, None, None
+            None, None, None, None, None, None, None, None
         ]
         teacher_vals = [
             None, ref_row.get('pair_number'), ref_row.get('day_of_week'), ref_row.get('group_name'),
@@ -2391,7 +2457,8 @@ def _create_record_intermediate(reference_id, position, empty=False):
                 ref_row.get('lecture_type'), ref_row.get('audience'), ref_row.get('fio'), ref_row.get('fio'),
                 ref_row.get('group_name'), ref_row.get('week_type'), ref_row.get('subgroup'),
                 ref_row.get('institute'), ref_row.get('course'), ref_row.get('direction'), ref_row.get('department'),
-                ref_row.get('is_external'), ref_row.get('is_remote'), ref_row.get('num_subgroups')
+                ref_row.get('is_external'), ref_row.get('is_remote'), ref_row.get('num_subgroups'),
+                ref_row.get('duration_pairs')
             ]
         if teacher_id:
             cursor.execute("SELECT * FROM timetable_teacher WHERE id = %s", (teacher_id,))

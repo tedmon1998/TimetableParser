@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS intermediate_timetable (
     num_subgroups    INTEGER,
     fio              TEXT,
     week_error       BOOLEAN,
+    duration_pairs   NUMERIC(3,1),
     audience_error   BOOLEAN
 );
 
@@ -79,6 +80,7 @@ CREATE TABLE IF NOT EXISTS timetable_cleaned (
     is_external   BOOLEAN,
     is_remote     BOOLEAN,
     num_subgroups INTEGER,
+    duration_pairs NUMERIC(3,1),
     created_at    TIMESTAMP(6)
 );
 
