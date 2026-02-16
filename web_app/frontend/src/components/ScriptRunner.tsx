@@ -8,6 +8,7 @@ interface ScriptStatus {
   progress: number;
   message: string;
   error: string | null;
+  missing_fio?: string[];
 }
 
 interface GroupSourceResult {
@@ -92,6 +93,9 @@ const ScriptRunner: React.FC = () => {
   const [aspiUnresolvedModalOpen, setAspiUnresolvedModalOpen] = useState(false);
   const [aspiUnresolvedParseModalOpen, setAspiUnresolvedParseModalOpen] = useState(false);
   const [aspiErrorModalMessage, setAspiErrorModalMessage] = useState<string | null>(null);
+
+  const [missingTeachersModalOpen, setMissingTeachersModalOpen] = useState(false);
+  const [missingTeachersList, setMissingTeachersList] = useState<string[]>([]);
 
   const aspiAnyError =
     parseAspiStatus.error ||
@@ -304,6 +308,10 @@ const ScriptRunner: React.FC = () => {
               setStatus(status);
               if (!status.running) {
                 clearInterval(statusInterval);
+                if (scriptName === 'process_timetable' && (status.missing_fio?.length ?? 0) > 0) {
+                  setMissingTeachersList(status.missing_fio ?? []);
+                  setMissingTeachersModalOpen(true);
+                }
                 resolve(status);
               }
             } catch (error) {
@@ -640,6 +648,28 @@ const ScriptRunner: React.FC = () => {
           </div>
         )}
       </div>
+
+      {missingTeachersModalOpen && (
+        <div className="aspi-unresolved-overlay" onClick={() => setMissingTeachersModalOpen(false)}>
+          <div className="aspi-unresolved-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="aspi-unresolved-modal-header">
+              <h3>Нераспознанные ФИО (занятость преподавателей)</h3>
+              <button type="button" className="aspi-unresolved-close" onClick={() => setMissingTeachersModalOpen(false)} aria-label="Закрыть">×</button>
+            </div>
+            <p className="aspi-unresolved-hint">Эти ФИО не найдены в справочнике (info/teacher_all.json). Список сохранён в error/missing_teachers.json.</p>
+            <div className="aspi-unresolved-table-wrap">
+              <ul className="missing-teachers-list">
+                {missingTeachersList.map((fio, idx) => (
+                  <li key={idx}>{fio}</li>
+                ))}
+              </ul>
+            </div>
+            <div className="aspi-unresolved-modal-footer">
+              <button type="button" className="button button-primary" onClick={() => setMissingTeachersModalOpen(false)}>Закрыть</button>
+            </div>
+          </div>
+        </div>
+      )}
         </>
       )}
 
@@ -745,6 +775,7 @@ const ScriptRunner: React.FC = () => {
         </button>
         <button
           type="button"
+          style={{marginLeft: '10px'}}
           className="button aspi-unresolved-trigger"
           onClick={() => {
             setAspiUnresolvedParseModalOpen(true);

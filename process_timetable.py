@@ -178,6 +178,11 @@ def normalize_short_fio(short_fio):
     
     # Убираем лишние пробелы
     short_fio = ' '.join(short_fio.split())
+    # Запятую в инициалах — на точку; несколько точек подряд — в одну
+    short_fio = short_fio.replace(',', '.')
+    short_fio = re.sub(r'\.+', '.', short_fio)
+    # Склеенные "ФамилияИ.О." → "Фамилия И.О." (пробел перед инициалом)
+    short_fio = re.sub(r'([а-яё])([А-ЯЁ]\.)', r'\1 \2', short_fio)
     
     # Приводим к стандартному формату: "Фамилия И.О."
     # Убираем пробелы между инициалами и точками
@@ -207,7 +212,7 @@ def load_teacher_names(teacher_file='info/teacher_all.json'):
         if not full_fio:
             continue
         
-        # Парсим полное ФИО: "Галкин Владимир Александрович"
+        # Парсим полное ФИО: "Галкин Владимир Александрович", "Вагидова Анжела Хажи-Мусаевна"
         parts = full_fio.split()
         if len(parts) >= 3:
             last_name = parts[0]
@@ -220,10 +225,24 @@ def load_teacher_names(teacher_file='info/teacher_all.json'):
                 f"{last_name} {first_name[0]}. {middle_name[0]}.",  # "Галкин В. А."
                 f"{last_name} {first_name[0]}.{middle_name[0]}",    # "Галкин В.А" (без последней точки)
             ]
+            # Составное отчество через дефис (Хажи-Мусаевна → Х.-М.)
+            if '-' in middle_name:
+                left, _, right = middle_name.partition('-')
+                if left and right:
+                    mid_abbrev = f"{left[0]}.-{right[0]}."
+                    variants.extend([
+                        f"{last_name} {first_name[0]}.{mid_abbrev}",   # "Вагидова А.Х.-М."
+                        f"{last_name} {first_name[0]}. {mid_abbrev}",  # "Вагидова А. Х.-М."
+                    ])
             
             for variant in variants:
                 normalized = normalize_short_fio(variant)
                 name_mapping[normalized] = full_fio
+    
+    # Варианты с "е" вместо "ё" в фамилии (Самакалев С.С. → Самакалёв Степан Сергеевич)
+    for key in list(name_mapping):
+        if 'ё' in key:
+            name_mapping[key.replace('ё', 'е')] = name_mapping[key]
     
     return name_mapping
 
@@ -260,8 +279,17 @@ def _iter_data_rows(input_file):
     return it
 
 
-def process_timetable_file(input_file, teacher_name_mapping=None):
-    """Обрабатывает файл с занятостью преподавателей (Excel .xlsx/.xls или CSV) и создает структурированные данные."""
+def count_data_rows(input_file):
+    """Подсчитывает количество строк данных (без заголовка) во входном файле."""
+    n = 0
+    for _ in _iter_data_rows(input_file):
+        n += 1
+    return n
+
+
+def process_timetable_file(input_file, teacher_name_mapping=None, total_rows=None, on_progress=None):
+    """Обрабатывает файл с занятостью преподавателей (Excel .xlsx/.xls или CSV) и создает структурированные данные.
+    total_rows: всего строк (для прогресса). on_progress(current, total) вызывается при обработке каждой строки."""
     if teacher_name_mapping is None:
         teacher_name_mapping = {}
     
@@ -284,7 +312,11 @@ def process_timetable_file(input_file, teacher_name_mapping=None):
             external_teachers[teacher_fio] = True
     
     # Второй проход: создаём записи
+    current_row = 0
     for row in row_iter():
+        current_row += 1
+        if on_progress and total_rows is not None and total_rows > 0:
+            on_progress(current_row, total_rows)
         if len(row) < 16:
             continue
         teacher_fio = (row[0] or '').strip()
@@ -442,10 +474,21 @@ def save_missing_teachers(missing_teachers, output_file='missing_teachers.csv'):
     
     print(f"Сохранено {len(missing_teachers)} преподавателей без полного ФИО в {output_file}")
 
+def save_missing_teachers_json(missing_teachers, output_file='error/missing_teachers.json'):
+    """Сохраняет список ФИО, не найденных в справочнике, в JSON (папка error)."""
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    sorted_teachers = sorted(missing_teachers)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(sorted_teachers, f, ensure_ascii=False, indent=2)
+    if missing_teachers:
+        print(f"Сохранено {len(missing_teachers)} нераспознанных ФИО в {output_file}")
+
+
 def main():
     # Создаем папки, если их нет
     os.makedirs('input', exist_ok=True)
     os.makedirs('output', exist_ok=True)
+    os.makedirs('error', exist_ok=True)
     
     # Ищем файл занятости: сначала Excel, затем CSV
     xlsx_files = glob.glob("input/Zanyatost prepodavateley*.xlsx")
@@ -467,8 +510,15 @@ def main():
     if teacher_name_mapping:
         print(f"Загружено {len(teacher_name_mapping)} полных ФИО преподавателей")
     
+    # Подсчёт строк для прогресса (вывод PROGRESS: current total для бэкенда)
+    total_rows = count_data_rows(input_file)
+    def on_progress(current, total):
+        print(f"PROGRESS: {current} {total}", flush=True)
+    
     # Обрабатываем файл (Excel или CSV)
-    results, missing_teachers = process_timetable_file(input_file, teacher_name_mapping)
+    results, missing_teachers = process_timetable_file(
+        input_file, teacher_name_mapping, total_rows=total_rows, on_progress=on_progress
+    )
     
     print(f"Обработано записей: {len(results)}")
     
@@ -486,7 +536,8 @@ def main():
     save_to_excel(results, excel_output)
     print(f"Данные сохранены в Excel: {excel_output}")
     
-    # Сохраняем преподавателей без полного ФИО
+    # Сохраняем список нераспознанных ФИО: JSON в error/ (всегда), CSV в output/ (если есть)
+    save_missing_teachers_json(missing_teachers, 'error/missing_teachers.json')
     if missing_teachers:
         save_missing_teachers(missing_teachers, 'output/missing_teachers.csv')
 

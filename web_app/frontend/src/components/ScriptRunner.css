@@ -167,6 +167,18 @@
   min-height: 0;
 }
 
+.missing-teachers-list {
+  margin: 0;
+  padding: 0.75rem 1.25rem 1rem 2rem;
+  list-style: disc;
+  font-size: 0.95rem;
+  color: #334155;
+}
+
+.missing-teachers-list li {
+  margin-bottom: 0.35rem;
+}
+
 .aspi-unresolved-table {
   width: 100%;
   border-collapse: collapse;

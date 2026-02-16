@@ -71,7 +71,7 @@ script_status = {
     'clean_audiences': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'load_timetable_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'merge_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
-    'process_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'process_timetable': {'running': False, 'progress': 0, 'message': '', 'error': None, 'missing_fio': []},
     'fetch_teachers': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'parse_aspi': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'normalize_aspi': {'running': False, 'progress': 0, 'message': '', 'error': None},
@@ -706,6 +706,7 @@ def run_process_timetable():
     script_status['process_timetable']['progress'] = 0
     script_status['process_timetable']['message'] = 'Начало парсинга занятости преподавателей...'
     script_status['process_timetable']['error'] = None
+    script_status['process_timetable']['missing_fio'] = []
     try:
         project_root = get_project_root()
         script_path = os.path.join(project_root, 'process_timetable.py')
@@ -725,10 +726,10 @@ def run_process_timetable():
             env=env,
             bufsize=1
         )
-        script_status['process_timetable']['progress'] = 40
+        script_status['process_timetable']['progress'] = 10
         script_status['process_timetable']['message'] = 'Обработка файла занятости...'
-        output_lines = []
         stdout_stream = process.stdout
+        progress_re = re.compile(r'^PROGRESS:\s*(\d+)\s+(\d+)\s*$')
         while True:
             out = stdout_stream.readline() if stdout_stream is not None else ''
             if out == '' and process.poll() is not None:
@@ -736,9 +737,13 @@ def run_process_timetable():
             if out:
                 line = out.strip()
                 if line:
-                    output_lines.append(line)
-                    script_status['process_timetable']['progress'] = min(40 + min(len(output_lines) * 2, 50), 90)
-                    script_status['process_timetable']['message'] = f'Обработано строк: {len(output_lines)}'
+                    m = progress_re.match(line)
+                    if m:
+                        current, total = int(m.group(1)), int(m.group(2))
+                        if total > 0:
+                            pct = min(90, 10 + int(80 * current / total))
+                            script_status['process_timetable']['progress'] = pct
+                            script_status['process_timetable']['message'] = f'Обработано строк: {current} из {total}'
         return_code = process.wait()
         stderr_stream = process.stderr
         stderr_output = stderr_stream.read() if stderr_stream is not None else ''
@@ -748,6 +753,19 @@ def run_process_timetable():
             script_status['process_timetable']['message'] = 'Ошибка при выполнении скрипта'
             script_status['process_timetable']['progress'] = 0
         else:
+            # Читаем список нераспознанных ФИО из error/missing_teachers.json
+            error_dir = os.path.join(project_root, 'error')
+            missing_fio_path = os.path.join(error_dir, 'missing_teachers.json')
+            missing_fio_list = []
+            if os.path.isfile(missing_fio_path):
+                try:
+                    with open(missing_fio_path, 'r', encoding='utf-8', errors='replace') as f:
+                        data = json.load(f)
+                    missing_fio_list = data if isinstance(data, list) else []
+                except Exception:
+                    pass
+            script_status['process_timetable']['missing_fio'] = missing_fio_list
+
             script_status['process_timetable']['progress'] = 92
             script_status['process_timetable']['message'] = 'Загрузка в БД (timetable_teacher)...'
             try:

@@ -547,12 +547,26 @@
   },
   {
     "fio": "Ряховский Алексей Васильевич",
+    "pair_number": "7",
+    "day_of_week": "четверг",
+    "group": "601-51м",
+    "audience": "ЭОиДОТ",
+    "department": "1",
+    "week": "знаменатель",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": true,
+    "subject_name": ""
+  },
+  {
+    "fio": "Ряховский Алексей Васильевич",
     "pair_number": "8",
     "day_of_week": "четверг",
     "group": "601-51м",
     "audience": "ЭОиДОТ",
     "department": "1",
-    "week": "обе недели",
+    "week": "числитель",
     "subgroup": "",
     "num_subgroups": 0,
     "is_external": false,
@@ -1320,7 +1334,7 @@
     "pair_number": "4",
     "day_of_week": "вторник",
     "group": "601-21",
-    "audience": "У705",
+    "audience": "У902",
     "department": "1",
     "week": "обе недели",
     "subgroup": "",
@@ -1334,7 +1348,7 @@
     "pair_number": "5",
     "day_of_week": "вторник",
     "group": "601-21",
-    "audience": "У705",
+    "audience": "У902",
     "department": "1",
     "week": "обе недели",
     "subgroup": "",
@@ -1614,7 +1628,7 @@
     "pair_number": "1",
     "day_of_week": "суббота",
     "group": "405-41",
-    "audience": "К505",
+    "audience": "К428",
     "department": "45",
     "week": "обе недели",
     "subgroup": "",
@@ -1628,7 +1642,7 @@
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "405-41",
-    "audience": "К505",
+    "audience": "К428",
     "department": "45",
     "week": "обе недели",
     "subgroup": "",
@@ -2086,7 +2100,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Коновалова Е.В.",
+    "fio": "Коновалова Елена Владимировна",
     "pair_number": "1",
     "day_of_week": "суббота",
     "group": "602-31",
@@ -2100,7 +2114,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Коновалова Е.В.",
+    "fio": "Коновалова Елена Владимировна",
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "602-31",
@@ -2492,7 +2506,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Джариев И.Э.",
+    "fio": "Джариев Исмаил Эльшан оглы",
     "pair_number": "1",
     "day_of_week": "суббота",
     "group": "301-51",
@@ -2506,7 +2520,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Джариев И.Э.",
+    "fio": "Джариев Исмаил Эльшан оглы",
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "607-52",
@@ -2520,7 +2534,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Джариев И.Э.",
+    "fio": "Джариев Исмаил Эльшан оглы",
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "607-52",
@@ -2534,7 +2548,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Джариев И.Э.",
+    "fio": "Джариев Исмаил Эльшан оглы",
     "pair_number": "6",
     "day_of_week": "вторник",
     "group": "301-51",
@@ -2548,7 +2562,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Джариев И.Э.",
+    "fio": "Джариев Исмаил Эльшан оглы",
     "pair_number": "6",
     "day_of_week": "четверг",
     "group": "606-52",
@@ -2562,7 +2576,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Джариев И.Э.",
+    "fio": "Джариев Исмаил Эльшан оглы",
     "pair_number": "6",
     "day_of_week": "четверг",
     "group": "606-52",
@@ -2576,7 +2590,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Джариев И.Э.",
+    "fio": "Джариев Исмаил Эльшан оглы",
     "pair_number": "6",
     "day_of_week": "пятница",
     "group": "609-51",
@@ -2590,7 +2604,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Джариев И.Э.",
+    "fio": "Джариев Исмаил Эльшан оглы",
     "pair_number": "7",
     "day_of_week": "пятница",
     "group": "301-51",
@@ -5965,20 +5979,6 @@
   },
   {
     "fio": "Орехова Елена Юрьевна",
-    "pair_number": "3",
-    "day_of_week": "суббота",
-    "group": "501-35",
-    "audience": "А517",
-    "department": "4",
-    "week": "обе недели",
-    "subgroup": "б",
-    "num_subgroups": 1,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Орехова Елена Юрьевна",
     "pair_number": "4",
     "day_of_week": "понедельник",
     "group": "203-41",
@@ -6010,10 +6010,24 @@
     "pair_number": "4",
     "day_of_week": "четверг",
     "group": "501-35",
-    "audience": "А515",
+    "audience": "А504",
     "department": "4",
     "week": "обе недели",
     "subgroup": "а",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Орехова Елена Юрьевна",
+    "pair_number": "5",
+    "day_of_week": "четверг",
+    "group": "501-35",
+    "audience": "А504",
+    "department": "4",
+    "week": "обе недели",
+    "subgroup": "б",
     "num_subgroups": 1,
     "is_external": false,
     "is_remote": false,
@@ -7057,6 +7071,20 @@
   },
   {
     "fio": "Шукурова Инна Вячеславовна",
+    "pair_number": "1",
+    "day_of_week": "четверг",
+    "group": "501-34",
+    "audience": "А518",
+    "department": "4",
+    "week": "обе недели",
+    "subgroup": "б",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Шукурова Инна Вячеславовна",
     "pair_number": "2",
     "day_of_week": "понедельник",
     "group": "501-34",
@@ -7120,20 +7148,6 @@
     "department": "4",
     "week": "обе недели",
     "subgroup": "а",
-    "num_subgroups": 1,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Шукурова Инна Вячеславовна",
-    "pair_number": "4",
-    "day_of_week": "четверг",
-    "group": "501-34",
-    "audience": "А502",
-    "department": "4",
-    "week": "обе недели",
-    "subgroup": "б",
     "num_subgroups": 1,
     "is_external": false,
     "is_remote": false,
@@ -7882,7 +7896,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Екимова И.А.",
+    "fio": "Екимова Ирина Анатольевна",
     "pair_number": "6",
     "day_of_week": "понедельник",
     "group": "301-31",
@@ -8036,7 +8050,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Усольцев А.И.",
+    "fio": "Усольцев Александр Иванович",
     "pair_number": "3",
     "day_of_week": "суббота",
     "group": "501-56",
@@ -8050,7 +8064,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Усольцев А.И.",
+    "fio": "Усольцев Александр Иванович",
     "pair_number": "4",
     "day_of_week": "суббота",
     "group": "501-56",
@@ -8064,7 +8078,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Усольцев А.И.",
+    "fio": "Усольцев Александр Иванович",
     "pair_number": "4",
     "day_of_week": "суббота",
     "group": "501-56",
@@ -8078,7 +8092,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Усольцев А.И.",
+    "fio": "Усольцев Александр Иванович",
     "pair_number": "7",
     "day_of_week": "среда",
     "group": "501-56",
@@ -8120,7 +8134,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Мулюкин М.А.",
+    "fio": "Мулюкин Максим Александрович",
     "pair_number": "6",
     "day_of_week": "среда",
     "group": "301-31",
@@ -8134,7 +8148,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Мулюкин М.А.",
+    "fio": "Мулюкин Максим Александрович",
     "pair_number": "7",
     "day_of_week": "среда",
     "group": "301-31",
@@ -8148,7 +8162,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Мулюкин М.А.",
+    "fio": "Мулюкин Максим Александрович",
     "pair_number": "8",
     "day_of_week": "среда",
     "group": "301-31",
@@ -8429,6 +8443,20 @@
   },
   {
     "fio": "Чудова Екатерина Сергеевна",
+    "pair_number": "2",
+    "day_of_week": "пятница",
+    "group": "303-41",
+    "audience": "А131",
+    "department": "5",
+    "week": "числитель",
+    "subgroup": "а",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Чудова Екатерина Сергеевна",
     "pair_number": "3",
     "day_of_week": "вторник",
     "group": "302-51",
@@ -8535,20 +8563,6 @@
     "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Чудова Екатерина Сергеевна",
-    "pair_number": "6",
-    "day_of_week": "пятница",
-    "group": "303-41",
-    "audience": "А131",
-    "department": "5",
-    "week": "числитель",
-    "subgroup": "а",
-    "num_subgroups": 1,
     "is_external": false,
     "is_remote": false,
     "subject_name": ""
@@ -9870,7 +9884,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Мелетина М.А.",
+    "fio": "Малетина Мария Александровна",
     "pair_number": "1",
     "day_of_week": "среда",
     "group": "208-52",
@@ -9884,7 +9898,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Мелетина М.А.",
+    "fio": "Малетина Мария Александровна",
     "pair_number": "2",
     "day_of_week": "среда",
     "group": "208-51",
@@ -9898,7 +9912,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Мелетина М.А.",
+    "fio": "Малетина Мария Александровна",
     "pair_number": "3",
     "day_of_week": "суббота",
     "group": "208-51",
@@ -9912,7 +9926,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Мелетина М.А.",
+    "fio": "Малетина Мария Александровна",
     "pair_number": "4",
     "day_of_week": "суббота",
     "group": "208-52",
@@ -11917,7 +11931,7 @@
     "fio": "Поборский Александр Николаевич",
     "pair_number": "2",
     "day_of_week": "четверг",
-    "group": "---",
+    "group": "--",
     "audience": "А434",
     "department": "8",
     "week": "обе недели",
@@ -12198,7 +12212,7 @@
     "pair_number": "1",
     "day_of_week": "пятница",
     "group": "205-51",
-    "audience": "А410",
+    "audience": "А431",
     "department": "8",
     "week": "числитель",
     "subgroup": "",
@@ -12226,7 +12240,7 @@
     "pair_number": "2",
     "day_of_week": "четверг",
     "group": "214-51",
-    "audience": "А433",
+    "audience": "А431",
     "department": "8",
     "week": "числитель",
     "subgroup": "",
@@ -12240,7 +12254,7 @@
     "pair_number": "2",
     "day_of_week": "четверг",
     "group": "206-51",
-    "audience": "А433",
+    "audience": "А431",
     "department": "8",
     "week": "знаменатель",
     "subgroup": "",
@@ -12254,7 +12268,7 @@
     "pair_number": "2",
     "day_of_week": "пятница",
     "group": "501-43",
-    "audience": "А424",
+    "audience": "А431",
     "department": "8",
     "week": "обе недели",
     "subgroup": "б",
@@ -12310,7 +12324,7 @@
     "pair_number": "4",
     "day_of_week": "пятница",
     "group": "501-42",
-    "audience": "А424",
+    "audience": "А431",
     "department": "8",
     "week": "обе недели",
     "subgroup": "б",
@@ -12380,7 +12394,7 @@
     "pair_number": "1",
     "day_of_week": "среда",
     "group": "502-41",
-    "audience": "А439",
+    "audience": "А431",
     "department": "8",
     "week": "обе недели",
     "subgroup": "а",
@@ -12394,7 +12408,7 @@
     "pair_number": "2",
     "day_of_week": "среда",
     "group": "---",
-    "audience": "А439",
+    "audience": "А431",
     "department": "8",
     "week": "обе недели",
     "subgroup": "",
@@ -12408,7 +12422,7 @@
     "pair_number": "3",
     "day_of_week": "среда",
     "group": "502-41",
-    "audience": "А439",
+    "audience": "А431",
     "department": "8",
     "week": "обе недели",
     "subgroup": "б",
@@ -13468,7 +13482,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "1",
     "day_of_week": "суббота",
     "group": "607-51",
@@ -13482,7 +13496,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "1",
     "day_of_week": "суббота",
     "group": "607-51",
@@ -13496,7 +13510,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "301-51",
@@ -13510,7 +13524,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "3",
     "day_of_week": "суббота",
     "group": "302-51",
@@ -13524,7 +13538,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "4",
     "day_of_week": "суббота",
     "group": "609-52",
@@ -13538,7 +13552,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "4",
     "day_of_week": "суббота",
     "group": "609-52",
@@ -13552,7 +13566,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "5",
     "day_of_week": "суббота",
     "group": "305-51",
@@ -13566,7 +13580,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "6",
     "day_of_week": "понедельник",
     "group": "302-51",
@@ -13580,7 +13594,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "6",
     "day_of_week": "пятница",
     "group": "609-51",
@@ -13594,7 +13608,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Петров Е.А.",
+    "fio": "Петров Егор Аркадьевич",
     "pair_number": "6",
     "day_of_week": "пятница",
     "group": "305-51",
@@ -13654,7 +13668,7 @@
     "pair_number": "2",
     "day_of_week": "понедельник",
     "group": "501-36",
-    "audience": "А24",
+    "audience": "СОКБ",
     "department": "61",
     "week": "знаменатель",
     "subgroup": "в",
@@ -13668,7 +13682,7 @@
     "pair_number": "3",
     "day_of_week": "понедельник",
     "group": "501-36",
-    "audience": "А24",
+    "audience": "СОКБ",
     "department": "61",
     "week": "обе недели",
     "subgroup": "в",
@@ -13682,7 +13696,7 @@
     "pair_number": "3",
     "day_of_week": "четверг",
     "group": "501-36",
-    "audience": "А439",
+    "audience": "СОКБ ауд 5",
     "department": "61",
     "week": "числитель",
     "subgroup": "а",
@@ -13710,7 +13724,7 @@
     "pair_number": "4",
     "day_of_week": "четверг",
     "group": "501-36",
-    "audience": "А439",
+    "audience": "СОКБ ауд 5",
     "department": "61",
     "week": "обе недели",
     "subgroup": "а",
@@ -13738,7 +13752,7 @@
     "pair_number": "5",
     "day_of_week": "пятница",
     "group": "501-36",
-    "audience": "А24",
+    "audience": "СОКБ ауд 5",
     "department": "61",
     "week": "знаменатель",
     "subgroup": "б",
@@ -13752,7 +13766,7 @@
     "pair_number": "6",
     "day_of_week": "пятница",
     "group": "501-36",
-    "audience": "А24",
+    "audience": "ауд 5",
     "department": "61",
     "week": "обе недели",
     "subgroup": "б",
@@ -15274,7 +15288,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Гаврилова Н,В.",
+    "fio": "Гаврилова Надежда Валерьевна",
     "pair_number": "1",
     "day_of_week": "понедельник",
     "group": "209-31",
@@ -15288,7 +15302,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Гаврилова Н,В.",
+    "fio": "Гаврилова Надежда Валерьевна",
     "pair_number": "1",
     "day_of_week": "среда",
     "group": "214-51",
@@ -15302,7 +15316,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Гаврилова Н,В.",
+    "fio": "Гаврилова Надежда Валерьевна",
     "pair_number": "2",
     "day_of_week": "понедельник",
     "group": "209-31",
@@ -15316,7 +15330,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Гаврилова Н,В.",
+    "fio": "Гаврилова Надежда Валерьевна",
     "pair_number": "2",
     "day_of_week": "среда",
     "group": "206-51",
@@ -15330,7 +15344,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Гаврилова Н,В.",
+    "fio": "Гаврилова Надежда Валерьевна",
     "pair_number": "2",
     "day_of_week": "пятница",
     "group": "209-51",
@@ -15344,7 +15358,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Гаврилова Н,В.",
+    "fio": "Гаврилова Надежда Валерьевна",
     "pair_number": "3",
     "day_of_week": "понедельник",
     "group": "209-31",
@@ -15358,7 +15372,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Гаврилова Н,В.",
+    "fio": "Гаврилова Надежда Валерьевна",
     "pair_number": "3",
     "day_of_week": "суббота",
     "group": "205-51",
@@ -15372,7 +15386,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Гаврилова Н,В.",
+    "fio": "Гаврилова Надежда Валерьевна",
     "pair_number": "4",
     "day_of_week": "понедельник",
     "group": "209-41",
@@ -18116,7 +18130,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "3",
     "day_of_week": "четверг",
     "group": "603-21",
@@ -18130,7 +18144,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "4",
     "day_of_week": "понедельник",
     "group": "603-51",
@@ -18144,7 +18158,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "4",
     "day_of_week": "среда",
     "group": "603-21",
@@ -18158,7 +18172,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "4",
     "day_of_week": "четверг",
     "group": "603-21",
@@ -18172,7 +18186,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "5",
     "day_of_week": "понедельник",
     "group": "603-51",
@@ -18186,7 +18200,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "5",
     "day_of_week": "среда",
     "group": "603-21",
@@ -18200,7 +18214,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "5",
     "day_of_week": "четверг",
     "group": "603-21",
@@ -18214,7 +18228,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "6",
     "day_of_week": "среда",
     "group": "603-21",
@@ -18228,7 +18242,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "6",
     "day_of_week": "четверг",
     "group": "603-21",
@@ -18242,7 +18256,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "7",
     "day_of_week": "вторник",
     "group": "603-51м",
@@ -18256,7 +18270,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Владимиров Л..В.",
+    "fio": "Владимиров Леонид Вячеславович",
     "pair_number": "8",
     "day_of_week": "вторник",
     "group": "603-51м",
@@ -19026,7 +19040,7 @@
     "subject_name": ""
   },
   {
-    "fio": "вакансия доцент",
+    "fio": "Свириденко М.А.",
     "pair_number": "2",
     "day_of_week": "среда",
     "group": "604-51",
@@ -19040,7 +19054,7 @@
     "subject_name": ""
   },
   {
-    "fio": "вакансия доцент",
+    "fio": "Свириденко М.А.",
     "pair_number": "3",
     "day_of_week": "среда",
     "group": "604-51",
@@ -19054,7 +19068,7 @@
     "subject_name": ""
   },
   {
-    "fio": "вакансия доцент",
+    "fio": "Свириденко М.А.",
     "pair_number": "4",
     "day_of_week": "понедельник",
     "group": "603-51",
@@ -19068,7 +19082,7 @@
     "subject_name": ""
   },
   {
-    "fio": "вакансия доцент",
+    "fio": "Свириденко М.А.",
     "pair_number": "4",
     "day_of_week": "четверг",
     "group": "603-52",
@@ -19082,7 +19096,7 @@
     "subject_name": ""
   },
   {
-    "fio": "вакансия доцент",
+    "fio": "Свириденко М.А.",
     "pair_number": "5",
     "day_of_week": "понедельник",
     "group": "603-51",
@@ -19096,7 +19110,7 @@
     "subject_name": ""
   },
   {
-    "fio": "вакансия доцент",
+    "fio": "Свириденко М.А.",
     "pair_number": "5",
     "day_of_week": "четверг",
     "group": "603-52",
@@ -19461,20 +19475,6 @@
   },
   {
     "fio": "Рыбалка Оксана Олеговна",
-    "pair_number": "1",
-    "day_of_week": "суббота",
-    "group": "501-32",
-    "audience": "СОКБ",
-    "department": "14",
-    "week": "обе недели",
-    "subgroup": "а",
-    "num_subgroups": 1,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Рыбалка Оксана Олеговна",
     "pair_number": "2",
     "day_of_week": "понедельник",
     "group": "501-32",
@@ -19517,20 +19517,6 @@
   },
   {
     "fio": "Рыбалка Оксана Олеговна",
-    "pair_number": "2",
-    "day_of_week": "суббота",
-    "group": "501-32",
-    "audience": "СОКБ",
-    "department": "14",
-    "week": "обе недели",
-    "subgroup": "а",
-    "num_subgroups": 1,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Рыбалка Оксана Олеговна",
     "pair_number": "3",
     "day_of_week": "понедельник",
     "group": "501-32",
@@ -19538,20 +19524,6 @@
     "department": "14",
     "week": "обе недели",
     "subgroup": "в",
-    "num_subgroups": 1,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Рыбалка Оксана Олеговна",
-    "pair_number": "3",
-    "day_of_week": "суббота",
-    "group": "501-34",
-    "audience": "СОКБ",
-    "department": "14",
-    "week": "обе недели",
-    "subgroup": "а",
     "num_subgroups": 1,
     "is_external": false,
     "is_remote": false,
@@ -19566,34 +19538,6 @@
     "department": "14",
     "week": "обе недели",
     "subgroup": "а",
-    "num_subgroups": 1,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Рыбалка Оксана Олеговна",
-    "pair_number": "4",
-    "day_of_week": "суббота",
-    "group": "501-34",
-    "audience": "СОКБ",
-    "department": "14",
-    "week": "обе недели",
-    "subgroup": "а",
-    "num_subgroups": 1,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Рыбалка Оксана Олеговна",
-    "pair_number": "5",
-    "day_of_week": "понедельник",
-    "group": "501-31",
-    "audience": "СОКБ",
-    "department": "14",
-    "week": "обе недели",
-    "subgroup": "в",
     "num_subgroups": 1,
     "is_external": false,
     "is_remote": false,
@@ -19679,20 +19623,6 @@
     "week": "числитель",
     "subgroup": "",
     "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Рыбалка Оксана Олеговна",
-    "pair_number": "6",
-    "day_of_week": "понедельник",
-    "group": "501-31",
-    "audience": "СОКБ",
-    "department": "14",
-    "week": "обе недели",
-    "subgroup": "в",
-    "num_subgroups": 1,
     "is_external": false,
     "is_remote": false,
     "subject_name": ""
@@ -19862,6 +19792,90 @@
     "subgroup": "",
     "num_subgroups": 0,
     "is_external": true,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Мирзалиева Малика Нюгбалаевна",
+    "pair_number": "1",
+    "day_of_week": "суббота",
+    "group": "501-32",
+    "audience": "СОКБ",
+    "department": "14",
+    "week": "обе недели",
+    "subgroup": "а",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Мирзалиева Малика Нюгбалаевна",
+    "pair_number": "2",
+    "day_of_week": "суббота",
+    "group": "501-32",
+    "audience": "СОКБ",
+    "department": "14",
+    "week": "обе недели",
+    "subgroup": "а",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Мирзалиева Малика Нюгбалаевна",
+    "pair_number": "3",
+    "day_of_week": "суббота",
+    "group": "501-34",
+    "audience": "СОКБ",
+    "department": "14",
+    "week": "обе недели",
+    "subgroup": "а",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Мирзалиева Малика Нюгбалаевна",
+    "pair_number": "4",
+    "day_of_week": "суббота",
+    "group": "501-34",
+    "audience": "СОКБ",
+    "department": "14",
+    "week": "обе недели",
+    "subgroup": "а",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Мирзалиева Малика Нюгбалаевна",
+    "pair_number": "5",
+    "day_of_week": "понедельник",
+    "group": "501-31",
+    "audience": "СОКБ",
+    "department": "14",
+    "week": "обе недели",
+    "subgroup": "в",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Мирзалиева Малика Нюгбалаевна",
+    "pair_number": "6",
+    "day_of_week": "понедельник",
+    "group": "501-31",
+    "audience": "СОКБ",
+    "department": "14",
+    "week": "обе недели",
+    "subgroup": "в",
+    "num_subgroups": 1,
+    "is_external": false,
     "is_remote": false,
     "subject_name": ""
   },
@@ -20974,6 +20988,20 @@
   {
     "fio": "Зибаев Антон Валерьевич",
     "pair_number": "4",
+    "day_of_week": "вторник",
+    "group": "501-51",
+    "audience": "А615",
+    "department": "15",
+    "week": "обе недели",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Зибаев Антон Валерьевич",
+    "pair_number": "4",
     "day_of_week": "пятница",
     "group": "204-21",
     "audience": "Г225",
@@ -21635,20 +21663,6 @@
     "day_of_week": "понедельник",
     "group": "301-51",
     "audience": "А414",
-    "department": "15",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Сташкин Петр Рудольфович",
-    "pair_number": "4",
-    "day_of_week": "вторник",
-    "group": "501-51",
-    "audience": "А615",
     "department": "15",
     "week": "обе недели",
     "subgroup": "",
@@ -22348,7 +22362,7 @@
     "pair_number": "1",
     "day_of_week": "вторник",
     "group": "501-43",
-    "audience": "А420",
+    "audience": "А424",
     "department": "8",
     "week": "обе недели",
     "subgroup": "а",
@@ -22362,7 +22376,7 @@
     "pair_number": "1",
     "day_of_week": "среда",
     "group": "501-44",
-    "audience": "А420",
+    "audience": "А424",
     "department": "8",
     "week": "обе недели",
     "subgroup": "а",
@@ -22432,7 +22446,7 @@
     "pair_number": "1",
     "day_of_week": "пятница",
     "group": "501-41",
-    "audience": "А420",
+    "audience": "А424",
     "department": "8",
     "week": "обе недели",
     "subgroup": "б",
@@ -22460,7 +22474,7 @@
     "pair_number": "2",
     "day_of_week": "вторник",
     "group": "501-43",
-    "audience": "А420",
+    "audience": "А424",
     "department": "8",
     "week": "обе недели",
     "subgroup": "а",
@@ -22474,7 +22488,7 @@
     "pair_number": "2",
     "day_of_week": "среда",
     "group": "501-44",
-    "audience": "А420",
+    "audience": "А424",
     "department": "8",
     "week": "обе недели",
     "subgroup": "а",
@@ -22516,7 +22530,7 @@
     "pair_number": "2",
     "day_of_week": "пятница",
     "group": "501-41",
-    "audience": "А420",
+    "audience": "А424",
     "department": "8",
     "week": "обе недели",
     "subgroup": "б",
@@ -22600,7 +22614,7 @@
     "pair_number": "3",
     "day_of_week": "пятница",
     "group": "501-43",
-    "audience": "А420",
+    "audience": "А424",
     "department": "8",
     "week": "обе недели",
     "subgroup": "б",
@@ -22670,7 +22684,7 @@
     "pair_number": "4",
     "day_of_week": "пятница",
     "group": "501-43",
-    "audience": "А420",
+    "audience": "А424",
     "department": "8",
     "week": "обе недели",
     "subgroup": "б",
@@ -27903,6 +27917,20 @@
   },
   {
     "fio": "Войтович Олеся Николаевна",
+    "pair_number": "3",
+    "day_of_week": "четверг",
+    "group": "202-31",
+    "audience": "Г304",
+    "department": "20",
+    "week": "обе недели",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Войтович Олеся Николаевна",
     "pair_number": "4",
     "day_of_week": "вторник",
     "group": "203-21",
@@ -27937,6 +27965,20 @@
     "audience": "Г304",
     "department": "20",
     "week": "знаменатель",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Войтович Олеся Николаевна",
+    "pair_number": "5",
+    "day_of_week": "среда",
+    "group": "203-11",
+    "audience": "Г305",
+    "department": "20",
+    "week": "числитель",
     "subgroup": "",
     "num_subgroups": 0,
     "is_external": false,
@@ -28271,6 +28313,20 @@
     "day_of_week": "вторник",
     "group": "202-31",
     "audience": "Г318",
+    "department": "20",
+    "week": "обе недели",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Шамухаметова Елена Сафиулловна",
+    "pair_number": "2",
+    "day_of_week": "четверг",
+    "group": "202-31",
+    "audience": "Г317",
     "department": "20",
     "week": "обе недели",
     "subgroup": "",
@@ -29232,7 +29288,7 @@
     "subject_name": ""
   },
   {
-    "fio": "РодермельТ.А.",
+    "fio": "Родермель Татьяна Алексеевна",
     "pair_number": "4",
     "day_of_week": "среда",
     "group": "203-11",
@@ -29246,7 +29302,7 @@
     "subject_name": ""
   },
   {
-    "fio": "РодермельТ.А.",
+    "fio": "Родермель Татьяна Алексеевна",
     "pair_number": "5",
     "day_of_week": "понедельник",
     "group": "202-31",
@@ -29260,7 +29316,7 @@
     "subject_name": ""
   },
   {
-    "fio": "РодермельТ.А.",
+    "fio": "Родермель Татьяна Алексеевна",
     "pair_number": "7",
     "day_of_week": "вторник",
     "group": "201-41м",
@@ -29274,7 +29330,7 @@
     "subject_name": ""
   },
   {
-    "fio": "РодермельТ.А.",
+    "fio": "Родермель Татьяна Алексеевна",
     "pair_number": "8",
     "day_of_week": "вторник",
     "group": "201-41м",
@@ -29303,6 +29359,34 @@
   },
   {
     "fio": "Меренков Валерий Александрович",
+    "pair_number": "2",
+    "day_of_week": "среда",
+    "group": "202-41",
+    "audience": "Г201",
+    "department": "20",
+    "week": "обе недели",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Меренков Валерий Александрович",
+    "pair_number": "2",
+    "day_of_week": "суббота",
+    "group": "203-11",
+    "audience": "Г317",
+    "department": "20",
+    "week": "обе недели",
+    "subgroup": "б",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Меренков Валерий Александрович",
     "pair_number": "3",
     "day_of_week": "вторник",
     "group": "203-31",
@@ -29332,6 +29416,20 @@
   {
     "fio": "Меренков Валерий Александрович",
     "pair_number": "4",
+    "day_of_week": "четверг",
+    "group": "203-11",
+    "audience": "Г317",
+    "department": "20",
+    "week": "обе недели",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Меренков Валерий Александрович",
+    "pair_number": "4",
     "day_of_week": "пятница",
     "group": "202-31",
     "audience": "Г319",
@@ -29344,12 +29442,26 @@
     "subject_name": ""
   },
   {
+    "fio": "Меренков Валерий Александрович",
+    "pair_number": "5",
+    "day_of_week": "четверг",
+    "group": "203-11",
+    "audience": "Г317",
+    "department": "20",
+    "week": "обе недели",
+    "subgroup": "а",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
     "fio": "Алиева Елена Александровна",
     "pair_number": "7",
     "day_of_week": "понедельник",
     "group": "207-41м",
     "audience": "ЭОиДОТ",
-    "department": "22",
+    "department": "33",
     "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
@@ -29363,7 +29475,7 @@
     "day_of_week": "вторник",
     "group": "207-41м",
     "audience": "ЭОиДОТ",
-    "department": "22",
+    "department": "33",
     "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
@@ -29377,7 +29489,7 @@
     "day_of_week": "понедельник",
     "group": "207-41м",
     "audience": "ЭОиДОТ",
-    "department": "22",
+    "department": "33",
     "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
@@ -29391,7 +29503,7 @@
     "day_of_week": "вторник",
     "group": "207-41м",
     "audience": "ЭОиДОТ",
-    "department": "22",
+    "department": "33",
     "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
@@ -29848,7 +29960,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Вагидова А.Х.-М.",
+    "fio": "Вагидова Анжела Хажи-Мусаевна",
     "pair_number": "3",
     "day_of_week": "вторник",
     "group": "206-41",
@@ -29862,7 +29974,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Вагидова А.Х.-М.",
+    "fio": "Вагидова Анжела Хажи-Мусаевна",
     "pair_number": "5",
     "day_of_week": "понедельник",
     "group": "206-51",
@@ -29876,7 +29988,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Вагидова А.Х.-М.",
+    "fio": "Вагидова Анжела Хажи-Мусаевна",
     "pair_number": "5",
     "day_of_week": "среда",
     "group": "206-51",
@@ -29890,7 +30002,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Вагидова А.Х.-М.",
+    "fio": "Вагидова Анжела Хажи-Мусаевна",
     "pair_number": "5",
     "day_of_week": "четверг",
     "group": "206-41",
@@ -30898,8 +31010,8 @@
     "subject_name": ""
   },
   {
-    "fio": "Шайдуров А.В.",
-    "pair_number": "1",
+    "fio": "Шайдуров Андрей Викторович",
+    "pair_number": "2",
     "day_of_week": "суббота",
     "group": "406-21",
     "audience": "К612",
@@ -30912,8 +31024,8 @@
     "subject_name": ""
   },
   {
-    "fio": "Шайдуров А.В.",
-    "pair_number": "2",
+    "fio": "Шайдуров Андрей Викторович",
+    "pair_number": "3",
     "day_of_week": "суббота",
     "group": "406-21",
     "audience": "К612",
@@ -31924,7 +32036,7 @@
     "pair_number": "2",
     "day_of_week": "понедельник",
     "group": "402-42",
-    "audience": "К526",
+    "audience": "К609",
     "department": "23",
     "week": "обе недели",
     "subgroup": "",
@@ -31952,7 +32064,7 @@
     "pair_number": "3",
     "day_of_week": "понедельник",
     "group": "402-22",
-    "audience": "К526",
+    "audience": "К609",
     "department": "23",
     "week": "обе недели",
     "subgroup": "",
@@ -31994,7 +32106,7 @@
     "pair_number": "3",
     "day_of_week": "пятница",
     "group": "402-41",
-    "audience": "К612",
+    "audience": "К609",
     "department": "23",
     "week": "обе недели",
     "subgroup": "",
@@ -33630,6 +33742,20 @@
   {
     "fio": "Кривицкая Марина Александровна",
     "pair_number": "4",
+    "day_of_week": "вторник",
+    "group": "605-31",
+    "audience": "У406",
+    "department": "24",
+    "week": "обе недели",
+    "subgroup": "б",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Кривицкая Марина Александровна",
+    "pair_number": "4",
     "day_of_week": "пятница",
     "group": "609-42",
     "audience": "У504",
@@ -33637,6 +33763,20 @@
     "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Кривицкая Марина Александровна",
+    "pair_number": "5",
+    "day_of_week": "вторник",
+    "group": "605-31",
+    "audience": "У406",
+    "department": "24",
+    "week": "обе недели",
+    "subgroup": "а",
+    "num_subgroups": 1,
     "is_external": false,
     "is_remote": false,
     "subject_name": ""
@@ -33688,13 +33828,13 @@
     "pair_number": "7",
     "day_of_week": "среда",
     "group": "609-51м",
-    "audience": "У501",
+    "audience": "ЭОиДОТ",
     "department": "24",
     "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
     "is_external": false,
-    "is_remote": false,
+    "is_remote": true,
     "subject_name": ""
   },
   {
@@ -33716,13 +33856,13 @@
     "pair_number": "8",
     "day_of_week": "среда",
     "group": "609-51м",
-    "audience": "У501",
+    "audience": "ЭОиДОТ",
     "department": "24",
     "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
     "is_external": false,
-    "is_remote": false,
+    "is_remote": true,
     "subject_name": ""
   },
   {
@@ -33772,7 +33912,7 @@
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "609-51",
-    "audience": "У605",
+    "audience": "У503",
     "department": "24",
     "week": "числитель",
     "subgroup": "",
@@ -33786,7 +33926,7 @@
     "pair_number": "4",
     "day_of_week": "пятница",
     "group": "609-52",
-    "audience": "У605",
+    "audience": "У503",
     "department": "24",
     "week": "обе недели",
     "subgroup": "",
@@ -33842,7 +33982,7 @@
     "pair_number": "5",
     "day_of_week": "пятница",
     "group": "609-51",
-    "audience": "У605",
+    "audience": "У503",
     "department": "24",
     "week": "знаменатель",
     "subgroup": "",
@@ -33856,7 +33996,7 @@
     "pair_number": "6",
     "day_of_week": "пятница",
     "group": "605-51",
-    "audience": "У605",
+    "audience": "У503",
     "department": "24",
     "week": "обе недели",
     "subgroup": "",
@@ -34726,7 +34866,7 @@
     "group": "501-16",
     "audience": "СОКЦОМиД",
     "department": "25",
-    "week": "обе недели",
+    "week": "знаменатель",
     "subgroup": "",
     "num_subgroups": 0,
     "is_external": false,
@@ -34741,6 +34881,20 @@
     "audience": "СОКЦОМиД",
     "department": "25",
     "week": "числитель",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Белоцерковцева Лариса Дмитриевна",
+    "pair_number": "6",
+    "day_of_week": "среда",
+    "group": "501-16",
+    "audience": "СОКЦОМиД",
+    "department": "25",
+    "week": "знаменатель",
     "subgroup": "",
     "num_subgroups": 0,
     "is_external": false,
@@ -35686,7 +35840,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Манойло М.Н.",
+    "fio": "Манойло Марк Николаевич",
     "pair_number": "4",
     "day_of_week": "среда",
     "group": "МИ-6",
@@ -35702,7 +35856,7 @@
   {
     "fio": "Каримов Ильнур Миратович",
     "pair_number": "2",
-    "day_of_week": "четверг",
+    "day_of_week": "суббота",
     "group": "501-35",
     "audience": "СОКБ",
     "department": "26",
@@ -35730,7 +35884,7 @@
   {
     "fio": "Каримов Ильнур Миратович",
     "pair_number": "3",
-    "day_of_week": "четверг",
+    "day_of_week": "суббота",
     "group": "501-35",
     "audience": "СОКБ",
     "department": "26",
@@ -36558,7 +36712,7 @@
     "pair_number": "3",
     "day_of_week": "пятница",
     "group": "402-21",
-    "audience": "К609",
+    "audience": "К612",
     "department": "23",
     "week": "обе недели",
     "subgroup": "",
@@ -37618,7 +37772,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Афанасьев С.А.",
+    "fio": "Афанасьев Сергей Александрович",
     "pair_number": "7",
     "day_of_week": "четверг",
     "group": "402-52м",
@@ -37632,7 +37786,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Афанасьев С.А.",
+    "fio": "Афанасьев Сергей Александрович",
     "pair_number": "8",
     "day_of_week": "четверг",
     "group": "402-52м",
@@ -43640,6 +43794,20 @@
   {
     "fio": "Забирова Венера Хажиахметовна",
     "pair_number": "2",
+    "day_of_week": "вторник",
+    "group": "101-31",
+    "audience": "К407",
+    "department": "37",
+    "week": "обе недели",
+    "subgroup": "б",
+    "num_subgroups": 1,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Забирова Венера Хажиахметовна",
+    "pair_number": "2",
     "day_of_week": "четверг",
     "group": "208-52",
     "audience": "К407",
@@ -43794,20 +43962,6 @@
   {
     "fio": "Забирова Венера Хажиахметовна",
     "pair_number": "5",
-    "day_of_week": "вторник",
-    "group": "101-31",
-    "audience": "К407",
-    "department": "37",
-    "week": "обе недели",
-    "subgroup": "б",
-    "num_subgroups": 1,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Забирова Венера Хажиахметовна",
-    "pair_number": "5",
     "day_of_week": "среда",
     "group": "404-21",
     "audience": "К407",
@@ -43908,7 +44062,7 @@
     "pair_number": "4",
     "day_of_week": "пятница",
     "group": "208-41",
-    "audience": "К406",
+    "audience": "К405",
     "department": "37",
     "week": "обе недели",
     "subgroup": "б",
@@ -44101,10 +44255,10 @@
   },
   {
     "fio": "Иванова Елена Александровна",
-    "pair_number": "4",
+    "pair_number": "2",
     "day_of_week": "четверг",
-    "group": "208-41",
-    "audience": "К408",
+    "group": "208-31",
+    "audience": "К413",
     "department": "37",
     "week": "обе недели",
     "subgroup": "",
@@ -44116,8 +44270,8 @@
   {
     "fio": "Иванова Елена Александровна",
     "pair_number": "4",
-    "day_of_week": "пятница",
-    "group": "208-31",
+    "day_of_week": "четверг",
+    "group": "208-41",
     "audience": "К408",
     "department": "37",
     "week": "обе недели",
@@ -44776,7 +44930,7 @@
     "pair_number": "4",
     "day_of_week": "пятница",
     "group": "208-41",
-    "audience": "К405",
+    "audience": "К406",
     "department": "37",
     "week": "обе недели",
     "subgroup": "а",
@@ -45378,7 +45532,7 @@
     "pair_number": "1",
     "day_of_week": "среда",
     "group": "206-51",
-    "audience": "К426",
+    "audience": "К709",
     "department": "37",
     "week": "обе недели",
     "subgroup": "",
@@ -45392,7 +45546,7 @@
     "pair_number": "1",
     "day_of_week": "пятница",
     "group": "407-51",
-    "audience": "К505",
+    "audience": "К413",
     "department": "37",
     "week": "обе недели",
     "subgroup": "",
@@ -45420,7 +45574,7 @@
     "pair_number": "2",
     "day_of_week": "пятница",
     "group": "102-51",
-    "audience": "К708",
+    "audience": "К413",
     "department": "37",
     "week": "обе недели",
     "subgroup": "",
@@ -45476,7 +45630,7 @@
     "pair_number": "3",
     "day_of_week": "пятница",
     "group": "405-51",
-    "audience": "К504",
+    "audience": "К413",
     "department": "37",
     "week": "обе недели",
     "subgroup": "",
@@ -48832,7 +48986,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Наконечный Н.В.",
+    "fio": "Наконечный Николай Владимирович",
     "pair_number": "4",
     "day_of_week": "суббота",
     "group": "304-31",
@@ -48846,7 +49000,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Наконечный Н.В.",
+    "fio": "Наконечный Николай Владимирович",
     "pair_number": "5",
     "day_of_week": "суббота",
     "group": "304-31",
@@ -53032,7 +53186,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "4",
     "day_of_week": "среда",
     "group": "608-32",
@@ -53046,7 +53200,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "4",
     "day_of_week": "среда",
     "group": "608-31",
@@ -53060,7 +53214,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "5",
     "day_of_week": "вторник",
     "group": "608-31",
@@ -53074,7 +53228,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "5",
     "day_of_week": "среда",
     "group": "608-31",
@@ -53088,7 +53242,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "5",
     "day_of_week": "среда",
     "group": "608-32",
@@ -53102,7 +53256,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "6",
     "day_of_week": "вторник",
     "group": "608-32",
@@ -53116,7 +53270,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "6",
     "day_of_week": "среда",
     "group": "608-31",
@@ -53130,7 +53284,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "6",
     "day_of_week": "среда",
     "group": "608-32",
@@ -53144,7 +53298,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "7",
     "day_of_week": "пятница",
     "group": "608-51м",
@@ -53158,7 +53312,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Самакалев С.С.",
+    "fio": "Самакалёв Степан Сергеевич",
     "pair_number": "8",
     "day_of_week": "пятница",
     "group": "608-51м",
@@ -55552,7 +55706,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "1",
     "day_of_week": "среда",
     "group": "501-31",
@@ -55566,7 +55720,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "1",
     "day_of_week": "четверг",
     "group": "501-32",
@@ -55580,7 +55734,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "2",
     "day_of_week": "понедельник",
     "group": "-----",
@@ -55594,7 +55748,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "2",
     "day_of_week": "среда",
     "group": "-------",
@@ -55608,7 +55762,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "2",
     "day_of_week": "четверг",
     "group": "----",
@@ -55622,7 +55776,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "------",
@@ -55636,7 +55790,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "3",
     "day_of_week": "понедельник",
     "group": "501-31",
@@ -55650,7 +55804,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "3",
     "day_of_week": "среда",
     "group": "501-32",
@@ -55664,7 +55818,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "3",
     "day_of_week": "суббота",
     "group": "501-31",
@@ -55678,7 +55832,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "4",
     "day_of_week": "среда",
     "group": "501-32",
@@ -55692,7 +55846,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "5",
     "day_of_week": "среда",
     "group": "----",
@@ -55706,7 +55860,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "5",
     "day_of_week": "пятница",
     "group": "501-35",
@@ -55720,7 +55874,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Бажухина И.В.",
+    "fio": "Бажухина Ирина Владимировна",
     "pair_number": "6",
     "day_of_week": "пятница",
     "group": "--",
@@ -55734,7 +55888,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "1",
     "day_of_week": "четверг",
     "group": "501-33",
@@ -55748,7 +55902,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "1",
     "day_of_week": "пятница",
     "group": "501-35",
@@ -55762,7 +55916,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "1",
     "day_of_week": "суббота",
     "group": "501-33",
@@ -55776,7 +55930,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "2",
     "day_of_week": "среда",
     "group": "-----",
@@ -55790,7 +55944,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "2",
     "day_of_week": "четверг",
     "group": "------",
@@ -55804,7 +55958,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "2",
     "day_of_week": "пятница",
     "group": "----",
@@ -55818,7 +55972,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "-----",
@@ -55832,7 +55986,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "3",
     "day_of_week": "среда",
     "group": "501-34",
@@ -55846,7 +56000,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "3",
     "day_of_week": "четверг",
     "group": "501-33",
@@ -55860,7 +56014,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "4",
     "day_of_week": "четверг",
     "group": "501-35",
@@ -55874,7 +56028,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "5",
     "day_of_week": "понедельник",
     "group": "501-34",
@@ -55888,7 +56042,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "5",
     "day_of_week": "четверг",
     "group": "---",
@@ -55902,7 +56056,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "5",
     "day_of_week": "пятница",
     "group": "501-34",
@@ -55916,7 +56070,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "6",
     "day_of_week": "понедельник",
     "group": "---",
@@ -55930,7 +56084,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Рамзина А.О.",
+    "fio": "Рамзина Анастасия Олеговна",
     "pair_number": "6",
     "day_of_week": "пятница",
     "group": "------",
@@ -57274,7 +57428,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Кайдалова А.А.",
+    "fio": "Кайдалова Анастасия Александровна",
     "pair_number": "1",
     "day_of_week": "суббота",
     "group": "204-41",
@@ -57288,7 +57442,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Кайдалова А.А.",
+    "fio": "Кайдалова Анастасия Александровна",
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "204-41",
@@ -57330,7 +57484,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Магарамов А.А.",
+    "fio": "Магарамов Аслан Аскерович",
     "pair_number": "5",
     "day_of_week": "понедельник",
     "group": "501-46",
@@ -57344,7 +57498,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Магарамов А.А.",
+    "fio": "Магарамов Аслан Аскерович",
     "pair_number": "5",
     "day_of_week": "вторник",
     "group": "204-31",
@@ -57358,7 +57512,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Магарамов А.А.",
+    "fio": "Магарамов Аслан Аскерович",
     "pair_number": "6",
     "day_of_week": "понедельник",
     "group": "501-46",
@@ -57640,6 +57794,20 @@
   {
     "fio": "Колесник Анна Андреевна",
     "pair_number": "2",
+    "day_of_week": "среда",
+    "group": "405-21",
+    "audience": "К508",
+    "department": "45",
+    "week": "обе недели",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Колесник Анна Андреевна",
+    "pair_number": "2",
     "day_of_week": "четверг",
     "group": "404-21",
     "audience": "К506",
@@ -57654,9 +57822,9 @@
   {
     "fio": "Колесник Анна Андреевна",
     "pair_number": "3",
-    "day_of_week": "четверг",
-    "group": "404-21",
-    "audience": "К506",
+    "day_of_week": "среда",
+    "group": "405-21",
+    "audience": "К508",
     "department": "45",
     "week": "обе недели",
     "subgroup": "",
@@ -57667,10 +57835,10 @@
   },
   {
     "fio": "Колесник Анна Андреевна",
-    "pair_number": "4",
-    "day_of_week": "среда",
-    "group": "405-21",
-    "audience": "К507",
+    "pair_number": "3",
+    "day_of_week": "четверг",
+    "group": "404-21",
+    "audience": "К506",
     "department": "45",
     "week": "обе недели",
     "subgroup": "",
@@ -57701,20 +57869,6 @@
     "audience": "К506",
     "department": "45",
     "week": "знаменатель",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Колесник Анна Андреевна",
-    "pair_number": "5",
-    "day_of_week": "среда",
-    "group": "405-21",
-    "audience": "К507",
-    "department": "45",
-    "week": "обе недели",
     "subgroup": "",
     "num_subgroups": 0,
     "is_external": false,
@@ -58300,7 +58454,7 @@
     "pair_number": "3",
     "day_of_week": "четверг",
     "group": "609-41",
-    "audience": "А502",
+    "audience": "У505",
     "department": "4",
     "week": "обе недели",
     "subgroup": "б",
@@ -58426,7 +58580,7 @@
     "pair_number": "3",
     "day_of_week": "вторник",
     "group": "501-56",
-    "audience": "К518",
+    "audience": "К428",
     "department": "4",
     "week": "обе недели",
     "subgroup": "в",
@@ -58899,34 +59053,6 @@
   },
   {
     "fio": "Лукиянчина Елена Владимировна",
-    "pair_number": "2",
-    "day_of_week": "среда",
-    "group": "401-41",
-    "audience": "",
-    "department": "45",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Лукиянчина Елена Владимировна",
-    "pair_number": "2",
-    "day_of_week": "среда",
-    "group": "303-41",
-    "audience": "",
-    "department": "45",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Лукиянчина Елена Владимировна",
     "pair_number": "3",
     "day_of_week": "понедельник",
     "group": "404-21",
@@ -58955,34 +59081,6 @@
   },
   {
     "fio": "Лукиянчина Елена Владимировна",
-    "pair_number": "3",
-    "day_of_week": "среда",
-    "group": "401-21",
-    "audience": "",
-    "department": "45",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Лукиянчина Елена Владимировна",
-    "pair_number": "3",
-    "day_of_week": "среда",
-    "group": "303-21",
-    "audience": "",
-    "department": "45",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Лукиянчина Елена Владимировна",
     "pair_number": "4",
     "day_of_week": "понедельник",
     "group": "404-21",
@@ -59001,34 +59099,6 @@
     "day_of_week": "вторник",
     "group": "405-21",
     "audience": "К507",
-    "department": "45",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Лукиянчина Елена Владимировна",
-    "pair_number": "4",
-    "day_of_week": "среда",
-    "group": "401-21",
-    "audience": "",
-    "department": "45",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Лукиянчина Елена Владимировна",
-    "pair_number": "4",
-    "day_of_week": "среда",
-    "group": "303-21",
-    "audience": "",
     "department": "45",
     "week": "обе недели",
     "subgroup": "",
@@ -59150,7 +59220,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Срыбник-Серебряный А.С.",
+    "fio": "Срыбник-Серебряный Александр Сергеевич",
     "pair_number": "2",
     "day_of_week": "суббота",
     "group": "404-41",
@@ -59164,7 +59234,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Срыбник-Серебряный А.С.",
+    "fio": "Срыбник-Серебряный Александр Сергеевич",
     "pair_number": "3",
     "day_of_week": "суббота",
     "group": "404-41",
@@ -59178,7 +59248,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Срыбник-Серебряный А.С.",
+    "fio": "Срыбник-Серебряный Александр Сергеевич",
     "pair_number": "3",
     "day_of_week": "суббота",
     "group": "404-31",
@@ -59402,7 +59472,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Афанасьев С.А.",
+    "fio": "Афанасьев Сергей Александрович",
     "pair_number": "7",
     "day_of_week": "вторник",
     "group": "405-51м",
@@ -59626,7 +59696,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Шарипова Л.А.",
+    "fio": "Шарипова Лайсан Ахматовна",
     "pair_number": "7",
     "day_of_week": "среда",
     "group": "404-51м",
@@ -59640,7 +59710,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Шарипова Л.А.",
+    "fio": "Шарипова Лайсан Ахматовна",
     "pair_number": "7",
     "day_of_week": "среда",
     "group": "405-51м",
@@ -59654,7 +59724,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Шарипова Л.А.",
+    "fio": "Шарипова Лайсан Ахматовна",
     "pair_number": "7",
     "day_of_week": "пятница",
     "group": "404-51м",
@@ -59668,7 +59738,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Шарипова Л.А.",
+    "fio": "Шарипова Лайсан Ахматовна",
     "pair_number": "8",
     "day_of_week": "среда",
     "group": "405-51м",
@@ -59682,7 +59752,7 @@
     "subject_name": ""
   },
   {
-    "fio": "Шарипова Л.А.",
+    "fio": "Шарипова Лайсан Ахматовна",
     "pair_number": "8",
     "day_of_week": "пятница",
     "group": "404-51м",
@@ -60253,146 +60323,6 @@
     "num_subgroups": 0,
     "is_external": true,
     "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "1",
-    "day_of_week": "понедельник",
-    "group": "406-31",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "числитель",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "1",
-    "day_of_week": "понедельник",
-    "group": "208-32",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "знаменатель",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "1",
-    "day_of_week": "четверг",
-    "group": "202-31",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "2",
-    "day_of_week": "понедельник",
-    "group": "605-21",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "числитель",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "2",
-    "day_of_week": "среда",
-    "group": "202-41",
-    "audience": "Г201",
-    "department": "20",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": false,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "2",
-    "day_of_week": "четверг",
-    "group": "202-31",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "5",
-    "day_of_week": "понедельник",
-    "group": "214-31",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "числитель",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "5",
-    "day_of_week": "вторник",
-    "group": "208-31",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "знаменатель",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "5",
-    "day_of_week": "четверг",
-    "group": "213-41",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "обе недели",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
-    "subject_name": ""
-  },
-  {
-    "fio": "Бабич Любовь Владимировна",
-    "pair_number": "6",
-    "day_of_week": "среда",
-    "group": "203-11",
-    "audience": "ЭОиДОТ",
-    "department": "20",
-    "week": "числитель",
-    "subgroup": "",
-    "num_subgroups": 0,
-    "is_external": false,
-    "is_remote": true,
     "subject_name": ""
   },
   {
@@ -60890,7 +60820,7 @@
     "pair_number": "4",
     "day_of_week": "вторник",
     "group": "210-31",
-    "audience": "К420",
+    "audience": "К427",
     "department": "44",
     "week": "обе недели",
     "subgroup": "",
@@ -61100,7 +61030,7 @@
     "pair_number": "7",
     "day_of_week": "среда",
     "group": "215-41",
-    "audience": "К406",
+    "audience": "К433",
     "department": "44",
     "week": "обе недели",
     "subgroup": "",
@@ -61114,7 +61044,7 @@
     "pair_number": "7",
     "day_of_week": "четверг",
     "group": "215-41",
-    "audience": "К406",
+    "audience": "К433",
     "department": "44",
     "week": "обе недели",
     "subgroup": "",
@@ -61128,7 +61058,7 @@
     "pair_number": "7",
     "day_of_week": "пятница",
     "group": "215-41",
-    "audience": "К406",
+    "audience": "К433",
     "department": "44",
     "week": "обе недели",
     "subgroup": "",
@@ -61142,7 +61072,7 @@
     "pair_number": "8",
     "day_of_week": "среда",
     "group": "215-41",
-    "audience": "К406",
+    "audience": "К433",
     "department": "44",
     "week": "обе недели",
     "subgroup": "",
@@ -61156,7 +61086,7 @@
     "pair_number": "8",
     "day_of_week": "четверг",
     "group": "215-41",
-    "audience": "К406",
+    "audience": "К433",
     "department": "44",
     "week": "обе недели",
     "subgroup": "",
@@ -61170,7 +61100,7 @@
     "pair_number": "8",
     "day_of_week": "пятница",
     "group": "215-41",
-    "audience": "К406",
+    "audience": "К433",
     "department": "44",
     "week": "обе недели",
     "subgroup": "",
@@ -63732,7 +63662,7 @@
     "pair_number": "4",
     "day_of_week": "вторник",
     "group": "305-22",
-    "audience": "А320",
+    "audience": "А509",
     "department": "49",
     "week": "обе недели",
     "subgroup": "",
@@ -65340,6 +65270,34 @@
   {
     "fio": "Батыршина Кристина Геннадьевна",
     "pair_number": "5",
+    "day_of_week": "вторник",
+    "group": "407-31",
+    "audience": "К604",
+    "department": "20",
+    "week": "знаменатель",
+    "subgroup": "",
+    "num_subgroups": 1,
+    "is_external": true,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Батыршина Кристина Геннадьевна",
+    "pair_number": "5",
+    "day_of_week": "среда",
+    "group": "605-21",
+    "audience": "У708",
+    "department": "20",
+    "week": "числитель",
+    "subgroup": "",
+    "num_subgroups": 1,
+    "is_external": true,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Батыршина Кристина Геннадьевна",
+    "pair_number": "5",
     "day_of_week": "среда",
     "group": "203-21",
     "audience": "Г307",
@@ -65369,8 +65327,8 @@
     "fio": "Батыршина Кристина Геннадьевна",
     "pair_number": "5",
     "day_of_week": "четверг",
-    "group": "407-31",
-    "audience": "К507",
+    "group": "214-31",
+    "audience": "К412",
     "department": "20",
     "week": "знаменатель",
     "subgroup": "",
@@ -65438,6 +65396,34 @@
   {
     "fio": "Батыршина Кристина Геннадьевна",
     "pair_number": "6",
+    "day_of_week": "вторник",
+    "group": "406-31",
+    "audience": "К604",
+    "department": "20",
+    "week": "знаменатель",
+    "subgroup": "",
+    "num_subgroups": 1,
+    "is_external": true,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Батыршина Кристина Геннадьевна",
+    "pair_number": "6",
+    "day_of_week": "среда",
+    "group": "605-21",
+    "audience": "У708",
+    "department": "20",
+    "week": "числитель",
+    "subgroup": "",
+    "num_subgroups": 1,
+    "is_external": true,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Батыршина Кристина Геннадьевна",
+    "pair_number": "6",
     "day_of_week": "среда",
     "group": "203-21",
     "audience": "Г307",
@@ -65445,6 +65431,34 @@
     "week": "знаменатель",
     "subgroup": "б",
     "num_subgroups": 1,
+    "is_external": true,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Батыршина Кристина Геннадьевна",
+    "pair_number": "6",
+    "day_of_week": "пятница",
+    "group": "208-32",
+    "audience": "К408",
+    "department": "20",
+    "week": "числитель",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": true,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Батыршина Кристина Геннадьевна",
+    "pair_number": "6",
+    "day_of_week": "пятница",
+    "group": "208-31",
+    "audience": "К408",
+    "department": "20",
+    "week": "знаменатель",
+    "subgroup": "",
+    "num_subgroups": 0,
     "is_external": true,
     "is_remote": false,
     "subject_name": ""
@@ -65522,6 +65536,20 @@
   {
     "fio": "Шубина Ольга Александровна",
     "pair_number": "2",
+    "day_of_week": "суббота",
+    "group": "213-41",
+    "audience": "Г305",
+    "department": "20",
+    "week": "обе недели",
+    "subgroup": "",
+    "num_subgroups": 0,
+    "is_external": false,
+    "is_remote": false,
+    "subject_name": ""
+  },
+  {
+    "fio": "Шубина Ольга Александровна",
+    "pair_number": "3",
     "day_of_week": "суббота",
     "group": "213-41",
     "audience": "Г305",
