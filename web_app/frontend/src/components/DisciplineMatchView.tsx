@@ -17,7 +17,7 @@ export interface MatchItem {
   alternatives: MatchAlternative[];
 }
 
-type DisciplineMatchSource = 'intermediate' | 'aspi';
+type DisciplineMatchSource = 'intermediate' | 'aspi' | 'spo';
 
 const DisciplineMatchView: React.FC = () => {
   const [source, setSource] = useState<DisciplineMatchSource>('intermediate');
@@ -40,8 +40,7 @@ const DisciplineMatchView: React.FC = () => {
     setLoading(true);
     setStatusMessage('Загрузка несовпадающих дисциплин...');
     try {
-      const table = source === 'aspi' ? 'aspi' : 'intermediate';
-      const params = new URLSearchParams({ table });
+      const params = new URLSearchParams({ table: source });
       if (stripText.trim()) {
         params.set('strip_text', stripText.trim());
         params.set('strip_at', stripAt);
@@ -82,11 +81,10 @@ const DisciplineMatchView: React.FC = () => {
     setReplacing(original);
     setStatusMessage('Выполняю замену...');
     try {
-      const table = source === 'aspi' ? 'aspi' : 'intermediate';
       const res = await axios.post(`${API_BASE}/discipline-match/replace`, {
         original,
         replacement: replacement.trim(),
-        table
+        table: source
       });
       const data = res.data as { updated?: number; error?: string };
       if (data.error) {
@@ -130,8 +128,7 @@ const DisciplineMatchView: React.FC = () => {
     setApplying(true);
     setStatusMessage('Применяю порог в БД...');
     try {
-      const table = source === 'aspi' ? 'aspi' : 'intermediate';
-      const body: Record<string, unknown> = { threshold: t, table, match_full: matchFull };
+      const body: Record<string, unknown> = { threshold: t, table: source, match_full: matchFull };
       if (stripText.trim()) {
         body.strip_text = stripText.trim();
         body.strip_at = stripAt;
@@ -198,7 +195,13 @@ const DisciplineMatchView: React.FC = () => {
     if (newSource === source) return;
     setSource(newSource);
     setItems([]);
-    setStatusMessage(newSource === 'aspi' ? 'Выбрана таблица аспирантов (timetable_aspi). Нажмите «Загрузить несовпадающие».' : 'Выбрана таблица бакалавров/магистров. Нажмите «Загрузить несовпадающие».');
+    setStatusMessage(
+      newSource === 'aspi'
+        ? 'Выбрана таблица аспирантов (timetable_aspi). Нажмите «Загрузить несовпадающие».'
+        : newSource === 'spo'
+          ? 'Выбрана таблица СПО (timetable_spo). Нажмите «Загрузить несовпадающие».'
+          : 'Выбрана таблица бакалавров/магистров. Нажмите «Загрузить несовпадающие».'
+    );
     setHiddenOriginals(new Set());
     setShowHiddenOnly(false);
   }, [source]);
@@ -222,10 +225,19 @@ const DisciplineMatchView: React.FC = () => {
           >
             Аспиранты
           </button>
+          <button
+            type="button"
+            className={`discipline-match-tab ${source === 'spo' ? 'discipline-match-tab-active' : ''}`}
+            onClick={() => onSourceChange('spo')}
+          >
+            СПО
+          </button>
         </div>
         <p className="discipline-match-desc">
           {source === 'aspi' ? (
             <>Загружаются названия из <code>timetable_aspi</code>, которых нет в <code>info/discipline.json</code>. Замены применяются только в таблице аспирантов.</>
+          ) : source === 'spo' ? (
+            <>Загружаются названия из <code>timetable_spo</code>, которых нет в <code>info/discipline.json</code>. Замены применяются только в таблице СПО.</>
           ) : (
             <>Загружаются названия из <code>intermediate_timetable</code>, которых нет в <code>info/discipline.json</code>. Кнопка «Применить порог в БД» автоматически заменяет в БД все дисциплины с точностью ≥ порога; остальные — вручную по кнопкам.</>
           )}

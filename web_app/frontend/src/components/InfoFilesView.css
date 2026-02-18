@@ -166,6 +166,12 @@
 }
 
 /* Замена в названии: две колонки «Заменить» / «На» */
+.info-files-replace-hint {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.9rem;
+  color: #666;
+}
+
 .info-files-list-replace {
   margin-bottom: 1rem;
 }

@@ -76,7 +76,10 @@ script_status = {
     'parse_aspi': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'normalize_aspi': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'load_aspi_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
-    'merge_aspi_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None}
+    'merge_aspi_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'parse_spo': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'load_spo_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'merge_spo_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
 
 def _make_json_serializable(obj):
@@ -90,21 +93,22 @@ def _make_json_serializable(obj):
     return obj
 
 
-# Разрешённые таблицы для просмотра записей (включая расписание аспирантов)
-ALLOWED_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'timetable_aspi')
+# Разрешённые таблицы для просмотра записей (включая расписания аспирантов и СПО)
+ALLOWED_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'timetable_aspi', 'timetable_spo')
 
-# Таблицы для бэкапа/восстановления (включая schedule и расписание аспирантов)
-BACKUP_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'timetable_aspi', 'schedule')
+# Таблицы для бэкапа/восстановления (включая schedule и расписания аспирантов/СПО)
+BACKUP_TABLES = ('timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'timetable_aspi', 'timetable_spo', 'schedule')
 BACKUP_TABLE_LABELS = {
     'timetable_cleaned': 'Спаршенное расписание',
     'timetable_teacher': 'Занятость преподавателей',
     'intermediate_timetable': 'Промежуточное расписание',
     'timetable_aspi': 'Расписание аспирантов',
+    'timetable_spo': 'Расписание СПО',
     'schedule': 'Расписание'
 }
 
 def get_table_param():
-    """Возвращает имя таблицы из query param (timetable_cleaned, timetable_teacher, intermediate_timetable, timetable_aspi)."""
+    """Возвращает имя таблицы из query param (timetable_cleaned, timetable_teacher, intermediate_timetable, timetable_aspi, timetable_spo)."""
     table = request.args.get('table', '').strip()
     if table in ALLOWED_TABLES:
         return table
@@ -367,11 +371,11 @@ def run_clean_audiences():
             bufsize=1
         )
         
-        script_status['clean_audiences']['progress'] = 40
+        script_status['clean_audiences']['progress'] = 20
         script_status['clean_audiences']['message'] = 'Обработка данных...'
         
-        # Читаем вывод в реальном времени
-        output_lines = []
+        # Читаем вывод в реальном времени, парсим PROGRESS: current total
+        progress_re = re.compile(r'^PROGRESS:\s*(\d+)\s+(\d+)\s*$')
         stdout_stream = process.stdout
         while True:
             output = stdout_stream.readline() if stdout_stream is not None else ''
@@ -380,12 +384,14 @@ def run_clean_audiences():
             if output:
                 line = output.strip()
                 if line:
-                    output_lines.append(line)
                     print(f"Output: {line}")
-                    # Обновляем прогресс на основе количества строк
-                    progress = min(40 + min(len(output_lines) * 2, 50), 90)
-                    script_status['clean_audiences']['progress'] = progress
-                    script_status['clean_audiences']['message'] = f'Обработано записей: {len(output_lines)}'
+                    m = progress_re.match(line)
+                    if m:
+                        current, total = int(m.group(1)), int(m.group(2))
+                        if total > 0:
+                            pct = min(90, 20 + int(70 * current / total))
+                            script_status['clean_audiences']['progress'] = pct
+                            script_status['clean_audiences']['message'] = f'Обработано строк: {current} из {total}'
         
         # Ждем завершения процесса
         return_code = process.wait()
@@ -520,8 +526,8 @@ def run_load_timetable_to_db():
 
 def run_merge_timetable():
     """Слияние timetable_cleaned и timetable_teacher в intermediate_timetable.
-    Данные только из timetable_cleaned (кроме id), ФИО только из timetable_teacher.
-    Join по дню, паре, группе; проверки: неделя и аудитория совпадают или нет (week_error, audience_error).
+    Данные из timetable_cleaned; из занятости преподавателей берётся только ФИО.
+    Совпадение строго по дню недели и аудитории (больше ничего из занятости не подставляем).
     """
     script_status['merge_timetable']['running'] = True
     script_status['merge_timetable']['progress'] = 0
@@ -567,7 +573,8 @@ def run_merge_timetable():
         script_status['merge_timetable']['message'] = 'Очистка и слияние данных...'
         cursor.execute("ALTER TABLE timetable_cleaned ADD COLUMN IF NOT EXISTS duration_pairs NUMERIC(3,1)")
         conn.commit()
-        # Основа — вся timetable_cleaned; из timetable_teacher только fio и флаги ошибок (по одному преподавателю на день/пара/группа).
+        # Основа — timetable_cleaned; из занятости только ФИО. Совпадение по дню + аудитория + пара + группа,
+        # чтобы одна ячейка (день, ауд., пара, группа) однозначно соответствовала одному преподавателю.
         cursor.execute("""
             INSERT INTO intermediate_timetable (
                 cleaned_id, teacher_id,
@@ -596,24 +603,24 @@ def run_merge_timetable():
                 c.is_remote,
                 c.num_subgroups,
                 t.fio,
-                CASE WHEN t.id IS NULL THEN NULL ELSE (NULLIF(TRIM(c.week_type), '') IS DISTINCT FROM NULLIF(TRIM(t.week_type), '')) END AS week_error,
+                NULL AS week_error,
                 c.duration_pairs,
-                CASE WHEN t.id IS NULL THEN NULL ELSE (NULLIF(TRIM(c.audience), '') IS DISTINCT FROM NULLIF(TRIM(t.audience), '')) END AS audience_error
+                NULL AS audience_error
             FROM timetable_cleaned c
             LEFT JOIN (
-                SELECT id, day_of_week, pair_number, group_name, week_type, fio, audience,
+                SELECT id, day_of_week, pair_number, group_name, audience, fio,
                        ROW_NUMBER() OVER (
-                           PARTITION BY NULLIF(TRIM(day_of_week), ''), pair_number, NULLIF(TRIM(group_name), ''),
-                                      NULLIF(TRIM(week_type), '')
+                           PARTITION BY NULLIF(TRIM(day_of_week), ''), NULLIF(TRIM(COALESCE(audience, '')), ''),
+                                      pair_number, NULLIF(TRIM(COALESCE(group_name, '')), '')
                            ORDER BY id
                        ) AS rn
                 FROM timetable_teacher
             ) t
                 ON t.rn = 1
                AND NULLIF(TRIM(c.day_of_week), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.day_of_week), '')
+               AND NULLIF(TRIM(COALESCE(c.audience, '')), '') IS NOT DISTINCT FROM NULLIF(TRIM(COALESCE(t.audience, '')), '')
                AND c.pair_number IS NOT DISTINCT FROM t.pair_number
-               AND NULLIF(TRIM(c.group_name), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.group_name), '')
-               AND NULLIF(TRIM(c.week_type), '') IS NOT DISTINCT FROM NULLIF(TRIM(t.week_type), '')
+               AND NULLIF(TRIM(COALESCE(c.group_name, '')), '') IS NOT DISTINCT FROM NULLIF(TRIM(COALESCE(t.group_name, '')), '')
         """)
         conn.commit()
         n = cursor.rowcount
@@ -915,6 +922,76 @@ def run_parse_aspi_route():
     return jsonify({'message': 'Script started'})
 
 
+def run_parse_spo():
+    """Запускает spo/parse_spo.py — парсинг расписания СПО из .xlsx в spo/spo → JSON в spo/output."""
+    script_status['parse_spo']['running'] = True
+    script_status['parse_spo']['progress'] = 0
+    script_status['parse_spo']['message'] = 'Начало парсинга расписания СПО...'
+    script_status['parse_spo']['error'] = None
+    try:
+        project_root = get_project_root()
+        spo_dir = os.path.join(project_root, 'spo')
+        script_path = os.path.join(spo_dir, 'parse_spo.py')
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"Скрипт не найден: {script_path}")
+        script_status['parse_spo']['progress'] = 10
+        script_status['parse_spo']['message'] = 'Запуск parse_spo.py...'
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUNBUFFERED': '1'}
+        process = subprocess.Popen(
+            [sys.executable, '-u', script_path],
+            cwd=spo_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
+            bufsize=1
+        )
+        script_status['parse_spo']['progress'] = 40
+        script_status['parse_spo']['message'] = 'Обработка .xlsx файлов...'
+        output_lines = []
+        stdout_stream = process.stdout
+        while True:
+            out = stdout_stream.readline() if stdout_stream is not None else ''
+            if out == '' and process.poll() is not None:
+                break
+            if out:
+                line = out.strip()
+                if line:
+                    output_lines.append(line)
+                    script_status['parse_spo']['progress'] = min(40 + min(len(output_lines) * 5, 50), 90)
+                    script_status['parse_spo']['message'] = line[:200] if len(line) > 200 else line
+                    print(f"[parse_spo] {line}", flush=True)
+        return_code = process.wait()
+        stderr_output = '\n'.join(output_lines[-5:]) if output_lines else ''
+        if return_code != 0:
+            error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
+            script_status['parse_spo']['error'] = error_msg
+            script_status['parse_spo']['message'] = 'Ошибка при выполнении скрипта'
+            script_status['parse_spo']['progress'] = 0
+        else:
+            script_status['parse_spo']['progress'] = 100
+            script_status['parse_spo']['message'] = 'Парсинг расписания СПО завершён. Результаты в spo/output/'
+    except Exception as e:
+        script_status['parse_spo']['error'] = str(e)
+        script_status['parse_spo']['message'] = f'Ошибка: {str(e)}'
+        script_status['parse_spo']['progress'] = 0
+    finally:
+        script_status['parse_spo']['running'] = False
+
+
+@app.route('/api/run/parse_spo', methods=['POST'])
+def run_parse_spo_route():
+    """Запускает parse_spo.py (парсинг расписания СПО из .xlsx)."""
+    if script_status['parse_spo']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_parse_spo)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
 def run_normalize_aspi():
     """Запускает normalize_aspi.py — нормализация JSON аспирантов (ФИО, дни, дисциплины, audience)."""
     script_status['normalize_aspi']['running'] = True
@@ -991,6 +1068,11 @@ ASPI_OUTPUT_SKIP = ('_all.json', 'unresolved_fio.json', 'fio_overrides.json', 'u
 def _aspi_output_dir():
     """Единый абсолютный путь к aspi/output для чтения/записи и для передачи нормализатору."""
     return os.path.abspath(os.path.join(get_project_root(), 'aspi', 'output'))
+
+
+def _spo_output_dir():
+    """Единый абсолютный путь к spo/output для чтения/записи и для передачи загрузчику."""
+    return os.path.abspath(os.path.join(get_project_root(), 'spo', 'output'))
 
 
 @app.route('/api/aspi/unresolved', methods=['GET'])
@@ -1220,6 +1302,128 @@ def run_load_aspi_to_db_route():
     return jsonify({'message': 'Script started'})
 
 
+def run_load_spo_to_db():
+    """Загружает JSON из spo/output/_all.json в таблицу timetable_spo."""
+    script_status['load_spo_to_db']['running'] = True
+    script_status['load_spo_to_db']['progress'] = 0
+    script_status['load_spo_to_db']['message'] = 'Подготовка загрузки расписания СПО в БД...'
+    script_status['load_spo_to_db']['error'] = None
+    try:
+        spo_output = _spo_output_dir()
+        path = os.path.join(spo_output, '_all.json')
+        if not os.path.isfile(path):
+            raise FileNotFoundError('Файл spo/output/_all.json не найден. Сначала выполните «Парсинг СПО».')
+        script_status['load_spo_to_db']['progress'] = 10
+        script_status['load_spo_to_db']['message'] = 'Чтение spo/output/_all.json...'
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            all_rows = data
+        elif isinstance(data, dict):
+            all_rows = []
+            for v in data.values():
+                if isinstance(v, list):
+                    all_rows.extend(v)
+        else:
+            all_rows = []
+        if not all_rows:
+            raise ValueError('Нет записей для загрузки (пустой _all.json).')
+
+        script_status['load_spo_to_db']['progress'] = 30
+        script_status['load_spo_to_db']['message'] = f'Загрузка в таблицу timetable_spo ({len(all_rows)} записей)...'
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS timetable_spo (
+                id SERIAL PRIMARY KEY,
+                date DATE,
+                day_of_week VARCHAR(50),
+                pair_number INTEGER,
+                pair_time TEXT,
+                time_start TEXT,
+                time_end TEXT,
+                subject_name TEXT,
+                discipline_original TEXT,
+                audience TEXT,
+                group_name VARCHAR(100),
+                subgroup INTEGER,
+                week_type VARCHAR(50),
+                fio TEXT,
+                course VARCHAR(20),
+                institute TEXT,
+                source_file TEXT,
+                sheet_name TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+        cursor.execute("ALTER TABLE timetable_spo ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        cursor.execute("ALTER TABLE timetable_spo ADD COLUMN IF NOT EXISTS institute TEXT")
+        conn.commit()
+        cursor.execute("TRUNCATE TABLE timetable_spo")
+        conn.commit()
+
+        def _to_date(v):
+            s = (v or '').strip()
+            if not s:
+                return None
+            try:
+                return datetime.strptime(s, '%d.%m.%Y').date()
+            except Exception:
+                return None
+
+        def _row_vals(rec):
+            return (
+                _to_date(rec.get('date')),
+                (rec.get('day_of_week') or '').strip() or None,
+                rec.get('pair_number') if rec.get('pair_number') is not None else None,
+                (rec.get('pair_time') or '').strip() or None,
+                (rec.get('time_start') or '').strip() or None,
+                (rec.get('time_end') or '').strip() or None,
+                (rec.get('subject_name') or '').strip() or None,
+                (rec.get('discipline_original') or '').strip() or None,
+                (rec.get('audience') or '').strip() or None,
+                (rec.get('group_name') or '').strip() or None,
+                rec.get('subgroup') if rec.get('subgroup') is not None else None,
+                (rec.get('week_type') or '').strip() or None,
+                (rec.get('fio') or '').strip() or None,
+                (rec.get('course') or '').strip() or None,
+                (rec.get('institute') or '').strip() or None,
+                (rec.get('source_file') or '').strip() or None,
+                (rec.get('sheet_name') or '').strip() or None,
+            )
+
+        rows_to_insert = [_row_vals(rec) for rec in all_rows if isinstance(rec, dict)]
+        insert_sql = """
+            INSERT INTO timetable_spo (date, day_of_week, pair_number, pair_time, time_start, time_end,
+                subject_name, discipline_original, audience, group_name, subgroup, week_type, fio, course, institute, source_file, sheet_name)
+            VALUES %s
+        """
+        execute_values(cursor, insert_sql, rows_to_insert)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        script_status['load_spo_to_db']['progress'] = 100
+        script_status['load_spo_to_db']['message'] = f'Готово. Загружено записей в timetable_spo: {len(rows_to_insert)}'
+    except Exception as e:
+        script_status['load_spo_to_db']['error'] = str(e)
+        script_status['load_spo_to_db']['message'] = f'Ошибка: {str(e)}'
+        script_status['load_spo_to_db']['progress'] = 0
+    finally:
+        script_status['load_spo_to_db']['running'] = False
+
+
+@app.route('/api/run/load_spo_to_db', methods=['POST'])
+def run_load_spo_to_db_route():
+    """Загружает расписание СПО из spo/output/_all.json в timetable_spo."""
+    if script_status['load_spo_to_db']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_load_spo_to_db)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
 def run_merge_aspi_to_intermediate():
     """Добавляет записи из timetable_aspi в intermediate_timetable."""
     script_status['merge_aspi_to_intermediate']['running'] = True
@@ -1297,6 +1501,86 @@ def run_merge_aspi_to_intermediate_route():
     if script_status['merge_aspi_to_intermediate']['running']:
         return jsonify({'error': 'Script is already running'}), 400
     thread = threading.Thread(target=run_merge_aspi_to_intermediate)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
+def run_merge_spo_to_intermediate():
+    """Добавляет записи из timetable_spo в intermediate_timetable."""
+    script_status['merge_spo_to_intermediate']['running'] = True
+    script_status['merge_spo_to_intermediate']['progress'] = 0
+    script_status['merge_spo_to_intermediate']['message'] = 'Добавление расписания СПО в intermediate_timetable...'
+    script_status['merge_spo_to_intermediate']['error'] = None
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'intermediate_timetable'"
+        )
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            raise RuntimeError('Таблица intermediate_timetable не найдена. Сначала выполните «Слияние расписания» во вкладке «Бакалавры + магистры».')
+        cursor.execute(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'timetable_spo'"
+        )
+        if not cursor.fetchone():
+            cursor.close()
+            conn.close()
+            raise RuntimeError('Таблица timetable_spo не найдена. Сначала выполните «Добавить в БД» для СПО.')
+        script_status['merge_spo_to_intermediate']['progress'] = 30
+        script_status['merge_spo_to_intermediate']['message'] = 'Копирование данных timetable_spo → intermediate_timetable...'
+        cursor.execute("""
+            INSERT INTO intermediate_timetable (
+                cleaned_id, teacher_id, day_of_week, pair_number, subject_name, discipline_original,
+                lecture_type, audience, group_name, week_type, subgroup, institute, course, direction,
+                department, is_external, is_remote, num_subgroups, fio, week_error, audience_error
+            )
+            SELECT
+                NULL,
+                NULL,
+                day_of_week,
+                pair_number,
+                subject_name,
+                discipline_original,
+                NULL,
+                audience,
+                group_name,
+                COALESCE(week_type, 'обе недели'),
+                subgroup,
+                institute,
+                course,
+                NULL,
+                NULL,
+                FALSE,
+                FALSE,
+                NULL,
+                fio,
+                NULL,
+                NULL
+            FROM timetable_spo
+        """)
+        conn.commit()
+        n = cursor.rowcount
+        cursor.close()
+        conn.close()
+        script_status['merge_spo_to_intermediate']['progress'] = 100
+        script_status['merge_spo_to_intermediate']['message'] = f'Готово. Добавлено записей СПО в intermediate_timetable: {n}'
+    except Exception as e:
+        script_status['merge_spo_to_intermediate']['error'] = str(e)
+        script_status['merge_spo_to_intermediate']['message'] = f'Ошибка: {str(e)}'
+        script_status['merge_spo_to_intermediate']['progress'] = 0
+    finally:
+        script_status['merge_spo_to_intermediate']['running'] = False
+
+
+@app.route('/api/run/merge_spo_to_intermediate', methods=['POST'])
+def run_merge_spo_to_intermediate_route():
+    """Добавляет расписание СПО из timetable_spo в intermediate_timetable."""
+    if script_status['merge_spo_to_intermediate']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_merge_spo_to_intermediate)
     thread.daemon = True
     thread.start()
     return jsonify({'message': 'Script started'})
@@ -1397,7 +1681,7 @@ def run_fetch_teachers_route():
 
 @app.route('/api/db/stats', methods=['GET'])
 def get_db_stats():
-    """Возвращает статистику из базы данных (timetable_cleaned, timetable_teacher, intermediate_timetable, timetable_aspi)"""
+    """Возвращает статистику из базы данных (timetable_cleaned, timetable_teacher, intermediate_timetable, timetable_aspi, timetable_spo)"""
     try:
         table = get_table_param()
         conn = psycopg2.connect(**DB_CONFIG)
@@ -1416,6 +1700,18 @@ def get_db_stats():
             by_day = cursor.fetchall()
             by_type = []
             cursor.execute("SELECT MAX(created_at) as last_update FROM timetable_aspi")
+            row = cursor.fetchone()
+            last_update = row['last_update'] if row else None
+        elif table == 'timetable_spo':
+            cursor.execute("""
+                SELECT day_of_week, COUNT(*) as count
+                FROM timetable_spo
+                GROUP BY day_of_week
+                ORDER BY day_of_week
+            """)
+            by_day = cursor.fetchall()
+            by_type = []
+            cursor.execute("SELECT MAX(created_at) as last_update FROM timetable_spo")
             row = cursor.fetchone()
             last_update = row['last_update'] if row else None
         elif table == 'intermediate_timetable':
@@ -1536,9 +1832,9 @@ def get_db_records():
             where_conditions.append("audience ILIKE %s")
             query_params.append(f"%{filters['audience']}%")
         
-        # Фильтр по ФИО преподавателя (intermediate, aspi — только fio)
+        # Фильтр по ФИО преподавателя (intermediate/aspi/spo — только fio)
         if filters['fio']:
-            if table in ('timetable_teacher', 'intermediate_timetable', 'timetable_aspi'):
+            if table in ('timetable_teacher', 'intermediate_timetable', 'timetable_aspi', 'timetable_spo'):
                 where_conditions.append("fio ILIKE %s")
                 query_params.append(f"%{filters['fio']}%")
             else:
@@ -1548,7 +1844,7 @@ def get_db_records():
         
         # Фильтр по преподавателю
         if filters['teacher']:
-            if table in ('timetable_teacher', 'intermediate_timetable', 'timetable_aspi'):
+            if table in ('timetable_teacher', 'intermediate_timetable', 'timetable_aspi', 'timetable_spo'):
                 where_conditions.append("fio ILIKE %s")
                 query_params.append(f"%{filters['teacher']}%")
             else:
@@ -1585,13 +1881,13 @@ def get_db_records():
             if filters['audience_error'] and filters['audience_error'].lower() in ('1', 'true', 'yes', 'да'):
                 where_conditions.append("audience_error = TRUE")
         
-        # Фильтр по институту (timetable_cleaned, intermediate_timetable, timetable_aspi)
-        if filters['institute'] and table in ('timetable_cleaned', 'intermediate_timetable', 'timetable_aspi'):
+        # Фильтр по институту (timetable_cleaned, intermediate_timetable, timetable_aspi, timetable_spo)
+        if filters['institute'] and table in ('timetable_cleaned', 'intermediate_timetable', 'timetable_aspi', 'timetable_spo'):
             where_conditions.append("institute ILIKE %s")
             query_params.append(f"%{filters['institute']}%")
         
         # Фильтр по курсу
-        if filters['course'] and table in ('timetable_cleaned', 'intermediate_timetable', 'timetable_aspi'):
+        if filters['course'] and table in ('timetable_cleaned', 'intermediate_timetable', 'timetable_aspi', 'timetable_spo'):
             where_conditions.append("course ILIKE %s")
             query_params.append(f"%{filters['course']}%")
         
@@ -1626,6 +1922,9 @@ def get_db_records():
         if table == 'timetable_aspi':
             allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'discipline_original',
                                   'audience', 'group_name', 'week_type', 'fio', 'course', 'scientific_specialty', 'institute']
+        elif table == 'timetable_spo':
+            allowed_sort_fields = ['id', 'date', 'day_of_week', 'pair_number', 'pair_time', 'subject_name', 'discipline_original',
+                                  'audience', 'group_name', 'subgroup', 'week_type', 'fio', 'course', 'institute', 'source_file', 'sheet_name', 'created_at']
         elif table == 'intermediate_timetable':
             allowed_sort_fields = ['id', 'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
                                   'group_name', 'week_type', 'subgroup', 'institute', 'course', 'direction',
@@ -1661,6 +1960,16 @@ def get_db_records():
                 SELECT id, day_of_week, pair_number, subject_name, discipline_original, audience,
                     group_name, week_type, fio, course, scientific_specialty, institute, created_at
                 FROM timetable_aspi
+                {where_clause}
+                ORDER BY {order_clause}
+                LIMIT %s OFFSET %s
+            """
+        elif table == 'timetable_spo':
+            query = f"""
+                SELECT id, date, day_of_week, pair_number, pair_time, time_start, time_end,
+                    subject_name, discipline_original, audience, group_name, subgroup,
+                    week_type, fio, course, institute, source_file, sheet_name, created_at
+                FROM timetable_spo
                 {where_clause}
                 ORDER BY {order_clause}
                 LIMIT %s OFFSET %s
@@ -2019,6 +2328,13 @@ ASPI_BACKUP_COLUMNS = [
     'group_name', 'week_type', 'fio', 'course', 'scientific_specialty', 'institute'
 ]
 
+SPO_BACKUP_COLUMNS = [
+    'date', 'day_of_week', 'pair_number', 'pair_time', 'time_start', 'time_end',
+    'subject_name', 'discipline_original', 'audience',
+    'group_name', 'subgroup', 'week_type', 'fio', 'course',
+    'institute', 'source_file', 'sheet_name'
+]
+
 BACKUP_COLUMNS = {
     'timetable_cleaned': [
         'day_of_week', 'pair_number', 'subject_name', 'lecture_type', 'audience',
@@ -2031,6 +2347,7 @@ BACKUP_COLUMNS = {
     ],
     'intermediate_timetable': INTERMEDIATE_BACKUP_COLUMNS,
     'timetable_aspi': ASPI_BACKUP_COLUMNS,
+    'timetable_spo': SPO_BACKUP_COLUMNS,
     'schedule': SCHEDULE_COLUMNS,
 }
 
@@ -2125,6 +2442,31 @@ def unified_restore():
                         course VARCHAR(20),
                         scientific_specialty TEXT,
                         institute TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                conn.commit()
+            elif table == 'timetable_spo':
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS timetable_spo (
+                        id SERIAL PRIMARY KEY,
+                        date DATE,
+                        day_of_week VARCHAR(50),
+                        pair_number INTEGER,
+                        pair_time TEXT,
+                        time_start TEXT,
+                        time_end TEXT,
+                        subject_name TEXT,
+                        discipline_original TEXT,
+                        audience TEXT,
+                        group_name VARCHAR(100),
+                        subgroup INTEGER,
+                        week_type VARCHAR(50),
+                        fio TEXT,
+                        course VARCHAR(20),
+                        institute TEXT,
+                        source_file TEXT,
+                        sheet_name TEXT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -2934,13 +3276,57 @@ def _timetable_aspi_exists(cursor):
     return cursor.fetchone() is not None
 
 
+def _timetable_spo_exists(cursor):
+    """Проверяет, что таблица timetable_spo существует."""
+    cursor.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'timetable_spo'"
+    )
+    return cursor.fetchone() is not None
+
+
 def _discipline_match_table(request_or_args, body_key='table'):
-    """Возвращает 'intermediate' или 'aspi' из query (GET) или body (POST). По умолчанию intermediate."""
+    """Возвращает 'intermediate' | 'aspi' | 'spo' из query (GET) или body (POST). По умолчанию intermediate."""
     if hasattr(request_or_args, 'args'):
         t = (request_or_args.args.get('table') or '').strip().lower()
     else:
         t = (request_or_args.get(body_key) or '').strip().lower()
-    return 'aspi' if t == 'aspi' else 'intermediate'
+    if t == 'aspi':
+        return 'aspi'
+    if t == 'spo':
+        return 'spo'
+    return 'intermediate'
+
+
+def _load_replace_before_discipline_match():
+    """Загружает правила замены из info/replace_before_discipline_match.json (применяются перед сопоставлением дисциплин)."""
+    path = os.path.join(get_project_root(), 'info', 'replace_before_discipline_match.json')
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(data, list):
+        return []
+    rules = []
+    for item in data:
+        if isinstance(item, dict) and 'from' in item and 'to' in item:
+            rules.append((str(item['from']), str(item['to'])))
+    return rules
+
+
+def _apply_replace_before_discipline_match(text, rules=None):
+    """Применяет замены из replace_before_discipline_match.json к строке (перед проверкой по справочнику)."""
+    if not text:
+        return (text or '').strip()
+    s = str(text).strip()
+    if rules is None:
+        rules = _load_replace_before_discipline_match()
+    for from_val, to_val in rules:
+        if from_val:
+            s = s.replace(from_val, to_val)
+    return s
 
 
 def _strip_for_match(s, strip_text, strip_at):
@@ -2992,7 +3378,7 @@ def _ensure_intermediate_discipline_original(conn):
 
 @app.route('/api/discipline-match/unmatched', methods=['GET'])
 def get_discipline_match_unmatched():
-    """Список названий из intermediate_timetable или timetable_aspi (query: table=intermediate|aspi), которых нет в discipline.json.
+    """Список названий из intermediate_timetable / timetable_aspi / timetable_spo (query: table=intermediate|aspi|spo), которых нет в discipline.json.
     Параметры: strip_text — удалить перед сравнением, strip_at — start|end, match_full — 1|0 (полное/частичное)."""
     try:
         table = _discipline_match_table(request)
@@ -3015,6 +3401,15 @@ def get_discipline_match_unmatched():
                     'items': []
                 }), 400
             sql = "SELECT DISTINCT subject_name FROM timetable_aspi WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
+        elif table == 'spo':
+            if not _timetable_spo_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({
+                    'error': 'Таблица timetable_spo не найдена. Сначала выполните «Добавить в БД» для СПО.',
+                    'items': []
+                }), 400
+            sql = "SELECT DISTINCT subject_name FROM timetable_spo WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
         else:
             if not _intermediate_table_exists(cur):
                 cur.close()
@@ -3029,42 +3424,71 @@ def get_discipline_match_unmatched():
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        distinct = [r[0].strip() for r in rows if r[0] and str(r[0]).strip()]
-        # Фильтр «несовпадающие» — только по исходной строке, без strip (не убираем строки из списка)
-        unmatched = list(dict.fromkeys(
-            s for s in distinct
-            if not _is_matched_by_canonical(s, canonical_lower, canonical, '', 'start', match_full)
-        ))
-        if not unmatched:
-            return jsonify({'items': [], 'message': 'Нет несовпадающих дисциплин'})
-
-        documents, doc_embeddings = match_module.ensure_embeddings()
-        if not documents or doc_embeddings is None:
-            return jsonify({'error': 'Не удалось загрузить справочник или эмбеддинги', 'items': []}), 500
+        distinct = list(dict.fromkeys(r[0].strip() for r in rows if r[0] and str(r[0]).strip()))
+        # Только те, что в БД ещё не совпадают со справочником (оригинал не в reference) — чтобы видеть «ещё не заменённые в БД»
+        distinct_not_in_ref = [s for s in distinct if (s or '').strip().lower() not in canonical_lower]
+        rules_replace = _load_replace_before_discipline_match()
+        # Справочник: по нижнему регистру находим точную строку из discipline.json
+        def _canonical_name_for(after_text):
+            if not after_text or not after_text.strip():
+                return None
+            key = after_text.strip().lower()
+            for c in canonical:
+                if c and str(c).strip().lower() == key:
+                    return c.strip()
+            return None
 
         items = []
-        for original in unmatched:
-            query_text = _strip_for_match(original, strip_text, strip_at) if strip_text else original
-            try:
-                top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=4)
-            except Exception:
-                top4 = []
-            if not top4:
+        # 1) После замены по правилу попадает в справочник — показываем с предложением = заменённому (score 1.0), чтобы можно было применить порог
+        for original in distinct_not_in_ref:
+            after_replace = _apply_replace_before_discipline_match(original, rules_replace)
+            canonical_name = _canonical_name_for(after_replace)
+            if canonical_name:
                 items.append({
                     'original': original,
-                    'suggested': '',
-                    'score': 0.0,
+                    'suggested': canonical_name,
+                    'score': 1.0,
                     'alternatives': []
                 })
-                continue
-            suggested, score = top4[0]
-            alternatives = [{'name': name, 'score': round(s, 3)} for name, s in top4[1:4]]
-            items.append({
-                'original': original,
-                'suggested': suggested,
-                'score': round(score, 3),
-                'alternatives': alternatives
-            })
+        # 2) Остальные — после замены не в справочнике: подбор по эмбеддингам
+        matched_by_rule = {it['original'] for it in items}
+        unmatched = [s for s in distinct_not_in_ref if s not in matched_by_rule]
+        if unmatched:
+            documents, doc_embeddings = match_module.ensure_embeddings()
+            if documents is not None and doc_embeddings is not None:
+                for original in unmatched:
+                    after_replace = _apply_replace_before_discipline_match(original, rules_replace)
+                    query_text = _strip_for_match(after_replace, strip_text, strip_at) if strip_text else after_replace
+                    try:
+                        top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=4)
+                    except Exception:
+                        top4 = []
+                    if not top4:
+                        items.append({
+                            'original': original,
+                            'suggested': '',
+                            'score': 0.0,
+                            'alternatives': []
+                        })
+                        continue
+                    suggested, score = top4[0]
+                    alternatives = [{'name': name, 'score': round(s, 3)} for name, s in top4[1:4]]
+                    items.append({
+                        'original': original,
+                        'suggested': suggested,
+                        'score': round(score, 3),
+                        'alternatives': alternatives
+                    })
+            else:
+                for original in unmatched:
+                    items.append({
+                        'original': original,
+                        'suggested': '',
+                        'score': 0.0,
+                        'alternatives': []
+                    })
+        if not items:
+            return jsonify({'items': [], 'message': 'Нет несовпадающих дисциплин'})
         return jsonify({'items': items})
     except Exception as e:
         return jsonify({'error': str(e), 'items': []}), 500
@@ -3100,6 +3524,14 @@ def apply_discipline_match():
                     'error': 'Таблица timetable_aspi не найдена. Сначала выполните «Добавить в БД» для аспирантов.'
                 }), 400
             sql_distinct = "SELECT DISTINCT subject_name FROM timetable_aspi WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
+        elif table == 'spo':
+            if not _timetable_spo_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({
+                    'error': 'Таблица timetable_spo не найдена. Сначала выполните «Добавить в БД» для СПО.'
+                }), 400
+            sql_distinct = "SELECT DISTINCT subject_name FROM timetable_spo WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
         else:
             if not _intermediate_table_exists(cur):
                 cur.close()
@@ -3111,36 +3543,29 @@ def apply_discipline_match():
             sql_distinct = "SELECT DISTINCT subject_name FROM intermediate_timetable WHERE subject_name IS NOT NULL AND TRIM(subject_name) != ''"
         cur.execute(sql_distinct)
         rows = cur.fetchall()
-        distinct = [r[0].strip() for r in rows if r[0] and str(r[0]).strip()]
-        # Фильтр «несовпадающие» — только по исходной строке, без strip
-        unmatched = list(dict.fromkeys(
-            s for s in distinct
-            if not _is_matched_by_canonical(s, canonical_lower, canonical, '', 'start', match_full)
-        ))
-        if not unmatched:
-            cur.close()
-            conn.close()
-            return jsonify({'replaced': 0, 'message': 'Нет несовпадающих дисциплин'})
+        distinct = list(dict.fromkeys(r[0].strip() for r in rows if r[0] and str(r[0]).strip()))
+        rules_replace = _load_replace_before_discipline_match()
 
-        documents, doc_embeddings = match_module.ensure_embeddings()
-        if not documents or doc_embeddings is None:
-            cur.close()
-            conn.close()
-            return jsonify({'error': 'Не удалось загрузить справочник или эмбеддинги. Убедитесь, что Ollama запущен (nomic-embed-text).'}), 500
+        def _canonical_name_for_apply(after_text):
+            if not after_text or not after_text.strip():
+                return None
+            key = after_text.strip().lower()
+            for c in canonical:
+                if c and str(c).strip().lower() == key:
+                    return c.strip()
+            return None
 
-        table_name = 'timetable_aspi' if table == 'aspi' else 'intermediate_timetable'
+        table_name = 'timetable_aspi' if table == 'aspi' else ('timetable_spo' if table == 'spo' else 'intermediate_timetable')
         replaced = 0
-        for original in unmatched:
+        # 1) Замены по правилу: после замены попадает в справочник — применяем с порогом (score 1.0)
+        rule_pairs = []
+        for original in distinct:
+            after_replace = _apply_replace_before_discipline_match(original, rules_replace)
+            suggested = _canonical_name_for_apply(after_replace)
+            if suggested:
+                rule_pairs.append((original, suggested))
+        for original, suggested in rule_pairs:
             cleaned_ids = []
-            query_text = _strip_for_match(original, strip_text, strip_at) if strip_text else original
-            try:
-                top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=1)
-            except Exception:
-                continue
-            score = top4[0][1] if top4 else 0.0
-            if score < threshold - 1e-9:
-                continue
-            suggested = top4[0][0]
             if table == 'intermediate':
                 cur.execute(
                     "SELECT cleaned_id FROM intermediate_timetable WHERE TRIM(COALESCE(subject_name, '')) = %s",
@@ -3157,6 +3582,43 @@ def apply_discipline_match():
                     "UPDATE timetable_cleaned SET subject_name = %s WHERE id = ANY(%s)",
                     (suggested, cleaned_ids)
                 )
+
+        # 2) Остальные — подбор по эмбеддингам
+        matched_by_rule = {p[0] for p in rule_pairs}
+        unmatched = [s for s in distinct if s not in matched_by_rule]
+        if unmatched:
+            documents, doc_embeddings = match_module.ensure_embeddings()
+            if documents is not None and doc_embeddings is not None:
+                for original in unmatched:
+                    cleaned_ids = []
+                    after_replace = _apply_replace_before_discipline_match(original, rules_replace)
+                    query_text = _strip_for_match(after_replace, strip_text, strip_at) if strip_text else after_replace
+                    try:
+                        top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=1)
+                    except Exception:
+                        continue
+                    score = top4[0][1] if top4 else 0.0
+                    if score < threshold - 1e-9:
+                        continue
+                    suggested = top4[0][0]
+                    if table == 'intermediate':
+                        cur.execute(
+                            "SELECT cleaned_id FROM intermediate_timetable WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                            (original,)
+                        )
+                        cleaned_ids = [r[0] for r in cur.fetchall() if r[0]]
+                    else:
+                        cleaned_ids = []
+                    cur.execute(
+                        f"UPDATE {table_name} SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                        (suggested, original, original)
+                    )
+                    replaced += cur.rowcount
+                    if table == 'intermediate' and cleaned_ids:
+                        cur.execute(
+                            "UPDATE timetable_cleaned SET subject_name = %s WHERE id = ANY(%s)",
+                            (suggested, cleaned_ids)
+                        )
         conn.commit()
         cur.close()
         conn.close()
@@ -3173,7 +3635,7 @@ def apply_discipline_match():
 
 @app.route('/api/discipline-match/replace', methods=['POST'])
 def replace_discipline_match():
-    """Заменить все вхождения original на replacement. body: original, replacement, table=intermediate|aspi. Для intermediate синхронизирует timetable_cleaned."""
+    """Заменить все вхождения original на replacement. body: original, replacement, table=intermediate|aspi|spo. Для intermediate синхронизирует timetable_cleaned."""
     try:
         data = request.get_json(silent=True) or {}
         original = (data.get('original') or '').strip()
@@ -3190,6 +3652,17 @@ def replace_discipline_match():
                 conn.close()
                 return jsonify({'error': 'Таблица timetable_aspi не найдена. Сначала выполните «Добавить в БД» для аспирантов.'}), 400
             table_name = 'timetable_aspi'
+            cur.execute(
+                f"UPDATE {table_name} SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
+                (new_name, original, original)
+            )
+            updated = cur.rowcount
+        elif table == 'spo':
+            if not _timetable_spo_exists(cur):
+                cur.close()
+                conn.close()
+                return jsonify({'error': 'Таблица timetable_spo не найдена. Сначала выполните «Добавить в БД» для СПО.'}), 400
+            table_name = 'timetable_spo'
             cur.execute(
                 f"UPDATE {table_name} SET subject_name = %s, discipline_original = %s WHERE TRIM(COALESCE(subject_name, '')) = %s",
                 (new_name, original, original)
@@ -3335,8 +3808,11 @@ def delete_discipline(index):
         return jsonify({'error': str(e)}), 500
 
 
-# Редактируемые JSON-файлы из info/ (skip_row_phrases, slash_protected, strip_from_subject)
-INFO_EDITABLE_FILES = ('skip_row_phrases', 'slash_protected', 'strip_from_subject', 'replace_in_subject')
+# Редактируемые JSON-файлы из info/
+INFO_EDITABLE_FILES = (
+    'skip_row_phrases', 'slash_protected', 'strip_from_subject', 'replace_in_subject',
+    'replace_before_discipline_match'
+)
 
 
 def _info_file_path(name):

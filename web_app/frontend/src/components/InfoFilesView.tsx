@@ -6,13 +6,14 @@ import './InfoFilesView.css';
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
-type InfoFileId = 'skip_row_phrases' | 'slash_protected' | 'strip_from_subject' | 'replace_in_subject';
+type InfoFileId = 'skip_row_phrases' | 'slash_protected' | 'strip_from_subject' | 'replace_in_subject' | 'replace_before_discipline_match';
 
 const INFO_FILES: { id: InfoFileId; label: string; description: string }[] = [
   { id: 'skip_row_phrases', label: 'Пропуск строк', description: 'Фразы, при наличии которых строка таблицы пропускается (skip_row_phrases.json)' },
   { id: 'slash_protected', label: 'Защита слэша', description: 'Токены с «/», которые не разбивать на числитель/знаменатель (slash_protected.json)' },
   { id: 'strip_from_subject', label: 'Удалить из названия', description: 'Фразы, удаляемые из названия дисциплины (strip_from_subject.json)' },
   { id: 'replace_in_subject', label: 'Замена в названии', description: 'Пары «что заменить» → «на что» в тексте дисциплины (replace_in_subject.json)' },
+  { id: 'replace_before_discipline_match', label: 'Замена перед сопоставлением', description: 'Замены в названии дисциплины перед проверкой по справочнику (replace_before_discipline_match.json). При «Загрузить несоответствие» сначала применяются эти замены, затем сопоставление — точность может измениться.' },
 ];
 
 type ReplaceItem = { from: string; to: string };
@@ -24,7 +25,7 @@ const InfoFilesView: React.FC = () => {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
   const queryClient = useQueryClient();
 
-  const isReplace = subTab === 'replace_in_subject';
+  const isReplace = subTab === 'replace_in_subject' || subTab === 'replace_before_discipline_match';
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['info-file', subTab],
@@ -38,7 +39,7 @@ const InfoFilesView: React.FC = () => {
     if (!data?.content) return;
     const content = data.content;
     if (!Array.isArray(content)) return;
-    if (subTab === 'replace_in_subject') {
+    if (subTab === 'replace_in_subject' || subTab === 'replace_before_discipline_match') {
       setReplaceItems(
         content.map((x) => {
           if (x && typeof x === 'object' && 'from' in x && 'to' in x) {
@@ -59,7 +60,7 @@ const InfoFilesView: React.FC = () => {
       return res.data as { message: string; raw: string };
     },
     onSuccess: (_, payload) => {
-      if (subTab === 'replace_in_subject') setReplaceItems(payload as ReplaceItem[]);
+      if (subTab === 'replace_in_subject' || subTab === 'replace_before_discipline_match') setReplaceItems(payload as ReplaceItem[]);
       else setItems(payload as string[]);
       queryClient.invalidateQueries({ queryKey: ['info-file', subTab] });
       setToast({ message: 'Файл сохранён', type: 'success' });
@@ -103,7 +104,7 @@ const InfoFilesView: React.FC = () => {
   }, []);
 
   const handleSave = useCallback(() => {
-    if (isReplace) {
+    if (subTab === 'replace_in_subject' || subTab === 'replace_before_discipline_match') {
       const trimmed = replaceItems
         .map((r) => ({ from: r.from.trim(), to: r.to.trim() }))
         .filter((r) => r.from || r.to);
@@ -112,7 +113,7 @@ const InfoFilesView: React.FC = () => {
       const trimmed = items.map((s) => s.trim()).filter(Boolean);
       saveMutation.mutate(trimmed.length ? trimmed : []);
     }
-  }, [isReplace, items, replaceItems, saveMutation]);
+  }, [subTab, items, replaceItems, saveMutation]);
 
   const currentMeta = INFO_FILES.find((f) => f.id === subTab);
 
@@ -143,6 +144,7 @@ const InfoFilesView: React.FC = () => {
         {!isLoading && !error && isReplace && (
           <>
             <div className="info-files-list info-files-list-replace">
+              <p className="info-files-replace-hint">Если поле «На» оставить пустым — указанный текст будет удаляться.</p>
               <div className="info-files-row info-files-row-header">
                 <span className="info-files-row-num">№</span>
                 <span className="info-files-replace-from">Заменить</span>
@@ -164,7 +166,7 @@ const InfoFilesView: React.FC = () => {
                     className="info-files-input info-files-replace-to"
                     value={row.to}
                     onChange={(e) => updateReplaceItem(index, 'to', e.target.value)}
-                    placeholder="К301"
+                    placeholder="оставить пустым = удалить"
                   />
                   <button
                     type="button"

@@ -512,6 +512,7 @@ def main():
     
     # Подсчёт строк для прогресса (вывод PROGRESS: current total для бэкенда)
     total_rows = count_data_rows(input_file)
+    print(f"PROGRESS: 0 {total_rows}", flush=True)  # Сразу показываем "0 из N"
     def on_progress(current, total):
         print(f"PROGRESS: {current} {total}", flush=True)
     

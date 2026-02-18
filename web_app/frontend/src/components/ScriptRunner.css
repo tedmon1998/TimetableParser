@@ -56,6 +56,13 @@
   font-size: 0.9rem;
 }
 
+.progress-message--short {
+  max-width: 20em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pipeline-actions {
   display: flex;
   gap: 0.75rem;

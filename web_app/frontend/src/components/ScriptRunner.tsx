@@ -84,6 +84,24 @@ const ScriptRunner: React.FC = () => {
     message: '',
     error: null
   });
+  const [parseSpoStatus, setParseSpoStatus] = useState<ScriptStatus>({
+    running: false,
+    progress: 0,
+    message: '',
+    error: null
+  });
+  const [loadSpoToDbStatus, setLoadSpoToDbStatus] = useState<ScriptStatus>({
+    running: false,
+    progress: 0,
+    message: '',
+    error: null
+  });
+  const [mergeSpoToIntermediateStatus, setMergeSpoToIntermediateStatus] = useState<ScriptStatus>({
+    running: false,
+    progress: 0,
+    message: '',
+    error: null
+  });
 
   const [unresolvedFioItems, setUnresolvedFioItems] = useState<string[]>([]);
   const [unresolvedParseItems, setUnresolvedParseItems] = useState<Array<{ type: string; file: string; specialty?: string; discipline?: string; day: string; para: string }>>([]);
@@ -105,12 +123,12 @@ const ScriptRunner: React.FC = () => {
     aspiApplyError ||
     null;
 
-  type ScriptRunnerTab = 'bachelor_master' | 'aspi';
+  type ScriptRunnerTab = 'bachelor_master' | 'aspi' | 'spo';
 
   const getInitialSubtab = (): ScriptRunnerTab => {
     const params = new URLSearchParams(window.location.search);
     const subtab = params.get('subtab');
-    return subtab === 'aspi' ? 'aspi' : 'bachelor_master';
+    return subtab === 'aspi' ? 'aspi' : subtab === 'spo' ? 'spo' : 'bachelor_master';
   };
   const [activeTab, setActiveTabState] = useState<ScriptRunnerTab>(getInitialSubtab);
 
@@ -258,10 +276,19 @@ const ScriptRunner: React.FC = () => {
       if (mergeAspiToIntermediateStatus.running) {
         fetchStatus('merge_aspi_to_intermediate', setMergeAspiToIntermediateStatus);
       }
+      if (parseSpoStatus.running) {
+        fetchStatus('parse_spo', setParseSpoStatus);
+      }
+      if (loadSpoToDbStatus.running) {
+        fetchStatus('load_spo_to_db', setLoadSpoToDbStatus);
+      }
+      if (mergeSpoToIntermediateStatus.running) {
+        fetchStatus('merge_spo_to_intermediate', setMergeSpoToIntermediateStatus);
+      }
     }, 500);
 
     return () => clearInterval(interval);
-  }, [parseStatus.running, cleanStatus.running, loadTimetableToDbStatus.running, mergeTimetableStatus.running, processTimetableStatus.running, parseAspiStatus.running, normalizeAspiStatus.running, loadAspiToDbStatus.running, mergeAspiToIntermediateStatus.running]);
+  }, [parseStatus.running, cleanStatus.running, loadTimetableToDbStatus.running, mergeTimetableStatus.running, processTimetableStatus.running, parseAspiStatus.running, normalizeAspiStatus.running, loadAspiToDbStatus.running, mergeAspiToIntermediateStatus.running, parseSpoStatus.running, loadSpoToDbStatus.running, mergeSpoToIntermediateStatus.running]);
 
   const fetchStatus = async (scriptName: string, setStatus: React.Dispatch<React.SetStateAction<ScriptStatus>>) => {
     try {
@@ -272,7 +299,7 @@ const ScriptRunner: React.FC = () => {
     }
   };
 
-  const runScript = (scriptName: 'parse_timetable' | 'clean_audiences' | 'load_timetable_to_db' | 'merge_timetable' | 'process_timetable' | 'parse_aspi' | 'normalize_aspi' | 'load_aspi_to_db' | 'merge_aspi_to_intermediate'): Promise<ScriptStatus> => {
+  const runScript = (scriptName: 'parse_timetable' | 'clean_audiences' | 'load_timetable_to_db' | 'merge_timetable' | 'process_timetable' | 'parse_aspi' | 'normalize_aspi' | 'load_aspi_to_db' | 'merge_aspi_to_intermediate' | 'parse_spo' | 'load_spo_to_db' | 'merge_spo_to_intermediate'): Promise<ScriptStatus> => {
     const setStatus = scriptName === 'parse_timetable' ? setParseStatus
       : scriptName === 'clean_audiences' ? setCleanStatus
         : scriptName === 'load_timetable_to_db' ? setLoadTimetableToDbStatus
@@ -281,7 +308,10 @@ const ScriptRunner: React.FC = () => {
               : scriptName === 'parse_aspi' ? setParseAspiStatus
                 : scriptName === 'normalize_aspi' ? setNormalizeAspiStatus
                   : scriptName === 'load_aspi_to_db' ? setLoadAspiToDbStatus
-                    : setMergeAspiToIntermediateStatus;
+                    : scriptName === 'merge_aspi_to_intermediate' ? setMergeAspiToIntermediateStatus
+                      : scriptName === 'parse_spo' ? setParseSpoStatus
+                        : scriptName === 'load_spo_to_db' ? setLoadSpoToDbStatus
+                          : setMergeSpoToIntermediateStatus;
 
     setStatus({
       running: true,
@@ -296,6 +326,9 @@ const ScriptRunner: React.FC = () => {
           : scriptName === 'normalize_aspi' ? `${API_BASE}/run/normalize_aspi`
             : scriptName === 'load_aspi_to_db' ? `${API_BASE}/run/load_aspi_to_db`
               : scriptName === 'merge_aspi_to_intermediate' ? `${API_BASE}/run/merge_aspi_to_intermediate`
+                : scriptName === 'parse_spo' ? `${API_BASE}/run/parse_spo`
+                  : scriptName === 'load_spo_to_db' ? `${API_BASE}/run/load_spo_to_db`
+                  : scriptName === 'merge_spo_to_intermediate' ? `${API_BASE}/run/merge_spo_to_intermediate`
                 : `${API_BASE}/run/${scriptName}`;
 
     return axios.post(runUrl)
@@ -364,6 +397,22 @@ const ScriptRunner: React.FC = () => {
     }
   };
 
+  const [pipelineSpoRunning, setPipelineSpoRunning] = useState(false);
+  const runAllSpoPipeline = async () => {
+    if (pipelineSpoRunning) return;
+    setPipelineSpoRunning(true);
+    try {
+      await runScript('parse_spo');
+      await runScript('load_spo_to_db');
+    } catch {
+      // Ошибка уже отображена в статусе шага
+    } finally {
+      setPipelineSpoRunning(false);
+    }
+  };
+
+  const pipelineSpoDisabled = parseSpoStatus.running || loadSpoToDbStatus.running || mergeSpoToIntermediateStatus.running || pipelineSpoRunning;
+
   const handleGroupSearch = async () => {
     const q = groupSearchQuery.trim();
     if (!q) return;
@@ -428,6 +477,13 @@ const ScriptRunner: React.FC = () => {
           onClick={() => setActiveTab('aspi')}
         >
           Аспиранты
+        </button>
+        <button
+          type="button"
+          className={`script-runner-tab ${activeTab === 'spo' ? 'active' : ''}`}
+          onClick={() => setActiveTab('spo')}
+        >
+          СПО (колледж)
         </button>
       </div>
 
@@ -794,6 +850,82 @@ const ScriptRunner: React.FC = () => {
           >
             Показать ошибку
           </button>
+        )}
+      </div>
+      )}
+
+      {activeTab === 'spo' && (
+      <div className="card pipeline-card">
+        <h2>Парсер расписания СПО (spo/parse_spo.py)</h2>
+        <p className="description">
+          Положите Excel-файлы (.xlsx) в папку <code>spo/spo/</code> и запустите парсер. Результат сохраняется в <code>spo/output/_all.json</code>.
+          Структура: курс в заголовке, время в отдельной колонке, подгруппы по колонкам (П1/П2/П3 или «бригада 1/2/3»),
+          для каждой пары 3 строки: ФИО → дисциплина → аудитория.
+        </p>
+        <div className="pipeline-actions">
+          <button
+            className="button"
+            onClick={() => runScript('parse_spo')}
+            disabled={pipelineSpoDisabled}
+          >
+            {parseSpoStatus.running ? 'Выполняется...' : 'Запустить парсер СПО'}
+          </button>
+          <button
+            className="button"
+            onClick={() => runScript('load_spo_to_db')}
+            disabled={pipelineSpoDisabled}
+          >
+            {loadSpoToDbStatus.running ? 'Выполняется...' : 'Добавить в БД (timetable_spo)'}
+          </button>
+          <button
+            className="button"
+            onClick={() => runScript('merge_spo_to_intermediate')}
+            disabled={pipelineSpoDisabled}
+          >
+            {mergeSpoToIntermediateStatus.running ? 'Выполняется...' : 'Добавить к intermediate'}
+          </button>
+          <button
+            className="button button-primary"
+            onClick={runAllSpoPipeline}
+            disabled={pipelineSpoDisabled}
+          >
+            {pipelineSpoRunning ? 'Выполняется цепочка...' : 'Запустить всё по очереди'}
+          </button>
+        </div>
+        {(parseSpoStatus.running || loadSpoToDbStatus.running || mergeSpoToIntermediateStatus.running || pipelineSpoRunning) && (
+          <div className="progress-container">
+            <div className="progress-bar">
+              <div
+                className="progress-bar-fill"
+                style={{ width: `${parseSpoStatus.running ? parseSpoStatus.progress : loadSpoToDbStatus.progress}%` }}
+              >
+                {parseSpoStatus.running ? parseSpoStatus.progress : loadSpoToDbStatus.progress}%
+              </div>
+            </div>
+            <p className="progress-message progress-message--short">
+              {parseSpoStatus.running ? parseSpoStatus.message : loadSpoToDbStatus.running ? loadSpoToDbStatus.message : mergeSpoToIntermediateStatus.message}
+            </p>
+          </div>
+        )}
+        {(parseSpoStatus.error || loadSpoToDbStatus.error || mergeSpoToIntermediateStatus.error) && (
+          <div className="message error">
+            <strong>Ошибка:</strong> {parseSpoStatus.error || loadSpoToDbStatus.error || mergeSpoToIntermediateStatus.error}
+          </div>
+        )}
+        {!parseSpoStatus.running && !loadSpoToDbStatus.running && parseSpoStatus.progress === 100 && !parseSpoStatus.error && (
+          <div className="message success">
+            {parseSpoStatus.message || 'Парсинг завершён. Результаты в spo/output/_all.json.'}
+          </div>
+        )}
+        {!parseSpoStatus.running && !loadSpoToDbStatus.running && loadSpoToDbStatus.progress === 100 && !loadSpoToDbStatus.error && (
+          <div className="message success">
+            {loadSpoToDbStatus.message || 'Данные загружены в таблицу timetable_spo.'}
+          </div>
+        )}
+        {!mergeSpoToIntermediateStatus.running && mergeSpoToIntermediateStatus.progress === 100 && !mergeSpoToIntermediateStatus.error && (
+          <div className="message success">
+            {mergeSpoToIntermediateStatus.message || 'Расписание СПО добавлено в intermediate_timetable.'}
+          </div>
         )}
       </div>
       )}

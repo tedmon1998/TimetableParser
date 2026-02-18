@@ -92,7 +92,7 @@ const COLUMN_PLACEHOLDERS: Partial<Record<ColumnKey, string>> = {
   week_type: 'Фильтр по типу недели (числитель, знаменатель...)'
 };
 
-export type DbTableType = 'timetable_cleaned' | 'timetable_teacher' | 'intermediate_timetable' | 'timetable_aspi';
+export type DbTableType = 'timetable_cleaned' | 'timetable_teacher' | 'intermediate_timetable' | 'timetable_aspi' | 'timetable_spo';
 
 export type BackupTableType = DbTableType | 'schedule';
 
@@ -101,6 +101,7 @@ const BACKUP_TABLE_OPTIONS: { id: BackupTableType; label: string }[] = [
   { id: 'timetable_teacher', label: 'Занятость преподавателей' },
   { id: 'intermediate_timetable', label: 'Промежуточное расписание' },
   { id: 'timetable_aspi', label: 'Расписание аспирантов' },
+  { id: 'timetable_spo', label: 'Расписание СПО' },
   { id: 'schedule', label: 'Расписание' }
 ];
 
@@ -119,6 +120,29 @@ const ASPI_LABELS: Record<string, string> = {
   course: 'Курс',
   scientific_specialty: 'Научная специальность',
   institute: 'Институт'
+};
+
+// Колонки расписания СПО (timetable_spo)
+const SPO_COLUMN_KEYS = ['id', 'date', 'day_of_week', 'pair_number', 'pair_time', 'time_start', 'time_end', 'subject_name', 'discipline_original', 'audience', 'group_name', 'subgroup', 'week_type', 'fio', 'course', 'institute', 'source_file', 'sheet_name'] as const;
+const SPO_LABELS: Record<string, string> = {
+  id: 'ID',
+  date: 'Дата',
+  day_of_week: 'День',
+  pair_number: 'Пара №',
+  pair_time: 'Время',
+  time_start: 'Начало',
+  time_end: 'Конец',
+  subject_name: 'Дисциплина',
+  discipline_original: 'Дисциплина (оригинал)',
+  audience: 'Ауд.',
+  group_name: 'Группа',
+  subgroup: 'п/г',
+  week_type: 'Неделя',
+  fio: 'Преподаватель',
+  course: 'Курс',
+  institute: 'Институт',
+  source_file: 'Файл',
+  sheet_name: 'Лист'
 };
 
 // Колонки промежуточного расписания: данные из timetable_cleaned + fio из timetable_teacher + флаги ошибок + старое имя дисциплины
@@ -149,14 +173,16 @@ const COLUMNS_FOR_TABLE: Record<DbTableType, readonly string[]> = {
   timetable_cleaned: COLUMN_KEYS.filter(k => k !== 'fio'),
   timetable_teacher: COLUMN_KEYS.filter(k => k !== 'subject_name' && k !== 'lecture_type'),
   intermediate_timetable: [...INTERMEDIATE_COLUMN_KEYS],
-  timetable_aspi: [...ASPI_COLUMN_KEYS]
+  timetable_aspi: [...ASPI_COLUMN_KEYS],
+  timetable_spo: [...SPO_COLUMN_KEYS]
 };
 // По умолчанию скрытые колонки для каждой вкладки
 const HIDDEN_BY_DEFAULT_BY_TABLE: Record<DbTableType, string[]> = {
   timetable_cleaned: ['subgroup', 'course', 'profile', 'direction', 'institute'],
   timetable_teacher: ['subgroup', 'course', 'profile', 'direction', 'institute'],
   intermediate_timetable: ['subgroup', 'course', 'direction', 'institute'],
-  timetable_aspi: []
+  timetable_aspi: [],
+  timetable_spo: ['time_start', 'time_end', 'source_file', 'sheet_name']
 };
 
 function getDefaultVisibleForTable(table: DbTableType): Record<string, boolean> {
@@ -268,7 +294,7 @@ const DatabaseView: React.FC = () => {
       if (saved) {
         const parsed = JSON.parse(saved) as Record<string, Record<string, boolean>>;
         const out = {} as Record<DbTableType, Record<string, boolean>>;
-        (['timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'timetable_aspi'] as DbTableType[]).forEach(table => {
+        (['timetable_cleaned', 'timetable_teacher', 'intermediate_timetable', 'timetable_aspi', 'timetable_spo'] as DbTableType[]).forEach(table => {
           const def = getDefaultVisibleForTable(table);
           const keys = COLUMNS_FOR_TABLE[table];
           out[table] = keys.reduce<Record<string, boolean>>((acc, k) => ({
@@ -283,7 +309,8 @@ const DatabaseView: React.FC = () => {
       timetable_cleaned: getDefaultVisibleForTable('timetable_cleaned'),
       timetable_teacher: getDefaultVisibleForTable('timetable_teacher'),
       intermediate_timetable: getDefaultVisibleForTable('intermediate_timetable'),
-      timetable_aspi: getDefaultVisibleForTable('timetable_aspi')
+      timetable_aspi: getDefaultVisibleForTable('timetable_aspi'),
+      timetable_spo: getDefaultVisibleForTable('timetable_spo')
     };
   });
   const visibleColumnKeys = useMemo(
@@ -294,6 +321,7 @@ const DatabaseView: React.FC = () => {
   const getColumnLabel = useCallback((key: string): string => {
     if (activeTable === 'intermediate_timetable') return INTERMEDIATE_LABELS[key] || key;
     if (activeTable === 'timetable_aspi') return ASPI_LABELS[key] || key;
+    if (activeTable === 'timetable_spo') return SPO_LABELS[key] || key;
     return COLUMN_LABELS[key as ColumnKey] || key;
   }, [activeTable]);
 
@@ -357,7 +385,7 @@ const DatabaseView: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
 
     const tableParam = params.get('table');
-    if (tableParam === 'timetable_teacher' || tableParam === 'timetable_cleaned' || tableParam === 'intermediate_timetable' || tableParam === 'timetable_aspi') {
+    if (tableParam === 'timetable_teacher' || tableParam === 'timetable_cleaned' || tableParam === 'intermediate_timetable' || tableParam === 'timetable_aspi' || tableParam === 'timetable_spo') {
       setActiveTable(tableParam);
     }
 
@@ -552,6 +580,9 @@ const DatabaseView: React.FC = () => {
     if (activeTable === 'timetable_aspi') {
       ASPI_COLUMN_KEYS.forEach(k => { base[ASPI_LABELS[k] || k] = k; });
     }
+    if (activeTable === 'timetable_spo') {
+      SPO_COLUMN_KEYS.forEach(k => { base[SPO_LABELS[k] || k] = k; });
+    }
     return base;
   }, [activeTable]);
 
@@ -633,8 +664,21 @@ const DatabaseView: React.FC = () => {
     const shortThreshold = 8;
     const maxCharsLong = 16;
     const longWeightFactor = 0.6;
-    const keys = activeTable === 'intermediate_timetable' ? [...INTERMEDIATE_COLUMN_KEYS] : activeTable === 'timetable_aspi' ? [...ASPI_COLUMN_KEYS] : COLUMN_KEYS;
-    const getLabel = (k: string) => activeTable === 'intermediate_timetable' ? (INTERMEDIATE_LABELS[k] || '') : activeTable === 'timetable_aspi' ? (ASPI_LABELS[k] || '') : (COLUMN_LABELS[k as ColumnKey] || '');
+    const keys = activeTable === 'intermediate_timetable'
+      ? [...INTERMEDIATE_COLUMN_KEYS]
+      : activeTable === 'timetable_aspi'
+        ? [...ASPI_COLUMN_KEYS]
+        : activeTable === 'timetable_spo'
+          ? [...SPO_COLUMN_KEYS]
+          : COLUMN_KEYS;
+    const getLabel = (k: string) =>
+      activeTable === 'intermediate_timetable'
+        ? (INTERMEDIATE_LABELS[k] || '')
+        : activeTable === 'timetable_aspi'
+          ? (ASPI_LABELS[k] || '')
+          : activeTable === 'timetable_spo'
+            ? (SPO_LABELS[k] || '')
+            : (COLUMN_LABELS[k as ColumnKey] || '');
 
     const rawWeights: number[] = [];
     keys.forEach((key, idx) => {
@@ -674,7 +718,9 @@ const DatabaseView: React.FC = () => {
   // Шаблон колонок грида: ручной ресайз — в px, остальные — по весам (fr), заполняют 100%
   const gridTemplateColumns = useMemo(() => {
     return (visibleColumnKeys as string[]).map((k) => {
-      const colIndex = (activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi') ? (visibleColumnKeys as string[]).indexOf(k) : COLUMN_KEYS.indexOf(k as ColumnKey);
+      const colIndex = (activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi' || activeTable === 'timetable_spo')
+        ? (visibleColumnKeys as string[]).indexOf(k)
+        : COLUMN_KEYS.indexOf(k as ColumnKey);
       const userWidth = (columnWidths as number[])[colIndex];
       const defaultWidth = (DEFAULT_COLUMN_WIDTHS as number[])[colIndex];
       const isUserResized = userWidth !== defaultWidth;
@@ -851,6 +897,17 @@ const DatabaseView: React.FC = () => {
       ASPI_COLUMN_KEYS.forEach((k) => {
         map[ASPI_LABELS[k] || k] = aspiToFilter[k] ?? null;
       });
+    } else if (activeTable === 'timetable_spo') {
+      const spoToFilter: Record<string, keyof Filters | null> = {
+        id: null, date: null, day_of_week: 'day_of_week', pair_number: 'pair_number',
+        pair_time: null, time_start: null, time_end: null,
+        subject_name: 'subject_name', discipline_original: null, audience: 'audience',
+        group_name: 'group_name', subgroup: 'subgroup', week_type: 'week_type',
+        fio: 'fio', course: 'course', institute: 'institute', source_file: null, sheet_name: null
+      };
+      SPO_COLUMN_KEYS.forEach((k) => {
+        map[SPO_LABELS[k] || k] = spoToFilter[k] ?? null;
+      });
     } else {
       COLUMN_KEYS.forEach((k) => {
         const label = COLUMN_LABELS[k];
@@ -938,7 +995,15 @@ const DatabaseView: React.FC = () => {
   }, [handleFilterChange, columnToFilterMap]);
 
   const clearDatabase = async () => {
-    const tableLabel = activeTable === 'timetable_teacher' ? 'Занятость преподавателей' : activeTable === 'intermediate_timetable' ? 'Промежуточное расписание' : activeTable === 'timetable_aspi' ? 'Расписание аспирантов' : 'Спаршенное расписание';
+    const tableLabel = activeTable === 'timetable_teacher'
+      ? 'Занятость преподавателей'
+      : activeTable === 'intermediate_timetable'
+        ? 'Промежуточное расписание'
+        : activeTable === 'timetable_aspi'
+          ? 'Расписание аспирантов'
+          : activeTable === 'timetable_spo'
+            ? 'Расписание СПО'
+            : 'Спаршенное расписание';
     if (!window.confirm(`Вы уверены, что хотите очистить таблицу «${tableLabel}»? Это действие нельзя отменить.`)) {
       return;
     }
@@ -1260,7 +1325,7 @@ const DatabaseView: React.FC = () => {
   const handleRowContextMenu = (e: React.MouseEvent, record: DatabaseRecord) => {
     e.preventDefault();
     e.stopPropagation();
-    if (activeTable === 'timetable_aspi') return;
+    if (activeTable === 'timetable_aspi' || activeTable === 'timetable_spo') return;
 
     const rowElement = e.currentTarget as HTMLElement;
     const rowRect = rowElement.getBoundingClientRect();
@@ -1359,7 +1424,7 @@ const DatabaseView: React.FC = () => {
             >
               {showStats ? 'Скрыть статистику' : 'Показать статистику'}
             </button>
-            {activeTable !== 'timetable_aspi' && (
+            {activeTable !== 'timetable_aspi' && activeTable !== 'timetable_spo' && (
               <button className="button danger" onClick={clearDatabase}>
                 Очистить БД
               </button>
@@ -1504,6 +1569,13 @@ const DatabaseView: React.FC = () => {
               >
                 Расписание аспирантов
               </button>
+              <button
+                type="button"
+                className={`db-view-tab ${activeTable === 'timetable_spo' ? 'active' : ''}`}
+                onClick={() => setTable('timetable_spo')}
+              >
+                Расписание СПО
+              </button>
             </div>
             <h2>Записи в базе данных</h2>
             {totalRecords > 0 && (
@@ -1557,7 +1629,7 @@ const DatabaseView: React.FC = () => {
               </button>
               {showColumnsMenu && (
                 <div className="columns-dropdown">
-                  <div className="columns-dropdown-title">Видимость колонок ({activeTable === 'timetable_cleaned' ? 'Спаршенное расписание' : activeTable === 'timetable_teacher' ? 'Занятость преподавателей' : activeTable === 'timetable_aspi' ? 'Расписание аспирантов' : 'Промежуточное расписание'})</div>
+                  <div className="columns-dropdown-title">Видимость колонок ({activeTable === 'timetable_cleaned' ? 'Спаршенное расписание' : activeTable === 'timetable_teacher' ? 'Занятость преподавателей' : activeTable === 'timetable_aspi' ? 'Расписание аспирантов' : activeTable === 'timetable_spo' ? 'Расписание СПО' : 'Промежуточное расписание'})</div>
                   {(COLUMNS_FOR_TABLE[activeTable] as string[]).map(key => (
                     <label key={key} className="columns-dropdown-item">
                       <input
@@ -1597,7 +1669,9 @@ const DatabaseView: React.FC = () => {
               <div className="grid-table">
                 <div className="grid-table-header" style={{ display: 'grid', width: '100%', gridTemplateColumns }}>
                   {(visibleColumnKeys as string[]).map((key) => {
-                    const colIndex = (activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi') ? (visibleColumnKeys as string[]).indexOf(key) : COLUMN_KEYS.indexOf(key as ColumnKey);
+                    const colIndex = (activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi' || activeTable === 'timetable_spo')
+                      ? (visibleColumnKeys as string[]).indexOf(key)
+                      : COLUMN_KEYS.indexOf(key as ColumnKey);
                     const label = getColumnLabel(key);
                     const filterable = key !== 'id';
                     return (
@@ -1657,7 +1731,9 @@ const DatabaseView: React.FC = () => {
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => e.stopPropagation()}
-                            placeholder={(activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi') ? `Фильтр: ${label}` : ((COLUMN_PLACEHOLDERS as Record<string, string>)[key] || '')}
+                            placeholder={(activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi' || activeTable === 'timetable_spo')
+                              ? `Фильтр: ${label}`
+                              : ((COLUMN_PLACEHOLDERS as Record<string, string>)[key] || '')}
                             title={`Поиск по колонке ${label}`}
                             autoComplete="off"
                           />
@@ -1755,7 +1831,7 @@ const DatabaseView: React.FC = () => {
                             className={`grid-table-cell expandable-cell ${copiedCellId === uniqueCellId ? 'cell-copied' : ''} ${isErrorCell ? 'cell-error' : ''}`}
                             onMouseEnter={(e) => handleCellMouseEnter(e, uniqueCellId)}
                             onMouseLeave={handleCellMouseLeave}
-                            onDoubleClick={() => !isEditing && activeTable !== 'timetable_aspi' && startEditing(record)}
+                            onDoubleClick={() => !isEditing && activeTable !== 'timetable_aspi' && activeTable !== 'timetable_spo' && startEditing(record)}
                             onClick={(e) => { if (displayValue && displayValue !== '-') copyToClipboard(displayValue, uniqueCellId); e.stopPropagation(); }}
                             onContextMenu={isErrorCell ? (e) => {
                               e.preventDefault();
@@ -1773,8 +1849,12 @@ const DatabaseView: React.FC = () => {
                       return (
                         <div key={record.id} className={`grid-table-row ${isEditing ? 'editing-row' : ''}`} style={{ display: 'grid', width: '100%', gridTemplateColumns }} onContextMenu={(e) => !isEditing && handleRowContextMenu(e, record)}>
                           {(visibleColumnKeys as string[]).map((key) => {
-                            const colIndex = (activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi') ? (visibleColumnKeys as string[]).indexOf(key) : COLUMN_KEYS.indexOf(key as ColumnKey);
-                            const displayValue = (activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi') ? getValue((currentRecord as any)[key]) : (key === 'fio' ? getValue(currentRecord.fio || currentRecord.teacher) : getValue((currentRecord as any)[key]));
+                            const colIndex = (activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi' || activeTable === 'timetable_spo')
+                              ? (visibleColumnKeys as string[]).indexOf(key)
+                              : COLUMN_KEYS.indexOf(key as ColumnKey);
+                            const displayValue = (activeTable === 'intermediate_timetable' || activeTable === 'timetable_aspi' || activeTable === 'timetable_spo')
+                              ? getValue((currentRecord as any)[key])
+                              : (key === 'fio' ? getValue(currentRecord.fio || currentRecord.teacher) : getValue((currentRecord as any)[key]));
                             return renderEditableCell(key as keyof DatabaseRecord, colIndex, displayValue);
                           })}
                         </div>

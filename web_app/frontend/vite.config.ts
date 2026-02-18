@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    host: true, // слушать на всех интерфейсах — доступ по локальной сети (http://<ваш-IP>:3000)
     proxy: {
       '/api': {
         target: 'http://localhost:5001',

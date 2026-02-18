@@ -751,15 +751,23 @@ def _write_results_to_excel(results, new_headers, path):
     wb_new.save(path)
 
 
-def process_csv_file(input_file, output_file, valid_audiences):
-    """Обрабатывает CSV файл и создает очищенную версию (только в Excel)."""
+def process_csv_file(input_file, output_file, valid_audiences, on_progress=None):
+    """Обрабатывает CSV файл и создает очищенную версию (только в Excel).
+    on_progress(current, total) вызывается при обработке каждой строки (для PROGRESS)."""
     results = []
-    
+    total_rows = count_csv_data_rows(input_file)
+    if total_rows <= 0:
+        total_rows = 1  # избегаем деления на 0
+
     with open(input_file, 'r', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames or []
+        current_row = 0
 
         for row in reader:
+            current_row += 1
+            if on_progress and total_rows > 0:
+                on_progress(current_row, total_rows)
             group_raw = row.get('group_name', '') or row.get('group', '') or ''
             group_parts = _split_group_value(group_raw)
             subject_name = row.get('subject_name', '')
@@ -907,12 +915,36 @@ def process_csv_file(input_file, output_file, valid_audiences):
         writer.writerows(results)
     return len(results)
 
-def process_excel_file(input_file, output_file, valid_audiences):
-    """Обрабатывает Excel файл и создает очищенную версию"""
+def count_excel_data_rows(input_file):
+    """Подсчёт количества строк данных (без заголовка) в Excel-файле."""
+    wb = load_workbook(input_file, data_only=True, read_only=True)
+    ws = wb.active
+    if ws is None:
+        wb.close()
+        return 0
+    n = max(0, ws.max_row - 1)
+    wb.close()
+    return n
+
+
+def count_csv_data_rows(input_file):
+    """Подсчёт количества строк данных (без заголовка) в CSV-файле."""
+    try:
+        with open(input_file, 'r', encoding='utf-8-sig') as f:
+            return sum(1 for _ in f) - 1
+    except Exception:
+        return 0
+
+
+def process_excel_file(input_file, output_file, valid_audiences, on_progress=None):
+    """Обрабатывает Excel файл и создает очищенную версию.
+    on_progress(current, total) вызывается при обработке каждой строки (для PROGRESS)."""
     wb = load_workbook(input_file, data_only=True)
     ws = wb.active
     if ws is None:
         raise RuntimeError("Workbook has no active sheet")
+    
+    total_rows = max(0, ws.max_row - 1)
     
     # Читаем заголовки
     headers = []
@@ -949,6 +981,9 @@ def process_excel_file(input_file, output_file, valid_audiences):
     # Обрабатываем данные
     results = []
     for row_idx in range(2, ws.max_row + 1):
+        if on_progress and total_rows > 0:
+            current = row_idx - 1
+            on_progress(current, total_rows)
         row_data = {}
         for col_idx, header in enumerate(headers, 1):
             cell = ws.cell(row_idx, col_idx)
@@ -1388,11 +1423,16 @@ def main():
     # Гарантируем, что каталог для очищенных файлов существует
     os.makedirs(os.path.dirname(excel_output), exist_ok=True)
 
+    def _on_progress(current, total):
+        print(f"PROGRESS: {current} {total}", flush=True)
+
     # Обрабатываем CSV (результат в Excel и CSV)
     if csv_input:
         print(f"\nОбрабатываем CSV файл: {csv_input}")
         try:
-            count = process_csv_file(csv_input, excel_output, valid_audiences)
+            total_rows = count_csv_data_rows(csv_input)
+            print(f"PROGRESS: 0 {total_rows}", flush=True)
+            count = process_csv_file(csv_input, excel_output, valid_audiences, on_progress=_on_progress)
             print(f"Обработано записей: {count}")
             print(f"Результат сохранен в: {csv_output}, {excel_output}")
         except Exception as e:
@@ -1404,7 +1444,9 @@ def main():
     if excel_input:
         print(f"\nОбрабатываем Excel файл: {excel_input}")
         try:
-            count = process_excel_file(excel_input, excel_output, valid_audiences)
+            total_rows = count_excel_data_rows(excel_input)
+            print(f"PROGRESS: 0 {total_rows}", flush=True)
+            count = process_excel_file(excel_input, excel_output, valid_audiences, on_progress=_on_progress)
             print(f"Обработано записей: {count}")
             print(f"Результат сохранен в: {excel_output}")
         except Exception as e:

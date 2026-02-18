@@ -61,6 +61,27 @@ CREATE TABLE IF NOT EXISTS timetable_aspi (
     scientific_specialty TEXT
 );
 
+CREATE TABLE IF NOT EXISTS timetable_spo (
+    id                   SERIAL PRIMARY KEY,
+    date                 DATE,
+    day_of_week          VARCHAR(50),
+    pair_number          INTEGER,
+    pair_time            TEXT,
+    time_start           TEXT,
+    time_end             TEXT,
+    subject_name         TEXT,
+    discipline_original  TEXT,
+    audience             TEXT,
+    group_name           VARCHAR(100),
+    subgroup             INTEGER,
+    week_type            VARCHAR(50),
+    fio                  TEXT,
+    course               VARCHAR(20),
+    institute            TEXT,
+    source_file          TEXT,
+    sheet_name           TEXT
+);
+
 CREATE TABLE IF NOT EXISTS timetable_cleaned (
     id            INTEGER,
     day_of_week   VARCHAR(50),
