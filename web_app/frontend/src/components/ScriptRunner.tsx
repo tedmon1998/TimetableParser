@@ -285,7 +285,7 @@ const ScriptRunner: React.FC = () => {
       if (mergeSpoToIntermediateStatus.running) {
         fetchStatus('merge_spo_to_intermediate', setMergeSpoToIntermediateStatus);
       }
-    }, 500);
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [parseStatus.running, cleanStatus.running, loadTimetableToDbStatus.running, mergeTimetableStatus.running, processTimetableStatus.running, parseAspiStatus.running, normalizeAspiStatus.running, loadAspiToDbStatus.running, mergeAspiToIntermediateStatus.running, parseSpoStatus.running, loadSpoToDbStatus.running, mergeSpoToIntermediateStatus.running]);
