@@ -267,7 +267,7 @@ def run_parse_timetable():
         # Запускаем скрипт с UTF-8, чтобы в консоли был читаемый русский текст
         env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
-            ['python', script_path],
+            [sys.executable, script_path],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -360,7 +360,7 @@ def run_clean_audiences():
         # Запускаем скрипт без загрузки в БД (только обработка); UTF-8 для вывода с кириллицей
         env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
-            ['python', script_path, '--no-db'],
+            [sys.executable, script_path, '--no-db'],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -445,7 +445,7 @@ def run_load_timetable_to_db():
                     'DB_NAME': str(DB_CONFIG.get('database', '')),
                 }
                 process = subprocess.Popen(
-                    ['python', script_path],
+                    [sys.executable, script_path],
                     cwd=project_root,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -489,7 +489,7 @@ def run_load_timetable_to_db():
             'DB_NAME': str(DB_CONFIG.get('database', '')),
         }
         process = subprocess.Popen(
-            ['python', script_path, '--db-only'],
+            [sys.executable, script_path, '--db-only'],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -723,7 +723,7 @@ def run_process_timetable():
         script_status['process_timetable']['message'] = 'Запуск process_timetable.py...'
         env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
-            ['python', script_path],
+            [sys.executable, script_path],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -1627,7 +1627,7 @@ def run_fetch_teachers():
             raise FileNotFoundError(f'Скрипт не найден: {script_path}')
         env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
         process = subprocess.Popen(
-            ['python', script_path],
+            [sys.executable, script_path],
             cwd=project_root,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
