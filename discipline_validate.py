@@ -43,7 +43,7 @@ def load_documents():
 def get_embedding(text):
     """Получить эмбеддинг текста через Ollama (nomic-embed-text)."""
     response = requests.post(
-        "http://localhost:11434/api/embeddings",
+        "http://10.10.10.11:11434/api/embeddings",
         json={
             "model": "nomic-embed-text",
             "prompt": text
