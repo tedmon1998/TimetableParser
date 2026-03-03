@@ -25,6 +25,7 @@ const DisciplineMatchView: React.FC = () => {
   const [stripText, setStripText] = useState<string>('');
   const [stripAt, setStripAt] = useState<'start' | 'end'>('start');
   const [matchFull, setMatchFull] = useState<boolean>(true);
+  const [ollamaMode, setOllamaMode] = useState<'remote' | 'local'>('remote');
   const [items, setItems] = useState<MatchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -44,6 +45,9 @@ const DisciplineMatchView: React.FC = () => {
       if (stripText.trim()) {
         params.set('strip_text', stripText.trim());
         params.set('strip_at', stripAt);
+      }
+      if (ollamaMode === 'local') {
+        params.set('ollama', 'local');
       }
       params.set('match_full', matchFull ? '1' : '0');
       const res = await axios.get(`${API_BASE}/discipline-match/unmatched?${params.toString()}`);
@@ -74,7 +78,7 @@ const DisciplineMatchView: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [source, stripText, stripAt, matchFull]);
+  }, [source, stripText, stripAt, matchFull, ollamaMode]);
 
   const replaceWith = useCallback(async (original: string, replacement: string) => {
     if (!replacement?.trim()) return;
@@ -132,6 +136,9 @@ const DisciplineMatchView: React.FC = () => {
       if (stripText.trim()) {
         body.strip_text = stripText.trim();
         body.strip_at = stripAt;
+      }
+      if (ollamaMode === 'local') {
+        body.ollama = 'local';
       }
       const res = await axios.post(`${API_BASE}/discipline-match/apply`, body);
       const data = res.data as { replaced?: number; error?: string; message?: string };
@@ -279,6 +286,27 @@ const DisciplineMatchView: React.FC = () => {
             />
             полное сравнение
           </label>
+          <div className="discipline-match-ollama-mode">
+            <span className="discipline-match-ollama-label">Векторизация (Ollama):</span>
+            <label className="discipline-match-radio-label">
+              <input
+                type="radio"
+                name="ollama_mode"
+                checked={ollamaMode === 'remote'}
+                onChange={() => setOllamaMode('remote')}
+              />
+              удалённая
+            </label>
+            <label className="discipline-match-radio-label">
+              <input
+                type="radio"
+                name="ollama_mode"
+                checked={ollamaMode === 'local'}
+                onChange={() => setOllamaMode('local')}
+              />
+              локальная
+            </label>
+          </div>
           <label>
             Порог точности (0–1)
             <input

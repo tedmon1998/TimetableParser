@@ -40,16 +40,34 @@ def load_documents():
     return [str(x).strip() for x in data if x is not None and str(x).strip()]
 
 
-def get_embedding(text):
-    """Получить эмбеддинг текста через Ollama (nomic-embed-text)."""
-    response = requests.post(
-        "http://10.10.10.11:11434/api/embeddings",
-        json={
-            "model": "nomic-embed-text",
-            "prompt": text
-        }
-    )
-    return np.array(response.json()["embedding"])
+def get_embedding(text, *, use_local: bool | None = None):
+    """
+    Получить эмбеддинг текста через Ollama (nomic-embed-text).
+
+    :param use_local: Если True — использовать локальный Ollama (http://127.0.0.1:11434),
+                      если False — удалённый (как было раньше),
+                      если None — брать из окружения USE_LOCAL_OLLAMA (1/true/yes).
+    """
+    if use_local is None:
+        env_val = os.getenv("USE_LOCAL_OLLAMA", "").strip().lower()
+        use_local = env_val in ("1", "true", "yes")
+
+    base_url = "http://127.0.0.1:11434" if use_local else "http://10.10.10.11:11434"
+
+    try:
+        response = requests.post(
+            f"{base_url}/api/embeddings",
+            json={
+                "model": "nomic-embed-text",
+                "prompt": text
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return np.array(data["embedding"])
+    except Exception as e:
+        raise RuntimeError(f"Ollama request failed: {e}") from e
 
 
 def load_cached_embeddings(documents):
@@ -78,7 +96,7 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
-def ensure_embeddings():
+def ensure_embeddings(*, use_local: bool | None = None):
     """Загружает документы и эмбеддинги (из кэша или через Ollama). Возвращает (documents, doc_embeddings)."""
     documents = load_documents()
     if not documents:
@@ -89,10 +107,12 @@ def ensure_embeddings():
     doc_embeddings = []
     for i, doc in enumerate(documents):
         try:
-            doc_embeddings.append(get_embedding(normalize_for_compare(doc)))
+            doc_embeddings.append(get_embedding(normalize_for_compare(doc), use_local=use_local))
         except Exception as e:
+            # Для веб-интерфейса важно видеть конкретную ошибку, поэтому не скрываем её,
+            # а пробрасываем дальше (её поймает Flask и вернёт в поле error).
             print(f"Ошибка эмбеддинга для документа {i}: {e}", file=sys.stderr)
-            return documents, None
+            raise
         if (i + 1) % 200 == 0:
             print(f"  {i + 1}/{len(documents)}", file=sys.stderr)
     doc_embeddings = np.array(doc_embeddings)
@@ -100,7 +120,7 @@ def ensure_embeddings():
     return documents, doc_embeddings
 
 
-def match_query(query_text, documents, doc_embeddings, top_k=4):
+def match_query(query_text, documents, doc_embeddings, top_k=4, *, use_local: bool | None = None):
     """
     Сопоставляет query_text со справочником по эмбеддингам.
     Возвращает список кортежей (название_документа, оценка_сходства), отсортированный по убыванию, до top_k штук.
@@ -109,7 +129,7 @@ def match_query(query_text, documents, doc_embeddings, top_k=4):
         return []
     try:
         normalized = normalize_for_compare(query_text)
-        query_emb = get_embedding(normalized)
+        query_emb = get_embedding(normalized, use_local=use_local)
     except Exception:
         return []
     scores = np.dot(doc_embeddings, query_emb) / (

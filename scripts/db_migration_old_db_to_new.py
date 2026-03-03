@@ -127,7 +127,7 @@ def course_to_int(s):
         return None
 
 
-def run(conn, semester_id: int, clean: bool, dedupe: bool, strict: bool, has_duration_pairs: bool):
+def run(conn, semester_id: int, clean: bool, dedupe: bool, strict: bool, has_duration_pairs: bool, clean_override_only: bool = False):
     stats = {
         "schedule_rows": 0,
         "student_group_inserted": 0,
@@ -139,16 +139,27 @@ def run(conn, semester_id: int, clean: bool, dedupe: bool, strict: bool, has_dur
 
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
         # ——— Очистка (опционально) ———
-        if clean:
+        if clean or clean_override_only:
+            deleted_so = 0
+            deleted_sg = 0
+
+            # всегда очищаем schedule_override, если включён любой режим очистки
             cur.execute("DELETE FROM schedule_override")
             deleted_so = cur.rowcount
-            cur.execute("DELETE FROM student_group")
-            deleted_sg = cur.rowcount
-            for table, col in (("schedule_override", "id"), ("student_group", "id")):
+            cur.execute(
+                "SELECT setval(pg_get_serial_sequence(%s, %s), 1, false)",
+                ("schedule_override", "id"),
+            )
+
+            # при полном clean дополнительно очищаем student_group
+            if clean:
+                cur.execute("DELETE FROM student_group")
+                deleted_sg = cur.rowcount
                 cur.execute(
                     "SELECT setval(pg_get_serial_sequence(%s, %s), 1, false)",
-                    (table, col),
+                    ("student_group", "id"),
                 )
+
             conn.commit()
             logging.info("Очистка: удалено schedule_override=%s, student_group=%s", deleted_so, deleted_sg)
 
@@ -316,17 +327,19 @@ def run(conn, semester_id: int, clean: bool, dedupe: bool, strict: bool, has_dur
         if aud_n:
             room_id = room_by_name.get(aud_n)
 
+        # subgroup_count: сколько подгрупп всего (num_subgroups в старой схеме)
         subgroup_count = None
         try:
-            v = row.get("subgroup")
+            v = row.get("num_subgroups")
             if v is not None:
                 subgroup_count = int(v)
         except (ValueError, TypeError):
             pass
 
+        # subgroup_no: номер конкретной подгруппы (subgroup в старой схеме)
         subgroup_no = None
         try:
-            v = row.get("num_subgroups")
+            v = row.get("subgroup")
             if v is not None:
                 subgroup_no = int(v)
         except (ValueError, TypeError):
@@ -416,6 +429,7 @@ def main():
     parser = argparse.ArgumentParser(description="Миграция schedule -> student_group, schedule_override, teacher.is_external")
     parser.add_argument("--semester-id", type=int, required=True, help="ID семестра для schedule_override.semester_id")
     parser.add_argument("--clean", action="store_true", help="Очистить schedule_override и student_group перед миграцией")
+    parser.add_argument("--clean-override-only", action="store_true", help="Очистить только schedule_override перед миграцией")
     parser.add_argument("--dedupe", action="store_true", help="Удалить точные дубликаты перед вставкой в schedule_override")
     parser.add_argument("--strict", action="store_true", help="Строгий режим: ошибка при отсутствии timeslot в известном корпусе")
     args = parser.parse_args()
@@ -439,6 +453,7 @@ def main():
             dedupe=args.dedupe,
             strict=args.strict,
             has_duration_pairs=has_duration_pairs,
+            clean_override_only=args.clean_override_only,
         )
         logging.info("Обработано строк в schedule: %s", stats["schedule_rows"])
         logging.info("Вставлено в student_group: %s", stats["student_group_inserted"])

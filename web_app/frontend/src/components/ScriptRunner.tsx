@@ -108,7 +108,8 @@ const ScriptRunner: React.FC = () => {
     message: '',
     error: null
   });
-  const [semesters, setSemesters] = useState<Array<{ id: number; name: string }>>([]);
+  type SemesterInfo = { id: number; name: string; date_start?: string; date_end?: string };
+  const [semesters, setSemesters] = useState<SemesterInfo[]>([]);
   const [migrateSemesterId, setMigrateSemesterId] = useState<number>(1);
   const [migrateClean, setMigrateClean] = useState(false);
   const [migrateDedupe, setMigrateDedupe] = useState(false);
@@ -179,6 +180,17 @@ const ScriptRunner: React.FC = () => {
 
   const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
+  const formatSemesterLabel = (s: SemesterInfo): string => {
+    if (s.date_start && s.date_end) {
+      const startYear = new Date(s.date_start).getFullYear();
+      const endYear = new Date(s.date_end).getFullYear();
+      if (!Number.isNaN(startYear) && !Number.isNaN(endYear)) {
+        return `${s.name} (${startYear}–${endYear})`;
+      }
+    }
+    return s.name;
+  };
+
   const fetchUnresolvedFio = React.useCallback(async () => {
     try {
       const res = await axios.get<{ items?: string[] }>(`${API_BASE}/aspi/unresolved`);
@@ -207,7 +219,7 @@ const ScriptRunner: React.FC = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await axios.get<Array<{ id: number; name: string }>>(`${API_BASE}/semesters`);
+        const res = await axios.get<SemesterInfo[]>(`${API_BASE}/semesters`);
         const list = res.data ?? [];
         setSemesters(list);
         if (list.length > 0) {
@@ -338,14 +350,16 @@ const ScriptRunner: React.FC = () => {
     }
   };
 
-  const runMigrationScript = React.useCallback(async (): Promise<ScriptStatus> => {
+  const runMigrationScript = React.useCallback(async (options?: { cleanOverrideOnly?: boolean }): Promise<ScriptStatus> => {
+    const cleanOverrideOnly = options?.cleanOverrideOnly ?? false;
     setMigrateOldToNewStatus({ running: true, progress: 0, message: 'Запуск...', error: null });
     try {
       await axios.post(`${API_BASE}/run/migrate_old_to_new`, {
         semester_id: migrateSemesterId,
-        clean: migrateClean,
+        clean: !cleanOverrideOnly && migrateClean,
         dedupe: migrateDedupe,
-        strict: migrateStrict
+        strict: migrateStrict,
+        clean_override_only: cleanOverrideOnly,
       });
     } catch (err: any) {
       const msg = err.response?.data?.error ?? err.message ?? 'Ошибка запроса';
@@ -1209,7 +1223,7 @@ const ScriptRunner: React.FC = () => {
             >
               {semesters.length === 0 ? <option value={1}>ID: 1</option> : null}
               {semesters.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
+                <option key={s.id} value={s.id}>{formatSemesterLabel(s)}</option>
               ))}
             </select>
           </label>
@@ -1232,6 +1246,14 @@ const ScriptRunner: React.FC = () => {
           disabled={migrateOldToNewStatus.running}
         >
           {migrateOldToNewStatus.running ? 'Выполняется...' : 'Запустить миграцию'}
+        </button>
+        <button
+          className="button"
+          style={{ marginLeft: '0.75rem' }}
+          onClick={() => runMigrationScript({ cleanOverrideOnly: true })}
+          disabled={migrateOldToNewStatus.running}
+        >
+          {migrateOldToNewStatus.running ? 'Выполняется...' : 'Только schedule_override (очистить и мигрировать)'}
         </button>
         {migrateOldToNewStatus.running && (
           <div className="progress-container" style={{ marginTop: '0.5rem' }}>

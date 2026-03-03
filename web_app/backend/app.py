@@ -843,7 +843,7 @@ def run_merge_timetable_route():
     return jsonify({'message': 'Script started'})
 
 
-def run_migrate_old_to_new(semester_id=1, clean=False, dedupe=False, strict=False):
+def run_migrate_old_to_new(semester_id=1, clean=False, dedupe=False, strict=False, clean_override_only=False):
     """Запускает scripts/db_migration_old_db_to_new.py — миграция schedule -> student_group, schedule_override, teacher.is_external."""
     script_status['migrate_old_to_new']['running'] = True
     script_status['migrate_old_to_new']['progress'] = 0
@@ -857,6 +857,8 @@ def run_migrate_old_to_new(semester_id=1, clean=False, dedupe=False, strict=Fals
         cmd = [sys.executable, script_path, '--semester-id', str(semester_id)]
         if clean:
             cmd.append('--clean')
+        if clean_override_only:
+            cmd.append('--clean-override-only')
         if dedupe:
             cmd.append('--dedupe')
         if strict:
@@ -909,17 +911,28 @@ def get_semesters():
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute('SELECT id, name FROM semester ORDER BY id')
+        cur.execute('SELECT id, name, date_start, date_end FROM semester ORDER BY id')
         rows = cur.fetchall()
         conn.close()
-        return jsonify([{'id': r['id'], 'name': r['name']} for r in rows])
+        return jsonify([
+            {
+                'id': r['id'],
+                'name': r['name'],
+                'date_start': r['date_start'],
+                'date_end': r['date_end'],
+            }
+            for r in rows
+        ])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/run/migrate_old_to_new', methods=['POST'])
 def run_migrate_old_to_new_route():
-    """Запускает миграцию schedule -> student_group, schedule_override, teacher.is_external. Тело: semester_id (обязательно), clean?, dedupe?, strict?."""
+    """Запускает миграцию schedule -> student_group, schedule_override, teacher.is_external.
+
+    Тело: semester_id (обязательно), clean?, dedupe?, strict?, clean_override_only?.
+    """
     if script_status['migrate_old_to_new']['running']:
         return jsonify({'error': 'Script is already running'}), 400
     data = request.get_json(silent=True) or {}
@@ -937,6 +950,7 @@ def run_migrate_old_to_new_route():
             'clean': bool(data.get('clean')),
             'dedupe': bool(data.get('dedupe')),
             'strict': bool(data.get('strict')),
+            'clean_override_only': bool(data.get('clean_override_only')),
         }
     )
     thread.daemon = True
@@ -3556,13 +3570,15 @@ def get_discipline_match_unmatched():
         matched_by_rule = {it['original'] for it in items}
         unmatched = [s for s in distinct_not_in_ref if s not in matched_by_rule]
         if unmatched:
-            documents, doc_embeddings = match_module.ensure_embeddings()
+            # режим Ollama: локальный или удалённый (по умолчанию — как сейчас, удалённый)
+            use_local_ollama = (request.args.get('ollama', '').strip().lower() == 'local')
+            documents, doc_embeddings = match_module.ensure_embeddings(use_local=use_local_ollama)
             if documents is not None and doc_embeddings is not None:
                 for original in unmatched:
                     after_replace = _apply_replace_before_discipline_match(original, rules_replace)
                     query_text = _strip_for_match(after_replace, strip_text, strip_at) if strip_text else after_replace
                     try:
-                        top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=4)
+                        top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=4, use_local=use_local_ollama)
                     except Exception:
                         top4 = []
                     if not top4:
@@ -3689,14 +3705,15 @@ def apply_discipline_match():
         matched_by_rule = {p[0] for p in rule_pairs}
         unmatched = [s for s in distinct if s not in matched_by_rule]
         if unmatched:
-            documents, doc_embeddings = match_module.ensure_embeddings()
+            use_local_ollama = (data.get('ollama', '').strip().lower() == 'local') if isinstance(data.get('ollama'), str) else (data.get('ollama') is True)
+            documents, doc_embeddings = match_module.ensure_embeddings(use_local=use_local_ollama)
             if documents is not None and doc_embeddings is not None:
                 for original in unmatched:
                     cleaned_ids = []
                     after_replace = _apply_replace_before_discipline_match(original, rules_replace)
                     query_text = _strip_for_match(after_replace, strip_text, strip_at) if strip_text else after_replace
                     try:
-                        top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=1)
+                        top4 = match_module.match_query(query_text, documents, doc_embeddings, top_k=1, use_local=use_local_ollama)
                     except Exception:
                         continue
                     score = top4[0][1] if top4 else 0.0
