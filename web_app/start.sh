@@ -3,9 +3,9 @@
 echo "Starting Парсер расписания Web Application..."
 echo ""
 
-# Проверяем наличие Python
-if ! command -v python &> /dev/null; then
-    echo "Error: Python is not installed or not in PATH"
+# Проверяем наличие Python 3
+if ! command -v python3 &> /dev/null; then
+    echo "Error: Python 3 is not installed or not in PATH"
     exit 1
 fi
 
@@ -18,7 +18,7 @@ fi
 # Запускаем backend в фоне
 echo "Starting Backend..."
 cd backend
-python app.py &
+python3 app.py &
 BACKEND_PID=$!
 cd ..
 
