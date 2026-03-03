@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
 import './ScriptRunner.css';
@@ -102,6 +102,26 @@ const ScriptRunner: React.FC = () => {
     message: '',
     error: null
   });
+  const [migrateOldToNewStatus, setMigrateOldToNewStatus] = useState<ScriptStatus>({
+    running: false,
+    progress: 0,
+    message: '',
+    error: null
+  });
+  const [semesters, setSemesters] = useState<Array<{ id: number; name: string }>>([]);
+  const [migrateSemesterId, setMigrateSemesterId] = useState<number>(1);
+  const [migrateClean, setMigrateClean] = useState(false);
+  const [migrateDedupe, setMigrateDedupe] = useState(false);
+  const [migrateStrict, setMigrateStrict] = useState(false);
+
+  const [jsonPaste, setJsonPaste] = useState('');
+  const [tableData, setTableData] = useState<Record<string, unknown>[] | null>(null);
+  const [tableError, setTableError] = useState<string | null>(null);
+  const [droppedFileName, setDroppedFileName] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [showIdColumns, setShowIdColumns] = useState(true);
+  const [tableGlobalFilter, setTableGlobalFilter] = useState('');
+  const [tableColumnFilters, setTableColumnFilters] = useState<Record<string, string>>({});
 
   const [unresolvedFioItems, setUnresolvedFioItems] = useState<string[]>([]);
   const [unresolvedParseItems, setUnresolvedParseItems] = useState<Array<{ type: string; file: string; specialty?: string; discipline?: string; day: string; para: string }>>([]);
@@ -123,12 +143,15 @@ const ScriptRunner: React.FC = () => {
     aspiApplyError ||
     null;
 
-  type ScriptRunnerTab = 'bachelor_master' | 'aspi' | 'spo';
+  type ScriptRunnerTab = 'bachelor_master' | 'aspi' | 'spo' | 'migration';
 
   const getInitialSubtab = (): ScriptRunnerTab => {
     const params = new URLSearchParams(window.location.search);
     const subtab = params.get('subtab');
-    return subtab === 'aspi' ? 'aspi' : subtab === 'spo' ? 'spo' : 'bachelor_master';
+    if (subtab === 'aspi') return 'aspi';
+    if (subtab === 'spo') return 'spo';
+    if (subtab === 'migration') return 'migration';
+    return 'bachelor_master';
   };
   const [activeTab, setActiveTabState] = useState<ScriptRunnerTab>(getInitialSubtab);
 
@@ -180,6 +203,22 @@ const ScriptRunner: React.FC = () => {
       fetchUnresolvedParse();
     }
   }, [activeTab, fetchUnresolvedFio, fetchUnresolvedParse]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await axios.get<Array<{ id: number; name: string }>>(`${API_BASE}/semesters`);
+        const list = res.data ?? [];
+        setSemesters(list);
+        if (list.length > 0) {
+          setMigrateSemesterId((prev) => (list.some((s) => s.id === prev) ? prev : list[0].id));
+        }
+      } catch {
+        setSemesters([]);
+      }
+    };
+    load();
+  }, [API_BASE]);
 
   useEffect(() => {
     if (aspiUnresolvedModalOpen) fetchUnresolvedFio();
@@ -298,6 +337,222 @@ const ScriptRunner: React.FC = () => {
       console.error(`Error fetching status for ${scriptName}:`, error);
     }
   };
+
+  const runMigrationScript = React.useCallback(async (): Promise<ScriptStatus> => {
+    setMigrateOldToNewStatus({ running: true, progress: 0, message: 'Запуск...', error: null });
+    try {
+      await axios.post(`${API_BASE}/run/migrate_old_to_new`, {
+        semester_id: migrateSemesterId,
+        clean: migrateClean,
+        dedupe: migrateDedupe,
+        strict: migrateStrict
+      });
+    } catch (err: any) {
+      const msg = err.response?.data?.error ?? err.message ?? 'Ошибка запроса';
+      setMigrateOldToNewStatus({ running: false, progress: 0, message: '', error: msg });
+      return { running: false, progress: 0, message: '', error: msg };
+    }
+    return new Promise<ScriptStatus>((resolve) => {
+      const statusInterval = setInterval(async () => {
+        try {
+          const response = await axios.get(`${API_BASE}/status/migrate_old_to_new`);
+          const status: ScriptStatus = response.data;
+          setMigrateOldToNewStatus(status);
+          if (!status.running) {
+            clearInterval(statusInterval);
+            resolve(status); 
+          }
+        } catch {
+          clearInterval(statusInterval);
+          resolve(migrateOldToNewStatus);
+        }
+      }, 5000);
+    });
+  }, [API_BASE, migrateSemesterId, migrateClean, migrateDedupe, migrateStrict]);
+
+  const parseJsonToTable = (raw: string): Record<string, unknown>[] | null => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as Record<string, unknown>[];
+      if (parsed && typeof parsed === 'object') return [parsed as Record<string, unknown>];
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  /** Рекурсивно разворачивает вложенные объекты в плоские ключи с префиксом (group_direction_name и т.д.) */
+  const flattenObject = (obj: Record<string, unknown>, prefix = ''): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      const key = prefix ? `${prefix}_${k}` : k;
+      if (v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+        Object.assign(out, flattenObject(v as Record<string, unknown>, key));
+      } else {
+        out[key] = v;
+      }
+    }
+    return out;
+  };
+
+  /** Если данные в формате { group, items, semester_id }, разворачивает в одну строку на элемент items с плоскими полями */
+  const normalizeTableData = (data: Record<string, unknown>[]): Record<string, unknown>[] => {
+    if (data.length !== 1) return data;
+    const root = data[0];
+    const items = root.items;
+    const group = root.group;
+    if (!Array.isArray(items) || !group || typeof group !== 'object') return data;
+    const flatGroup = flattenObject(group as Record<string, unknown>, 'group');
+    return items.map((item: Record<string, unknown>) => {
+      const flatItem = flattenObject(item);
+      return {
+        ...flatGroup,
+        ...flatItem,
+        ...(root.semester_id !== undefined && { semester_id: root.semester_id }),
+      };
+    });
+  };
+
+  const showPastedJson = () => {
+    setTableError(null);
+    setDroppedFileName(null);
+    const trimmed = jsonPaste.trim();
+    if (!trimmed) {
+      setTableData(null);
+      return;
+    }
+    let data = parseJsonToTable(trimmed);
+    if (data) {
+      data = normalizeTableData(data);
+      setTableData(data);
+    } else {
+      setTableError('Неверный JSON. Ожидается массив объектов или один объект.');
+      setTableData(null);
+    }
+  };
+
+  const handleMigrationFile = (file: File) => {
+    setTableError(null);
+    setDroppedFileName(file.name);
+    const isJson = file.name.toLowerCase().endsWith('.json');
+    const isExcel = /\.(xlsx|xls)$/i.test(file.name);
+    const reader = new FileReader();
+    if (isJson) {
+      reader.onload = () => {
+        const text = reader.result as string;
+        let data = parseJsonToTable(text);
+        if (data) {
+          data = normalizeTableData(data);
+          setTableData(data);
+        } else {
+          setTableError('В файле не найден валидный JSON (массив объектов или объект).');
+          setTableData(null);
+        }
+      };
+      reader.readAsText(file, 'UTF-8');
+    } else if (isExcel) {
+      reader.onload = () => {
+        try {
+          const data = reader.result;
+          if (!data || !(data instanceof ArrayBuffer)) return;
+          const wb = XLSX.read(data, { type: 'array' });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = (XLSX.utils as unknown as { sheet_to_json: (ws: unknown) => Record<string, unknown>[] }).sheet_to_json(ws);
+          setTableData(rows);
+        } catch (e) {
+          setTableError('Не удалось прочитать Excel: ' + (e instanceof Error ? e.message : String(e)));
+          setTableData(null);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      setTableError('Поддерживаются только файлы .json, .xlsx, .xls');
+      setTableData(null);
+    }
+  };
+
+  const onMigrationDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) handleMigrationFile(file);
+  };
+
+  const onMigrationDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+  const onMigrationDragLeave = () => setDragOver(false);
+
+  const downloadMigrationExcel = () => {
+    if (!tableData || tableData.length === 0) return;
+    const cols = migrationDisplayedColumns;
+    const rows = tableData.map((row) => {
+      const out: Record<string, unknown> = {};
+      cols.forEach((col) => { out[col] = row[col]; });
+      return out;
+    });
+    const utils = XLSX.utils as unknown as { json_to_sheet: (data: Record<string, unknown>[]) => unknown; book_new: () => unknown; book_append_sheet: (wb: unknown, ws: unknown, name: string) => void };
+    const ws = utils.json_to_sheet(rows);
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, 'Data');
+    const name = droppedFileName ? droppedFileName.replace(/\.[^.]+$/, '') + '_export.xlsx' : 'export.xlsx';
+    (XLSX as unknown as { writeFile: (wb: unknown, filename: string) => void }).writeFile(wb, name);
+  };
+
+  const migrationTableColumns = tableData?.length
+    ? Array.from(new Set(tableData.flatMap((row) => Object.keys(row)))).sort()
+    : [];
+
+  const migrationDisplayedColumns = useMemo(
+    () =>
+      showIdColumns
+        ? migrationTableColumns
+        : migrationTableColumns.filter((col) => col === 'id' || !col.endsWith('_id')),
+    [migrationTableColumns, showIdColumns]
+  );
+
+  const migrationCellValue = (val: unknown): string => {
+    if (val == null) return '';
+    if (typeof val === 'object') return JSON.stringify(val);
+    return String(val);
+  };
+
+  type MigrationSort = { field: string; direction: 'asc' | 'desc' } | null;
+  const [migrationSort, setMigrationSort] = useState<MigrationSort>(null);
+
+  const filteredTableData = useMemo(() => {
+    if (!tableData) return null;
+    let rows = tableData;
+    const global = tableGlobalFilter.trim().toLowerCase();
+    if (global) {
+      rows = rows.filter((row) =>
+        migrationDisplayedColumns.some((col) =>
+          migrationCellValue(row[col]).toLowerCase().includes(global)
+        )
+      );
+    }
+    const activeColumnFilters = Object.entries(tableColumnFilters).filter(
+      ([, v]) => v.trim() !== ''
+    );
+    if (activeColumnFilters.length) {
+      rows = rows.filter((row) =>
+        activeColumnFilters.every(([col, value]) =>
+          migrationCellValue(row[col]).toLowerCase().includes(value.trim().toLowerCase())
+        )
+      );
+    }
+    if (migrationSort) {
+      const { field, direction } = migrationSort;
+      const sign = direction === 'asc' ? 1 : -1;
+      rows = [...rows].sort((a, b) => {
+        const av = migrationCellValue(a[field]);
+        const bv = migrationCellValue(b[field]);
+        return av.localeCompare(bv, 'ru') * sign;
+      });
+    }
+    return rows;
+  }, [tableData, tableGlobalFilter, tableColumnFilters, migrationDisplayedColumns, migrationSort]);
 
   const runScript = (scriptName: 'parse_timetable' | 'clean_audiences' | 'load_timetable_to_db' | 'merge_timetable' | 'process_timetable' | 'parse_aspi' | 'normalize_aspi' | 'load_aspi_to_db' | 'merge_aspi_to_intermediate' | 'parse_spo' | 'load_spo_to_db' | 'merge_spo_to_intermediate'): Promise<ScriptStatus> => {
     const setStatus = scriptName === 'parse_timetable' ? setParseStatus
@@ -484,6 +739,13 @@ const ScriptRunner: React.FC = () => {
           onClick={() => setActiveTab('spo')}
         >
           СПО (колледж)
+        </button>
+        <button
+          type="button"
+          className={`script-runner-tab ${activeTab === 'migration' ? 'active' : ''}`}
+          onClick={() => setActiveTab('migration')}
+        >
+          Миграция в новую архитектуру
         </button>
       </div>
 
@@ -928,6 +1190,188 @@ const ScriptRunner: React.FC = () => {
           </div>
         )}
       </div>
+      )}
+
+      {activeTab === 'migration' && (
+      <>
+      <div className="card">
+        <h2>Миграция БД (schedule → новая схема)</h2>
+        <p className="description">
+          Скрипт db_migration_old_db_to_new.py: перенос данных из таблицы schedule в student_group, schedule_override и обновление teacher.is_external. Справочники (teacher, subject, room, institute, direction, timeslot) не создаются — только поиск по существующим.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', marginBottom: '1rem' }}>
+          <label>
+            Семестр:{' '}
+            <select
+              value={migrateSemesterId}
+              onChange={(e) => setMigrateSemesterId(Number(e.target.value))}
+              disabled={migrateOldToNewStatus.running}
+            >
+              {semesters.length === 0 ? <option value={1}>ID: 1</option> : null}
+              {semesters.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <input type="checkbox" checked={migrateClean} onChange={(e) => setMigrateClean(e.target.checked)} disabled={migrateOldToNewStatus.running} />
+            Очистить перед миграцией (schedule_override, student_group)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <input type="checkbox" checked={migrateDedupe} onChange={(e) => setMigrateDedupe(e.target.checked)} disabled={migrateOldToNewStatus.running} />
+            Убрать дубликаты
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <input type="checkbox" checked={migrateStrict} onChange={(e) => setMigrateStrict(e.target.checked)} disabled={migrateOldToNewStatus.running} />
+            Строгий режим (ошибка при отсутствии timeslot)
+          </label>
+        </div>
+        <button
+          className="button"
+          onClick={() => runMigrationScript()}
+          disabled={migrateOldToNewStatus.running}
+        >
+          {migrateOldToNewStatus.running ? 'Выполняется...' : 'Запустить миграцию'}
+        </button>
+        {migrateOldToNewStatus.running && (
+          <div className="progress-container" style={{ marginTop: '0.5rem' }}>
+            <div className="progress-bar">
+              <div className="progress-bar-fill" style={{ width: `${migrateOldToNewStatus.progress}%` }}>
+                {migrateOldToNewStatus.progress}%
+              </div>
+            </div>
+            <p className="progress-message">{migrateOldToNewStatus.message}</p>
+          </div>
+        )}
+        {migrateOldToNewStatus.error && (
+          <div className="message error" style={{ marginTop: '0.5rem' }}>
+            <strong>Ошибка:</strong> {migrateOldToNewStatus.error}
+          </div>
+        )}
+        {!migrateOldToNewStatus.running && migrateOldToNewStatus.progress === 100 && !migrateOldToNewStatus.error && (
+          <div className="message success" style={{ marginTop: '0.5rem' }}>
+            {migrateOldToNewStatus.message || 'Миграция завершена.'}
+          </div>
+        )}
+      </div>
+
+      <div className="card migration-json-card">
+        <h2>Просмотр JSON / Excel как таблица</h2>
+        <p className="description">
+          Вставьте JSON (массив объектов) или перетащите сюда файл .json или .xlsx — данные отобразятся в виде таблицы (столбцы = ключи, строки = записи). Можно скачать результат в Excel в том же формате.
+        </p>
+        <div className="migration-json-row">
+          <div className="migration-json-inputs">
+            <textarea
+              className="migration-json-textarea"
+              placeholder='Вставьте JSON, например: [{"id": 1, "name": "..."}, ...]'
+              value={jsonPaste}
+              onChange={(e) => setJsonPaste(e.target.value)}
+              rows={4}
+            />
+            <button type="button" className="button" onClick={showPastedJson}>
+              Показать таблицу
+            </button>
+          </div>
+          <input
+            type="file"
+            accept=".json,.xlsx,.xls"
+            className="migration-file-input"
+            id="migration-file-input"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleMigrationFile(f);
+              e.target.value = '';
+            }}
+          />
+          <label htmlFor="migration-file-input" className="migration-drop-label">
+            <div
+              className={`migration-drop-zone ${dragOver ? 'drag-over' : ''}`}
+              onDrop={onMigrationDrop}
+              onDragOver={onMigrationDragOver}
+              onDragLeave={onMigrationDragLeave}
+            >
+              или перетащите сюда файл .json или .xlsx (или нажмите для выбора)
+            </div>
+          </label>
+        </div>
+
+        {tableError && (
+          <div className="message error" style={{ marginTop: '1rem' }}>{tableError}</div>
+        )}
+        {droppedFileName && tableData && (
+          <p className="description" style={{ marginTop: '0.5rem', marginBottom: 0 }}>
+            Загружен файл: <strong>{droppedFileName}</strong>. Показано на сайте ниже.
+          </p>
+        )}
+        {filteredTableData && filteredTableData.length > 0 && (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flex: '1 1 220px' }}>
+                <span style={{ whiteSpace: 'nowrap' }}>Поиск по таблице:</span>
+                <input
+                  type="text"
+                  className="group-search-input"
+                  style={{ maxWidth: '260px' }}
+                  placeholder="Фильтр по всем колонкам"
+                  value={tableGlobalFilter}
+                  onChange={(e) => setTableGlobalFilter(e.target.value)}
+                />
+              </label>
+              <label className="migration-table-toggle" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  checked={showIdColumns}
+                  onChange={(e) => setShowIdColumns(e.target.checked)}
+                />
+                Показывать колонки с id (group_id, room_id и т.д.; основная id всегда видна)
+              </label>
+            </div>
+            <div className="migration-table-wrap">
+              <table className="migration-table">
+                <thead>
+                  <tr>
+                    {migrationDisplayedColumns.map((col) => (
+                      <th key={col}>{col}</th>
+                    ))}
+                  </tr>
+                  <tr>
+                    {migrationDisplayedColumns.map((col) => (
+                      <th key={col}>
+                        <input
+                          type="text"
+                          placeholder="фильтр"
+                          value={tableColumnFilters[col] ?? ''}
+                          onChange={(e) =>
+                            setTableColumnFilters((prev) => ({ ...prev, [col]: e.target.value }))
+                          }
+                          style={{ width: '100%', boxSizing: 'border-box', fontSize: '0.75rem' }}
+                        />
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTableData.map((row, idx) => (
+                    <tr key={idx}>
+                      {migrationDisplayedColumns.map((col) => (
+                        <td key={col}>{migrationCellValue(row[col])}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button type="button" className="button button-primary" onClick={downloadMigrationExcel} style={{ marginTop: '0.75rem' }}>
+              {droppedFileName ? 'Скачать Excel (в том же формате)' : 'Скачать Excel'}
+            </button>
+          </>
+        )}
+        {tableData && (!filteredTableData || filteredTableData.length === 0) && !tableError && (
+          <p className="description" style={{ marginTop: '1rem' }}>Нет данных для отображения (пустой массив).</p>
+        )}
+      </div>
+      </>
       )}
 
       {aspiErrorModalMessage && (

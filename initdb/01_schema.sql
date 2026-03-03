@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS timetable_spo (
     group_name           VARCHAR(100),
     subgroup             INTEGER,
     week_type            VARCHAR(50),
-    fio                  TEXT,
+    fio                  TEXT, 
     course               VARCHAR(20),
     institute            TEXT,
     source_file          TEXT,

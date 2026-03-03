@@ -467,3 +467,97 @@
   background: #f5f5f5;
   font-weight: 600;
 }
+
+/* Миграция: JSON / Excel → таблица */
+.migration-json-card .migration-json-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.migration-json-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 280px;
+  flex: 1;
+}
+
+.migration-json-textarea {
+  width: 100%;
+  min-height: 100px;
+  padding: 0.5rem 0.75rem;
+  font-family: ui-monospace, monospace;
+  font-size: 0.9rem;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.migration-drop-label {
+  display: block;
+  cursor: pointer;
+  min-width: 200px;
+}
+
+.migration-drop-zone {
+  min-width: 200px;
+  min-height: 120px;
+  border: 2px dashed #aaa;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  text-align: center;
+  color: #666;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.migration-drop-zone:hover,
+.migration-drop-zone.drag-over {
+  border-color: var(--primary-color, #1143c0);
+  background: #f0f4ff;
+  color: #333;
+}
+
+.migration-file-input {
+  position: absolute;
+  width: 0.1px;
+  height: 0.1px;
+  opacity: 0;
+  overflow: hidden;
+  z-index: -1;
+}
+
+.migration-table-wrap {
+  margin-top: 1rem;
+  overflow: auto;
+  max-height: 400px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+}
+
+.migration-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  min-width: 100%;
+}
+
+.migration-table th,
+.migration-table td {
+  border: 1px solid #ddd;
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.migration-table th {
+  position: sticky;
+  top: 0;
+  background: #f5f5f5;
+  font-weight: 600;
+  z-index: 1;
+}

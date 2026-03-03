@@ -79,7 +79,8 @@ script_status = {
     'merge_aspi_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'parse_spo': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'load_spo_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
-    'merge_spo_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None}
+    'merge_spo_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'migrate_old_to_new': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
 
 def _make_json_serializable(obj):
@@ -837,6 +838,107 @@ def run_merge_timetable_route():
     if script_status['merge_timetable']['running']:
         return jsonify({'error': 'Script is already running'}), 400
     thread = threading.Thread(target=run_merge_timetable)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
+
+
+def run_migrate_old_to_new(semester_id=1, clean=False, dedupe=False, strict=False):
+    """Запускает scripts/db_migration_old_db_to_new.py — миграция schedule -> student_group, schedule_override, teacher.is_external."""
+    script_status['migrate_old_to_new']['running'] = True
+    script_status['migrate_old_to_new']['progress'] = 0
+    script_status['migrate_old_to_new']['message'] = 'Подготовка миграции...'
+    script_status['migrate_old_to_new']['error'] = None
+    try:
+        project_root = get_project_root()
+        script_path = os.path.join(project_root, 'scripts', 'db_migration_old_db_to_new.py')
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"Скрипт не найден: {script_path}")
+        cmd = [sys.executable, script_path, '--semester-id', str(semester_id)]
+        if clean:
+            cmd.append('--clean')
+        if dedupe:
+            cmd.append('--dedupe')
+        if strict:
+            cmd.append('--strict')
+        script_status['migrate_old_to_new']['progress'] = 10
+        script_status['migrate_old_to_new']['message'] = 'Запуск миграции...'
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
+        process = subprocess.Popen(
+            cmd,
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
+            bufsize=1
+        )
+        output_lines = []
+        while True:
+            out = process.stdout.readline() if process.stdout else ''
+            if out == '' and process.poll() is not None:
+                break
+            if out:
+                line = out.strip()
+                if line:
+                    output_lines.append(line)
+                    script_status['migrate_old_to_new']['message'] = line[:120]
+        return_code = process.wait()
+        stderr_output = process.stderr.read() if process.stderr else ''
+        if return_code != 0:
+            error_msg = stderr_output.strip() or f'Код возврата: {return_code}'
+            script_status['migrate_old_to_new']['error'] = error_msg
+            script_status['migrate_old_to_new']['message'] = 'Ошибка при выполнении миграции'
+            script_status['migrate_old_to_new']['progress'] = 0
+        else:
+            script_status['migrate_old_to_new']['progress'] = 100
+            script_status['migrate_old_to_new']['message'] = output_lines[-1] if output_lines else 'Миграция завершена.'
+    except Exception as e:
+        script_status['migrate_old_to_new']['error'] = str(e)
+        script_status['migrate_old_to_new']['message'] = f'Ошибка: {str(e)}'
+        script_status['migrate_old_to_new']['progress'] = 0
+    finally:
+        script_status['migrate_old_to_new']['running'] = False
+
+
+@app.route('/api/semesters', methods=['GET'])
+def get_semesters():
+    """Список семестров для выбора при миграции."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute('SELECT id, name FROM semester ORDER BY id')
+        rows = cur.fetchall()
+        conn.close()
+        return jsonify([{'id': r['id'], 'name': r['name']} for r in rows])
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/run/migrate_old_to_new', methods=['POST'])
+def run_migrate_old_to_new_route():
+    """Запускает миграцию schedule -> student_group, schedule_override, teacher.is_external. Тело: semester_id (обязательно), clean?, dedupe?, strict?."""
+    if script_status['migrate_old_to_new']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    data = request.get_json(silent=True) or {}
+    semester_id = data.get('semester_id')
+    if semester_id is None:
+        return jsonify({'error': 'semester_id обязателен'}), 400
+    try:
+        semester_id = int(semester_id)
+    except (TypeError, ValueError):
+        return jsonify({'error': 'semester_id должен быть числом'}), 400
+    thread = threading.Thread(
+        target=run_migrate_old_to_new,
+        kwargs={
+            'semester_id': semester_id,
+            'clean': bool(data.get('clean')),
+            'dedupe': bool(data.get('dedupe')),
+            'strict': bool(data.get('strict')),
+        }
+    )
     thread.daemon = True
     thread.start()
     return jsonify({'message': 'Script started'})
