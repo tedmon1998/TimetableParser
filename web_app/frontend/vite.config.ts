@@ -9,8 +9,9 @@ export default defineConfig({
     host: true, // слушать на всех интерфейсах — доступ по локальной сети (http://<ваш-IP>:3000)
     proxy: {
       '/api': {
-        target: 'http://localhost:5001',
+        target: 'http://127.0.0.1:5001',
         changeOrigin: true,
+        secure: false,
       },
     },
   },

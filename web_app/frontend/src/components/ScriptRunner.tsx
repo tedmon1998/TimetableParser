@@ -108,6 +108,12 @@ const ScriptRunner: React.FC = () => {
     message: '',
     error: null
   });
+  const [updateGroupDepartmentsStatus, setUpdateGroupDepartmentsStatus] = useState<ScriptStatus>({
+    running: false,
+    progress: 0,
+    message: '',
+    error: null
+  });
   type SemesterInfo = { id: number; name: string; date_start?: string; date_end?: string };
   const [semesters, setSemesters] = useState<SemesterInfo[]>([]);
   const [migrateSemesterId, setMigrateSemesterId] = useState<number>(1);
@@ -383,6 +389,27 @@ const ScriptRunner: React.FC = () => {
       }, 5000);
     });
   }, [API_BASE, migrateSemesterId, migrateClean, migrateDedupe, migrateStrict]);
+
+  const runUpdateGroupDepartments = async () => {
+    setUpdateGroupDepartmentsStatus({ running: true, progress: 0, message: 'Запуск...', error: null });
+    try {
+      await axios.post(`${API_BASE}/run/update_group_departments`);
+    } catch (err: any) {
+      const msg = err.response?.data?.error ?? err.message ?? 'Ошибка запроса';
+      setUpdateGroupDepartmentsStatus({ running: false, progress: 0, message: '', error: msg });
+      return;
+    }
+    const statusInterval = setInterval(async () => {
+      try {
+        const response = await axios.get(`${API_BASE}/status/update_group_departments`);
+        const status: ScriptStatus = response.data;
+        setUpdateGroupDepartmentsStatus(status);
+        if (!status.running) clearInterval(statusInterval);
+      } catch {
+        clearInterval(statusInterval);
+      }
+    }, 2000);
+  };
 
   const parseJsonToTable = (raw: string): Record<string, unknown>[] | null => {
     try {
@@ -1273,6 +1300,40 @@ const ScriptRunner: React.FC = () => {
         {!migrateOldToNewStatus.running && migrateOldToNewStatus.progress === 100 && !migrateOldToNewStatus.error && (
           <div className="message success" style={{ marginTop: '0.5rem' }}>
             {migrateOldToNewStatus.message || 'Миграция завершена.'}
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <h2>Кафедры групп из файла занятости</h2>
+        <p className="description">
+          Берёт группы и кафедры из файла <code>input/Zanyatost prepodavateley_ vesenniy semestr 2025-2026-13-02-26.xlsx</code> (или другого файла по маске) и обновляет в таблице <code>student_group</code> поле <code>department_id</code> (идентификатор кафедры).
+        </p>
+        <button
+          className="button"
+          onClick={() => runUpdateGroupDepartments()}
+          disabled={updateGroupDepartmentsStatus.running}
+        >
+          {updateGroupDepartmentsStatus.running ? 'Выполняется...' : 'Обновить кафедры групп'}
+        </button>
+        {updateGroupDepartmentsStatus.running && (
+          <div className="progress-container" style={{ marginTop: '0.5rem' }}>
+            <div className="progress-bar">
+              <div className="progress-bar-fill" style={{ width: `${updateGroupDepartmentsStatus.progress}%` }}>
+                {updateGroupDepartmentsStatus.progress}%
+              </div>
+            </div>
+            <p className="progress-message">{updateGroupDepartmentsStatus.message}</p>
+          </div>
+        )}
+        {updateGroupDepartmentsStatus.error && (
+          <div className="message error" style={{ marginTop: '0.5rem' }}>
+            <strong>Ошибка:</strong> {updateGroupDepartmentsStatus.error}
+          </div>
+        )}
+        {!updateGroupDepartmentsStatus.running && updateGroupDepartmentsStatus.progress === 100 && !updateGroupDepartmentsStatus.error && (
+          <div className="message success" style={{ marginTop: '0.5rem' }}>
+            {updateGroupDepartmentsStatus.message || 'Кафедры групп обновлены.'}
           </div>
         )}
       </div>

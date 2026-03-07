@@ -80,7 +80,8 @@ script_status = {
     'parse_spo': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'load_spo_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'merge_spo_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None},
-    'migrate_old_to_new': {'running': False, 'progress': 0, 'message': '', 'error': None}
+    'migrate_old_to_new': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'update_group_departments': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
 
 def _make_json_serializable(obj):
@@ -925,6 +926,78 @@ def get_semesters():
         ])
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+def run_update_group_departments():
+    """Запускает scripts/update_student_group_departments.py — обновление department_id в student_group из файла занятости."""
+    script_status['update_group_departments']['running'] = True
+    script_status['update_group_departments']['progress'] = 0
+    script_status['update_group_departments']['message'] = 'Подготовка...'
+    script_status['update_group_departments']['error'] = None
+    try:
+        project_root = get_project_root()
+        script_path = os.path.join(project_root, 'scripts', 'update_student_group_departments.py')
+        if not os.path.exists(script_path):
+            raise FileNotFoundError(f"Скрипт не найден: {script_path}")
+        script_status['update_group_departments']['progress'] = 10
+        script_status['update_group_departments']['message'] = 'Чтение файла занятости и обновление кафедр...'
+        env = {
+            **os.environ,
+            'PYTHONIOENCODING': 'utf-8',
+            'DB_HOST': str(DB_CONFIG['host']),
+            'DB_PORT': str(DB_CONFIG['port']),
+            'DB_USER': str(DB_CONFIG['user']),
+            'DB_PASSWORD': str(DB_CONFIG['password']),
+            'DB_NAME': str(DB_CONFIG['database']),
+        }
+        process = subprocess.Popen(
+            [sys.executable, script_path],
+            cwd=project_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            env=env,
+            bufsize=1
+        )
+        output_lines = []
+        while True:
+            out = process.stdout.readline() if process.stdout else ''
+            if out == '' and process.poll() is not None:
+                break
+            if out:
+                line = out.strip()
+                if line:
+                    output_lines.append(line)
+                    script_status['update_group_departments']['message'] = line[:120]
+        return_code = process.wait()
+        stderr_output = process.stderr.read() if process.stderr else ''
+        if return_code != 0:
+            error_msg = stderr_output.strip() or f'Код возврата: {return_code}'
+            script_status['update_group_departments']['error'] = error_msg
+            script_status['update_group_departments']['message'] = 'Ошибка при обновлении кафедр'
+            script_status['update_group_departments']['progress'] = 0
+        else:
+            script_status['update_group_departments']['progress'] = 100
+            script_status['update_group_departments']['message'] = output_lines[-1] if output_lines else 'Кафедры групп обновлены.'
+    except Exception as e:
+        script_status['update_group_departments']['error'] = str(e)
+        script_status['update_group_departments']['message'] = f'Ошибка: {str(e)}'
+        script_status['update_group_departments']['progress'] = 0
+    finally:
+        script_status['update_group_departments']['running'] = False
+
+
+@app.route('/api/run/update_group_departments', methods=['POST'], strict_slashes=False)
+def run_update_group_departments_route():
+    """Запускает обновление кафедр у групп из файла Занятость преподавателей (input/Zanyatost prepodavateley*.xlsx)."""
+    if script_status['update_group_departments']['running']:
+        return jsonify({'error': 'Script is already running'}), 400
+    thread = threading.Thread(target=run_update_group_departments)
+    thread.daemon = True
+    thread.start()
+    return jsonify({'message': 'Script started'})
 
 
 @app.route('/api/run/migrate_old_to_new', methods=['POST'])
@@ -3976,6 +4049,26 @@ def put_info_file(name):
         return jsonify({'error': f'Invalid JSON: {e}'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.errorhandler(404)
+def handle_404(e):
+    """Страховка: обрабатываем update_group_departments, если декоратор маршрута не сработал (например, старый процесс без перезапуска)."""
+    path = request.path.rstrip('/')
+    if path == '/api/status/update_group_departments' and request.method == 'GET':
+        if script_status.get('update_group_departments') is None:
+            script_status['update_group_departments'] = {'running': False, 'progress': 0, 'message': '', 'error': None}
+        return jsonify(script_status['update_group_departments'])
+    if path == '/api/run/update_group_departments' and request.method == 'POST':
+        if script_status.get('update_group_departments') is None:
+            script_status['update_group_departments'] = {'running': False, 'progress': 0, 'message': '', 'error': None}
+        if script_status['update_group_departments']['running']:
+            return jsonify({'error': 'Script is already running'}), 400
+        thread = threading.Thread(target=run_update_group_departments)
+        thread.daemon = True
+        thread.start()
+        return jsonify({'message': 'Script started'})
+    return jsonify({'error': 'Not found'}), 404
 
 
 if __name__ == '__main__':
