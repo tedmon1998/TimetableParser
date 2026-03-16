@@ -466,10 +466,10 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
         # Если есть несколько преподавателей - сопоставляем по порядку
         # Если один преподаватель - он для всех подгрупп
         if len(subgroups_in_text) > 0:
-            # Определяем тип занятия
+            # Определяем тип занятия. Если тип явно не указан, но есть подгруппы — считаем лабораторной.
             lecture_type = extract_lecture_type(text)
             if not lecture_type:
-                lecture_type = 'практика'  # Если есть подгруппы, это практика
+                lecture_type = 'лабораторная'
             
             # Очищаем название дисциплины
             clean_name = clean_subject_name_final(text, valid_audiences)
@@ -545,9 +545,9 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
             numerator_lecture_type = extract_lecture_type(numerator_text) if numerator_text else ''
             denominator_lecture_type = extract_lecture_type(denominator_text) if denominator_text else ''
         if not numerator_lecture_type and ('п/г' in (numerator_text or '').lower() or 'подгруппа' in (numerator_text or '').lower()):
-            numerator_lecture_type = 'практика'
+            numerator_lecture_type = 'лабораторная'
         if not denominator_lecture_type and ('п/г' in (denominator_text or '').lower() or 'подгруппа' in (denominator_text or '').lower()):
-            denominator_lecture_type = 'практика'
+            denominator_lecture_type = 'лабораторная'
         
         # Извлекаем подгруппы из числителя и знаменателя
         numerator_subgroups = extract_subgroups_from_text(numerator_text) if numerator_text else []
@@ -668,7 +668,7 @@ def process_discipline_text(text, valid_audiences, teacher_text=None, existing_w
         # Обрабатываем как одну дисциплину (обе недели)
         lecture_type = extract_lecture_type(text)
         if not lecture_type and ('п/г' in text.lower() or 'подгруппа' in text.lower()):
-            lecture_type = 'практика'
+            lecture_type = 'лабораторная'
         disc_text = text
         audiences = extract_audiences_from_text(disc_text, valid_audiences)
         # Убираем дубликаты, сохраняя порядок
