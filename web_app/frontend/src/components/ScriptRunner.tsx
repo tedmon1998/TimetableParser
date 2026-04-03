@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
 import './ScriptRunner.css';
+import './DatabaseView.css';
 
 interface ScriptStatus {
   running: boolean;
@@ -9,6 +10,221 @@ interface ScriptStatus {
   message: string;
   error: string | null;
   missing_fio?: string[];
+  /** Полный лог миграции (консоль + при успехе — отчёт schedule -> override) */
+  output_log?: string;
+  /** Строки отчёта для таблицы (как просмотр расписания в БД) */
+  report_rows?: Record<string, unknown>[];
+  /** На сервере есть output/migration_report_web.txt — листать через /api/migration_report_lines */
+  full_report_available?: boolean;
+}
+
+/** Колонки таблицы миграции (совпадают с ключами JSON из db_migration_old_db_to_new.py) */
+const MIGRATION_REPORT_COLUMNS: { key: string; label: string }[] = [
+  { key: 'day_of_week', label: 'День' },
+  { key: 'pair_number', label: 'Пара' },
+  { key: 'subject_name', label: 'Предмет' },
+  { key: 'audience', label: 'Аудитория' },
+  { key: 'group_name', label: 'Группа' },
+  { key: 'week_type', label: 'Неделя' },
+  { key: 'fio', label: 'ФИО' },
+  { key: 'subgroup', label: 'п/г' },
+  { key: 'course', label: 'Курс' },
+  { key: 'schedule_id', label: 'ID schedule' },
+  { key: 'schedule_override_id', label: 'ID override' },
+  { key: 'lecture_type', label: 'Тип' },
+  { key: 'duration_pairs', label: 'Длит. пар' },
+  { key: 'institute', label: 'Институт' },
+  { key: 'direction', label: 'Направление' },
+  { key: 'department', label: 'Кафедра' },
+  { key: 'subject_id', label: 'subject_id' },
+  { key: 'teacher_id', label: 'teacher_id' },
+  { key: 'teacher_fio_db', label: 'ФИО в teacher' },
+  { key: 'teacher_reason', label: 'Совп. ФИО' },
+  { key: 'subject_reason', label: 'Совп. предмет' },
+  { key: 'ov_group_id', label: 'ov group_id' },
+  { key: 'ov_weekday', label: 'ov день' },
+  { key: 'ov_week_type', label: 'ov неделя' },
+  { key: 'ov_class_type', label: 'ov тип' },
+  { key: 'ov_timeslot_no', label: 'ov пара' },
+  { key: 'ov_subgroup_count', label: 'ov число п/г' },
+  { key: 'ov_subgroup_no', label: 'ov п/г (no)' },
+  { key: 'ov_subject_id', label: 'ov subject_id' },
+  { key: 'ov_teacher_id', label: 'ov teacher_id' },
+  { key: 'sot_will_link', label: 'Связь s_o_t' },
+];
+
+/** Видимы по умолчанию (остальные — через меню «Колонки») */
+const MIGRATION_REPORT_DEFAULT_VISIBLE_KEYS = new Set([
+  'day_of_week',
+  'pair_number',
+  'subject_name',
+  'audience',
+  'group_name',
+  'week_type',
+  'fio',
+  'subgroup',
+  'course',
+]);
+
+const MIGRATION_REPORT_PAGE_SIZE = 50;
+
+/** Размер «страницы» при запросе фрагмента .txt отчёта с сервера */
+const MIGRATION_TEXT_REPORT_CHUNK = 120;
+
+const MIGRATION_REPORT_VISIBLE_LS_KEY = 'migration_report_visible_columns_v2';
+const MIGRATION_REPORT_COL_WIDTHS_LS_KEY = 'migration_report_column_widths';
+
+function readMigrationReportColWidths(): Record<string, number> {
+  try {
+    const s = localStorage.getItem(MIGRATION_REPORT_COL_WIDTHS_LS_KEY);
+    if (!s) return {};
+    const p = JSON.parse(s) as Record<string, unknown>;
+    if (!p || typeof p !== 'object') return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(p)) {
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 60 && v <= 600) out[k] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function readMigrationReportVisible(): Record<string, boolean> {
+  try {
+    const s = localStorage.getItem(MIGRATION_REPORT_VISIBLE_LS_KEY);
+    if (s) {
+      const p = JSON.parse(s) as Record<string, boolean>;
+      if (p && typeof p === 'object') {
+        const out: Record<string, boolean> = {};
+        MIGRATION_REPORT_COLUMNS.forEach(({ key }) => {
+          out[key] = p[key] !== false;
+        });
+        return out;
+      }
+    }
+  } catch (_) {
+    /* ignore */
+  }
+  return MIGRATION_REPORT_COLUMNS.reduce<Record<string, boolean>>(
+    (acc, { key }) => ({ ...acc, [key]: MIGRATION_REPORT_DEFAULT_VISIBLE_KEYS.has(key) }),
+    {}
+  );
+}
+
+/** Разделы модалки «Подробнее»: откуда (schedule) и куда (override / teacher) */
+const MIGRATION_DETAIL_SECTIONS: { title: string; keys: { key: string; label: string }[] }[] = [
+  {
+    title: 'Откуда: строка в таблице schedule',
+    keys: [
+      { key: 'schedule_id', label: 'id строки' },
+      { key: 'day_of_week', label: 'День недели' },
+      { key: 'pair_number', label: 'Пара' },
+      { key: 'subject_name', label: 'Предмет' },
+      { key: 'lecture_type', label: 'Тип занятия' },
+      { key: 'audience', label: 'Аудитория' },
+      { key: 'duration_pairs', label: 'Длительность (пар)' },
+      { key: 'group_name', label: 'Группа' },
+      { key: 'week_type', label: 'Неделя' },
+      { key: 'fio', label: 'ФИО (schedule.fio — для сопоставления с teacher)' },
+      { key: 'subgroup', label: 'Подгруппа (schedule.subgroup)' },
+      { key: 'institute', label: 'Институт' },
+      { key: 'course', label: 'Курс' },
+      { key: 'direction', label: 'Направление' },
+      { key: 'department', label: 'Кафедра' },
+    ],
+  },
+  {
+    title: 'Куда: таблица schedule_override (вставленная запись)',
+    keys: [
+      { key: 'schedule_override_id', label: 'id новой записи (schedule_override.id)' },
+      { key: 'ov_group_id', label: 'group_id' },
+      { key: 'ov_weekday', label: 'weekday' },
+      { key: 'ov_week_type', label: 'week_type' },
+      { key: 'ov_class_type', label: 'class_type' },
+      { key: 'ov_timeslot_no', label: 'timeslot_no' },
+      {
+        key: 'ov_subgroup_no',
+        label: 'subgroup_no (номер п/г в schedule_override; из schedule.subgroup)',
+      },
+      {
+        key: 'ov_subgroup_count',
+        label:
+          'subgroup_count (из num_subgroups; если задан номер п/г — не ниже max(номер, 2))',
+      },
+      { key: 'ov_subject_id', label: 'subject_id' },
+      { key: 'ov_teacher_id', label: 'teacher_id (если есть в схеме override)' },
+    ],
+  },
+  {
+    title: 'Связь schedule_override_teacher',
+    keys: [{ key: 'sot_will_link', label: 'Будет связь override ↔ teacher' }],
+  },
+  {
+    title: 'Сопоставление: справочники teacher и subject',
+    keys: [
+      { key: 'subject_id', label: 'subject_id (по subject_name)' },
+      { key: 'teacher_id', label: 'teacher_id (по schedule.fio)' },
+      { key: 'teacher_fio_db', label: 'ФИО в таблице teacher' },
+      { key: 'teacher_reason', label: 'Как найдено ФИО' },
+      { key: 'subject_reason', label: 'Как найден предмет' },
+    ],
+  },
+];
+
+const MIGRATION_ACTIONS_COL_GRID = 'minmax(108px, 132px)';
+
+/** Несколько уровней сортировки (как в DatabaseView: Shift+клик — следующий ключ) */
+type MigrationReportSortEntry = { key: string; dir: 'asc' | 'desc' };
+
+/** Календарный порядок, как в API БД (CASE day_of_week …): пн = 1 … вс = 7 */
+const RU_WEEKDAY_ORDER: Record<string, number> = {
+  понедельник: 1,
+  вторник: 2,
+  среда: 3,
+  четверг: 4,
+  пятница: 5,
+  суббота: 6,
+  воскресенье: 7,
+};
+
+function weekdayNumericOrder(v: unknown): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const n = Math.trunc(v);
+    if (n >= 1 && n <= 7) return n;
+  }
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if (t === '') return null;
+    const asNum = Number(t);
+    if (Number.isFinite(asNum)) {
+      const n = Math.trunc(asNum);
+      if (n >= 1 && n <= 7) return n;
+    }
+  }
+  return null;
+}
+
+/** Сравнение дня недели: не по алфавиту (там «вторник» раньше «понедельника»), а по неделе */
+function compareDayOfWeekValues(a: unknown, b: unknown): number {
+  const na = weekdayNumericOrder(a);
+  const nb = weekdayNumericOrder(b);
+  if (na != null && nb != null && na !== nb) return na - nb;
+  if (na != null && nb == null) return -1;
+  if (na == null && nb != null) return 1;
+
+  const sa = a == null ? '' : String(a).trim().toLowerCase();
+  const sb = b == null ? '' : String(b).trim().toLowerCase();
+  const ia = RU_WEEKDAY_ORDER[sa] ?? 100;
+  const ib = RU_WEEKDAY_ORDER[sb] ?? 100;
+  if (ia !== ib) return ia - ib;
+  return sa.localeCompare(sb, 'ru', { numeric: true });
+}
+
+function formatMigrationDetailValue(v: unknown): string {
+  if (v == null || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'да' : 'нет';
+  return String(v);
 }
 
 interface GroupSourceResult {
@@ -120,6 +336,35 @@ const ScriptRunner: React.FC = () => {
   const [migrateClean, setMigrateClean] = useState(false);
   const [migrateDedupe, setMigrateDedupe] = useState(false);
   const [migrateStrict, setMigrateStrict] = useState(false);
+  /** Полный отчёт в output_log (файл на сервере + текст в интерфейсе) */
+  const [migrateIncludeFullReport, setMigrateIncludeFullReport] = useState(true);
+  const [migrateLogSample, setMigrateLogSample] = useState(0);
+  const [migrateLogAllTeachers, setMigrateLogAllTeachers] = useState(false);
+  const [migrateLogExpanded, setMigrateLogExpanded] = useState(true);
+  const [migrationReportFilter, setMigrationReportFilter] = useState('');
+  const [migrationReportSortColumns, setMigrationReportSortColumns] = useState<MigrationReportSortEntry[]>([
+    { key: 'schedule_override_id', dir: 'asc' },
+  ]);
+  const [migrationReportVisible, setMigrationReportVisible] = useState<Record<string, boolean>>(readMigrationReportVisible);
+  const [migrationReportColumnFilters, setMigrationReportColumnFilters] = useState<Record<string, string>>({});
+  const [migrationReportPage, setMigrationReportPage] = useState(1);
+  const [showMigrationColumnsMenu, setShowMigrationColumnsMenu] = useState(false);
+  const migrationColumnsMenuRef = useRef<HTMLDivElement>(null);
+  const migrationResizeStartX = useRef(0);
+  const migrationResizeStartWidth = useRef(0);
+  const [migrationDetailRow, setMigrationDetailRow] = useState<Record<string, unknown> | null>(null);
+  const [migrationTextReportStart, setMigrationTextReportStart] = useState(0);
+  const [migrationTextReportLines, setMigrationTextReportLines] = useState<string[]>([]);
+  const [migrationTextReportHasMore, setMigrationTextReportHasMore] = useState(false);
+  const [migrationTextReportLoading, setMigrationTextReportLoading] = useState(false);
+  const [migrationTextReportError, setMigrationTextReportError] = useState<string | null>(null);
+  const [migrationReportColWidths, setMigrationReportColWidths] = useState<Record<string, number>>(readMigrationReportColWidths);
+  const [migrationReportResizingKey, setMigrationReportResizingKey] = useState<string | null>(null);
+  const [expandedMigrationReportCell, setExpandedMigrationReportCell] = useState<{
+    id: string;
+    width: number;
+    direction: 'left' | 'right';
+  } | null>(null);
 
   const [jsonPaste, setJsonPaste] = useState('');
   const [tableData, setTableData] = useState<Record<string, unknown>[] | null>(null);
@@ -183,6 +428,29 @@ const ScriptRunner: React.FC = () => {
       window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
     }
   }, []);
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        showMigrationColumnsMenu &&
+        migrationColumnsMenuRef.current &&
+        !migrationColumnsMenuRef.current.contains(e.target as Node)
+      ) {
+        setShowMigrationColumnsMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showMigrationColumnsMenu]);
+
+  useEffect(() => {
+    if (!migrationDetailRow) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMigrationDetailRow(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [migrationDetailRow]);
 
   const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
@@ -342,10 +610,13 @@ const ScriptRunner: React.FC = () => {
       if (mergeSpoToIntermediateStatus.running) {
         fetchStatus('merge_spo_to_intermediate', setMergeSpoToIntermediateStatus);
       }
+      if (migrateOldToNewStatus.running) {
+        fetchStatus('migrate_old_to_new', setMigrateOldToNewStatus);
+      }
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [parseStatus.running, cleanStatus.running, loadTimetableToDbStatus.running, mergeTimetableStatus.running, processTimetableStatus.running, parseAspiStatus.running, normalizeAspiStatus.running, loadAspiToDbStatus.running, mergeAspiToIntermediateStatus.running, parseSpoStatus.running, loadSpoToDbStatus.running, mergeSpoToIntermediateStatus.running]);
+  }, [parseStatus.running, cleanStatus.running, loadTimetableToDbStatus.running, mergeTimetableStatus.running, processTimetableStatus.running, parseAspiStatus.running, normalizeAspiStatus.running, loadAspiToDbStatus.running, mergeAspiToIntermediateStatus.running, parseSpoStatus.running, loadSpoToDbStatus.running, mergeSpoToIntermediateStatus.running, migrateOldToNewStatus.running]);
 
   const fetchStatus = async (scriptName: string, setStatus: React.Dispatch<React.SetStateAction<ScriptStatus>>) => {
     try {
@@ -358,7 +629,21 @@ const ScriptRunner: React.FC = () => {
 
   const runMigrationScript = React.useCallback(async (options?: { cleanOverrideOnly?: boolean }): Promise<ScriptStatus> => {
     const cleanOverrideOnly = options?.cleanOverrideOnly ?? false;
-    setMigrateOldToNewStatus({ running: true, progress: 0, message: 'Запуск...', error: null });
+    setMigrationDetailRow(null);
+    setMigrationReportPage(1);
+    setMigrationTextReportStart(0);
+    setMigrationTextReportLines([]);
+    setMigrationTextReportHasMore(false);
+    setMigrationTextReportError(null);
+    setMigrateOldToNewStatus({
+      running: true,
+      progress: 0,
+      message: 'Запуск...',
+      error: null,
+      output_log: '',
+      report_rows: [],
+      full_report_available: false,
+    });
     try {
       await axios.post(`${API_BASE}/run/migrate_old_to_new`, {
         semester_id: migrateSemesterId,
@@ -366,10 +651,21 @@ const ScriptRunner: React.FC = () => {
         dedupe: migrateDedupe,
         strict: migrateStrict,
         clean_override_only: cleanOverrideOnly,
+        include_full_report: migrateIncludeFullReport,
+        log_sample: migrateLogSample,
+        log_all_teachers: migrateLogAllTeachers,
       });
     } catch (err: any) {
       const msg = err.response?.data?.error ?? err.message ?? 'Ошибка запроса';
-      setMigrateOldToNewStatus({ running: false, progress: 0, message: '', error: msg });
+      setMigrateOldToNewStatus({
+        running: false,
+        progress: 0,
+        message: '',
+        error: msg,
+        output_log: '',
+        report_rows: [],
+        full_report_available: false,
+      });
       return { running: false, progress: 0, message: '', error: msg };
     }
     return new Promise<ScriptStatus>((resolve) => {
@@ -380,15 +676,24 @@ const ScriptRunner: React.FC = () => {
           setMigrateOldToNewStatus(status);
           if (!status.running) {
             clearInterval(statusInterval);
-            resolve(status); 
+            resolve(status);
           }
         } catch {
           clearInterval(statusInterval);
           resolve(migrateOldToNewStatus);
         }
-      }, 5000);
+      }, 1500);
     });
-  }, [API_BASE, migrateSemesterId, migrateClean, migrateDedupe, migrateStrict]);
+  }, [
+    API_BASE,
+    migrateSemesterId,
+    migrateClean,
+    migrateDedupe,
+    migrateStrict,
+    migrateIncludeFullReport,
+    migrateLogSample,
+    migrateLogAllTeachers,
+  ]);
 
   const runUpdateGroupDepartments = async () => {
     setUpdateGroupDepartmentsStatus({ running: true, progress: 0, message: 'Запуск...', error: null });
@@ -587,13 +892,265 @@ const ScriptRunner: React.FC = () => {
       const { field, direction } = migrationSort;
       const sign = direction === 'asc' ? 1 : -1;
       rows = [...rows].sort((a, b) => {
-        const av = migrationCellValue(a[field]);
-        const bv = migrationCellValue(b[field]);
-        return av.localeCompare(bv, 'ru') * sign;
+        const rawA = a[field];
+        const rawB = b[field];
+        const av = migrationCellValue(rawA);
+        const bv = migrationCellValue(rawB);
+        const useWeekOrder = field === 'day_of_week' || field === 'ov_weekday';
+        const cmp = useWeekOrder ? compareDayOfWeekValues(rawA, rawB) : av.localeCompare(bv, 'ru', { numeric: true });
+        return cmp * sign;
       });
     }
     return rows;
   }, [tableData, tableGlobalFilter, tableColumnFilters, migrationDisplayedColumns, migrationSort]);
+
+  const visibleMigrationReportColumns = useMemo(
+    () => MIGRATION_REPORT_COLUMNS.filter((c) => migrationReportVisible[c.key] !== false),
+    [migrationReportVisible]
+  );
+
+  const migrationReportGridTemplate = useMemo(() => {
+    if (visibleMigrationReportColumns.length === 0) return '1fr';
+    const parts = visibleMigrationReportColumns.map(({ key }) => {
+      const w = migrationReportColWidths[key];
+      if (typeof w === 'number' && w >= 60) return `${Math.min(600, w)}px`;
+      return 'minmax(104px, 1fr)';
+    });
+    return `${MIGRATION_ACTIONS_COL_GRID} ${parts.join(' ')}`;
+  }, [visibleMigrationReportColumns, migrationReportColWidths]);
+
+  const migrationReportRows = useMemo(() => {
+    const rows = migrateOldToNewStatus.report_rows;
+    if (!rows?.length) return [];
+    const q = migrationReportFilter.trim().toLowerCase();
+    let list = rows;
+    if (q) {
+      list = list.filter((row) =>
+        MIGRATION_REPORT_COLUMNS.some((col) => {
+          const v = row[col.key];
+          if (v == null || v === '') return false;
+          return String(v).toLowerCase().includes(q);
+        })
+      );
+    }
+    const colFilters = Object.entries(migrationReportColumnFilters).filter(([, v]) => v.trim() !== '');
+    if (colFilters.length) {
+      list = list.filter((row) =>
+        colFilters.every(([colKey, needle]) => {
+          const needleL = needle.trim().toLowerCase();
+          if (!needleL) return true;
+          return String(row[colKey] ?? '').toLowerCase().includes(needleL);
+        })
+      );
+    }
+    if (migrationReportSortColumns.length > 0) {
+      list = [...list].sort((a, b) => {
+        for (const { key, dir } of migrationReportSortColumns) {
+          const av = a[key];
+          const bv = b[key];
+          const as = av == null ? '' : String(av);
+          const bs = bv == null ? '' : String(bv);
+          const useWeekOrder = key === 'day_of_week' || key === 'ov_weekday';
+          const cmp = useWeekOrder
+            ? compareDayOfWeekValues(av, bv)
+            : as.localeCompare(bs, 'ru', { numeric: true });
+          if (cmp !== 0) return dir === 'asc' ? cmp : -cmp;
+        }
+        return 0;
+      });
+    }
+    return list;
+  }, [
+    migrateOldToNewStatus.report_rows,
+    migrationReportFilter,
+    migrationReportColumnFilters,
+    migrationReportSortColumns,
+  ]);
+
+  const migrationReportTotalPages = Math.max(
+    1,
+    Math.ceil(migrationReportRows.length / MIGRATION_REPORT_PAGE_SIZE)
+  );
+
+  const migrationReportRowsPaged = useMemo(() => {
+    const start = (migrationReportPage - 1) * MIGRATION_REPORT_PAGE_SIZE;
+    return migrationReportRows.slice(start, start + MIGRATION_REPORT_PAGE_SIZE);
+  }, [migrationReportRows, migrationReportPage]);
+
+  useEffect(() => {
+    setMigrationReportPage((p) => Math.min(p, migrationReportTotalPages));
+  }, [migrationReportTotalPages]);
+
+  useEffect(() => {
+    setMigrationReportPage(1);
+  }, [migrationReportFilter, migrationReportColumnFilters, migrationReportSortColumns]);
+
+  const migrationReportHasActiveFilters =
+    migrationReportFilter.trim() !== '' ||
+    Object.values(migrationReportColumnFilters).some((v) => v.trim() !== '');
+
+  const toggleMigrationReportColumn = (key: string) => {
+    setMigrationReportVisible((prev) => {
+      const wasVisible = prev[key] !== false;
+      const next = { ...prev, [key]: !wasVisible };
+      try {
+        localStorage.setItem(MIGRATION_REPORT_VISIBLE_LS_KEY, JSON.stringify(next));
+      } catch (_) {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
+  const clearMigrationReportFilters = () => {
+    setMigrationReportColumnFilters({});
+    setMigrationReportFilter('');
+  };
+
+  /** Обычный клик — один столбец; Shift+клик — добавить уровень (как в DatabaseView). */
+  const handleMigrationReportSort = (key: string, shiftKey: boolean) => {
+    setMigrationReportSortColumns((prev) => {
+      const idx = prev.findIndex((s) => s.key === key);
+      if (shiftKey) {
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...next[idx], dir: next[idx].dir === 'asc' ? 'desc' : 'asc' };
+          return next;
+        }
+        return [...prev, { key, dir: 'asc' as const }];
+      }
+      if (idx === 0 && prev.length === 1) {
+        return [{ key, dir: prev[0].dir === 'asc' ? 'desc' : 'asc' }];
+      }
+      return [{ key, dir: 'asc' as const }];
+    });
+  };
+
+  const copyMigrationReportCell = (val: unknown) => {
+    const text = val == null ? '' : String(val);
+    void navigator.clipboard.writeText(text);
+  };
+
+  const calculateMigrationReportCellWidth = useCallback((cellElement: HTMLElement, contentElement: HTMLElement) => {
+    const tempElement = document.createElement('div');
+    const computedStyle = window.getComputedStyle(contentElement);
+    tempElement.style.cssText = `
+      position: absolute;
+      visibility: hidden;
+      white-space: nowrap;
+      font-family: ${computedStyle.fontFamily};
+      font-size: ${computedStyle.fontSize};
+      font-weight: ${computedStyle.fontWeight};
+      font-style: ${computedStyle.fontStyle};
+      letter-spacing: ${computedStyle.letterSpacing};
+      padding: 0.75rem;
+      box-sizing: border-box;
+    `;
+    tempElement.textContent = contentElement.textContent || '';
+    document.body.appendChild(tempElement);
+    const scrollWidth = tempElement.scrollWidth;
+    const padding = 1.5 * 16;
+    const contentWidth = scrollWidth + padding;
+    const maxWidth = Math.min(window.innerWidth * 0.8, 800);
+    const finalWidth = Math.min(contentWidth, maxWidth);
+    const cellRect = cellElement.getBoundingClientRect();
+    const spaceRight = window.innerWidth - cellRect.right;
+    const direction = spaceRight >= finalWidth ? 'right' : 'left';
+    document.body.removeChild(tempElement);
+    return { width: finalWidth, direction };
+  }, []);
+
+  const handleMigrationReportCellMouseEnter = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>, cellId: string) => {
+      const cellElement = e.currentTarget;
+      const contentElement = cellElement.querySelector('.cell-content') as HTMLElement | null;
+      if (!contentElement) return;
+      const isOverflowing = contentElement.scrollWidth > contentElement.clientWidth;
+      if (isOverflowing) {
+        const { width, direction } = calculateMigrationReportCellWidth(cellElement, contentElement);
+        setExpandedMigrationReportCell({ id: cellId, width, direction });
+      }
+    },
+    [calculateMigrationReportCellWidth]
+  );
+
+  const handleMigrationReportCellMouseLeave = useCallback(() => {
+    setExpandedMigrationReportCell(null);
+  }, []);
+
+  const handleMigrationReportResizeStart = useCallback(
+    (e: React.MouseEvent, columnKey: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setMigrationReportResizingKey(columnKey);
+      migrationResizeStartX.current = e.clientX;
+      const cell = (e.target as HTMLElement).closest('.grid-table-cell');
+      const actualWidth = cell ? cell.getBoundingClientRect().width : migrationReportColWidths[columnKey] ?? 120;
+      migrationResizeStartWidth.current = actualWidth;
+    },
+    [migrationReportColWidths]
+  );
+
+  useEffect(() => {
+    if (migrationReportResizingKey === null) return;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    const key = migrationReportResizingKey;
+    const onMove = (e: MouseEvent) => {
+      const delta = e.clientX - migrationResizeStartX.current;
+      const newW = Math.max(60, Math.min(600, migrationResizeStartWidth.current + delta));
+      setMigrationReportColWidths((prev) => ({ ...prev, [key]: newW }));
+    };
+    const onUp = () => setMigrationReportResizingKey(null);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, [migrationReportResizingKey]);
+
+  useEffect(() => {
+    if (migrationReportResizingKey !== null) return;
+    try {
+      localStorage.setItem(MIGRATION_REPORT_COL_WIDTHS_LS_KEY, JSON.stringify(migrationReportColWidths));
+    } catch {
+      /* ignore */
+    }
+  }, [migrationReportColWidths, migrationReportResizingKey]);
+
+  const loadMigrationTextReport = React.useCallback(
+    async (startLine: number) => {
+      setMigrationTextReportLoading(true);
+      setMigrationTextReportError(null);
+      try {
+        const res = await axios.get<{
+          lines: string[];
+          has_more: boolean;
+          start_line: number;
+          limit: number;
+        }>(`${API_BASE}/migration_report_lines`, {
+          params: { start_line: startLine, limit: MIGRATION_TEXT_REPORT_CHUNK },
+        });
+        setMigrationTextReportStart(res.data.start_line);
+        setMigrationTextReportLines(res.data.lines ?? []);
+        setMigrationTextReportHasMore(Boolean(res.data.has_more));
+      } catch (err: unknown) {
+        const msg =
+          (err as { response?: { data?: { error?: string } }; message?: string })?.response?.data?.error
+          ?? (err as { message?: string })?.message
+          ?? 'Ошибка загрузки фрагмента отчёта';
+        setMigrationTextReportError(String(msg));
+        setMigrationTextReportLines([]);
+        setMigrationTextReportHasMore(false);
+      } finally {
+        setMigrationTextReportLoading(false);
+      }
+    },
+    [API_BASE]
+  );
 
   const runScript = (scriptName: 'parse_timetable' | 'clean_audiences' | 'load_timetable_to_db' | 'merge_timetable' | 'process_timetable' | 'parse_aspi' | 'normalize_aspi' | 'load_aspi_to_db' | 'merge_aspi_to_intermediate' | 'parse_spo' | 'load_spo_to_db' | 'merge_spo_to_intermediate'): Promise<ScriptStatus> => {
     const setStatus = scriptName === 'parse_timetable' ? setParseStatus
@@ -1267,6 +1824,44 @@ const ScriptRunner: React.FC = () => {
             Строгий режим (ошибка при отсутствии timeslot)
           </label>
         </div>
+        <p className="description" style={{ marginTop: '0.5rem', marginBottom: '0.75rem' }}>
+          <strong>Отчёт:</strong> таблица ниже строится из <code>output/migration_report_web.json</code>. Развёрнутый текст (все колонки <code>schedule</code>, вставка в{' '}
+          <code>schedule_override</code> / <code>schedule_override_teacher</code>, сопоставление <code>teacher</code> по <code>schedule.fio</code>;{' '}
+          <code>timetable_teacher</code> не используется) пишется в <code>output/migration_report_web.txt</code> и в интерфейсе открывается{' '}
+          <strong>постранично</strong>, без заливки мегабайтов в журнал.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <input
+              type="checkbox"
+              checked={migrateIncludeFullReport}
+              onChange={(e) => setMigrateIncludeFullReport(e.target.checked)}
+              disabled={migrateOldToNewStatus.running}
+            />
+            Сформировать полные файлы отчёта (.txt + .json) и таблицу
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+            <input
+              type="checkbox"
+              checked={migrateLogAllTeachers}
+              onChange={(e) => setMigrateLogAllTeachers(e.target.checked)}
+              disabled={migrateOldToNewStatus.running}
+            />
+            Дублировать в консоль каждую строку (stderr, тяжёлый лог)
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+            log-sample в консоль:
+            <input
+              type="number"
+              min={0}
+              max={100000}
+              value={migrateLogSample}
+              onChange={(e) => setMigrateLogSample(Number(e.target.value) || 0)}
+              disabled={migrateOldToNewStatus.running}
+              style={{ width: '5rem' }}
+            />
+          </label>
+        </div>
         <button
           className="button"
           onClick={() => runMigrationScript()}
@@ -1300,6 +1895,410 @@ const ScriptRunner: React.FC = () => {
         {!migrateOldToNewStatus.running && migrateOldToNewStatus.progress === 100 && !migrateOldToNewStatus.error && (
           <div className="message success" style={{ marginTop: '0.5rem' }}>
             {migrateOldToNewStatus.message || 'Миграция завершена.'}
+          </div>
+        )}
+
+        {(migrateOldToNewStatus.report_rows?.length ?? 0) > 0 && (
+          <div className="table-container" style={{ marginTop: '1.25rem' }}>
+            <h3 className="migration-report-heading" style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem' }}>
+              Записи отчёта миграции
+            </h3>
+            {migrateOldToNewStatus.report_rows && migrateOldToNewStatus.report_rows.length > 0 && (
+              <p className="records-count" style={{ marginBottom: '0.5rem' }}>
+                Найдено записей: <strong>{migrationReportRows.length}</strong>
+                {migrationReportHasActiveFilters && (
+                  <> (из {migrateOldToNewStatus.report_rows.length} с учётом фильтров)</>
+                )}
+                {migrationReportRows.length > 0 && (
+                  <>
+                    {' '}
+                    · страница <strong>{migrationReportPage}</strong> из <strong>{migrationReportTotalPages}</strong> (
+                    {MIGRATION_REPORT_PAGE_SIZE} строк)
+                  </>
+                )}
+              </p>
+            )}
+            <div className="filter-controls" style={{ marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-start' }}>
+              <div className="filter-hint">
+                💡 Клик по ячейке — копировать; наведение на обрезанный текст раскрывает ячейку. Граница заголовка справа — ширина колонки (как в «Записи в базе данных»).
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', flex: '1 1 220px' }}>
+                <span style={{ whiteSpace: 'nowrap' }}>Поиск по всем колонкам:</span>
+                <input
+                  type="text"
+                  className="group-search-input"
+                  value={migrationReportFilter}
+                  onChange={(e) => setMigrationReportFilter(e.target.value)}
+                  placeholder="Общий фильтр"
+                  autoComplete="off"
+                />
+              </label>
+              <div className="columns-menu-wrapper" ref={migrationColumnsMenuRef}>
+                <button
+                  type="button"
+                  className="button columns-toggle"
+                  onClick={() => setShowMigrationColumnsMenu((v) => !v)}
+                  title="Показать или скрыть колонки"
+                >
+                  Колонки
+                </button>
+                {showMigrationColumnsMenu && (
+                  <div className="columns-dropdown">
+                    <div className="columns-dropdown-title">Видимость колонок (отчёт миграции)</div>
+                    {MIGRATION_REPORT_COLUMNS.map(({ key, label }) => (
+                      <label key={key} className="columns-dropdown-item">
+                        <input
+                          type="checkbox"
+                          checked={migrationReportVisible[key] !== false}
+                          onChange={() => toggleMigrationReportColumn(key)}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                    <div className="columns-dropdown-divider" />
+                    <button
+                      type="button"
+                      className="columns-dropdown-action"
+                      onClick={() => {
+                        setMigrationReportColWidths({});
+                        try {
+                          localStorage.removeItem(MIGRATION_REPORT_COL_WIDTHS_LS_KEY);
+                        } catch {
+                          /* ignore */
+                        }
+                        setShowMigrationColumnsMenu(false);
+                      }}
+                    >
+                      Сбросить ширины колонок
+                    </button>
+                    <button
+                      type="button"
+                      className="columns-dropdown-action"
+                      onClick={() => {
+                        clearMigrationReportFilters();
+                        setShowMigrationColumnsMenu(false);
+                      }}
+                    >
+                      Очистить фильтры
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+            {visibleMigrationReportColumns.length === 0 && (
+              <p className="message error" style={{ marginBottom: '0.75rem' }}>
+                Включите хотя бы одну колонку в меню «Колонки».
+              </p>
+            )}
+            {migrationReportRows.length === 0 && migrationReportHasActiveFilters && (
+              <p className="description" style={{ marginBottom: '0.75rem' }}>
+                Нет строк по текущим фильтрам.
+              </p>
+            )}
+            {visibleMigrationReportColumns.length > 0 && migrationReportRows.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  gap: '0.5rem',
+                  alignItems: 'center',
+                  marginBottom: '0.75rem',
+                }}
+              >
+                <button
+                  type="button"
+                  className="button"
+                  style={{ padding: '0.25rem 0.65rem', fontSize: '0.85rem' }}
+                  disabled={migrationReportPage <= 1}
+                  onClick={() => setMigrationReportPage((p) => Math.max(1, p - 1))}
+                >
+                  ← Предыдущая
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  style={{ padding: '0.25rem 0.65rem', fontSize: '0.85rem' }}
+                  disabled={migrationReportPage >= migrationReportTotalPages}
+                  onClick={() => setMigrationReportPage((p) => Math.min(migrationReportTotalPages, p + 1))}
+                >
+                  Следующая →
+                </button>
+              </div>
+            )}
+            {visibleMigrationReportColumns.length > 0 && (
+              <div className="grid-table">
+                <div
+                  className="grid-table-header"
+                  style={{ display: 'grid', width: '100%', gridTemplateColumns: migrationReportGridTemplate }}
+                >
+                  <div className="grid-table-cell header-cell-resizable">
+                    <div className="header-label">Действия</div>
+                    <input
+                      type="text"
+                      className="header-filter-input"
+                      value=""
+                      disabled
+                      placeholder="—"
+                      title="Столбец не фильтруется"
+                    />
+                  </div>
+                  {visibleMigrationReportColumns.map(({ key, label }) => {
+                    const sortIdx = migrationReportSortColumns.findIndex((s) => s.key === key);
+                    const entry = sortIdx >= 0 ? migrationReportSortColumns[sortIdx] : null;
+                    return (
+                      <div key={key} className="grid-table-cell header-cell-resizable">
+                        <button
+                          type="button"
+                          className="header-label header-sortable"
+                          style={{
+                            border: 'none',
+                            background: 'none',
+                            font: 'inherit',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            width: '100%',
+                            padding: 0,
+                          }}
+                          onClick={(e) => handleMigrationReportSort(key, e.shiftKey)}
+                          title="Клик — сортировка по столбцу. Shift+клик — добавить уровень сортировки."
+                        >
+                          {label}
+                          <span className="sort-arrows" style={{ marginLeft: '0.25rem' }}>
+                            <span className={`sort-arrow ${entry?.dir === 'asc' ? 'active' : ''}`}>▲</span>
+                            <span className={`sort-arrow ${entry?.dir === 'desc' ? 'active' : ''}`}>▼</span>
+                            {sortIdx >= 0 && migrationReportSortColumns.length > 1 && (
+                              <span className="sort-order-badge">{sortIdx + 1}</span>
+                            )}
+                          </span>
+                        </button>
+                        <input
+                          type="text"
+                          className="header-filter-input"
+                          value={migrationReportColumnFilters[key] ?? ''}
+                          onChange={(e) =>
+                            setMigrationReportColumnFilters((prev) => ({
+                              ...prev,
+                              [key]: e.target.value,
+                            }))
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
+                          placeholder={`Фильтр: ${label}`}
+                          title={`Поиск по колонке «${label}»`}
+                          autoComplete="off"
+                        />
+                        <div
+                          className="column-resize-handle"
+                          onMouseDown={(e) => handleMigrationReportResizeStart(e, key)}
+                          title="Изменить ширину"
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="grid-table-body">
+                  {migrationReportRowsPaged.map((row, rowIdx) => {
+                    const globalIdx = (migrationReportPage - 1) * MIGRATION_REPORT_PAGE_SIZE + rowIdx;
+                    return (
+                    <div
+                      key={`mr-${globalIdx}-${row.schedule_id ?? ''}-${row.schedule_override_id ?? ''}`}
+                      className="grid-table-row"
+                      style={{ display: 'grid', width: '100%', gridTemplateColumns: migrationReportGridTemplate }}
+                    >
+                      <div className="grid-table-cell migration-report-actions-cell">
+                        <button
+                          type="button"
+                          className="button migration-detail-open-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setMigrationDetailRow(row);
+                          }}
+                        >
+                          Подробнее
+                        </button>
+                      </div>
+                      {visibleMigrationReportColumns.map(({ key }) => {
+                        const uniqueCellId = `mr-${globalIdx}-${key}`;
+                        const isExpanded = expandedMigrationReportCell?.id === uniqueCellId;
+                        const expandDirection = expandedMigrationReportCell?.direction || 'right';
+                        const expandWidth = expandedMigrationReportCell?.width || 0;
+                        const displayText = row[key] == null || row[key] === '' ? '—' : String(row[key]);
+                        return (
+                          <div
+                            key={key}
+                            className="grid-table-cell expandable-cell"
+                            title="Клик — копировать. Наведите, чтобы раскрыть длинный текст."
+                            onMouseEnter={(e) => handleMigrationReportCellMouseEnter(e, uniqueCellId)}
+                            onMouseLeave={handleMigrationReportCellMouseLeave}
+                            onClick={() => copyMigrationReportCell(row[key])}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                copyMigrationReportCell(row[key]);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
+                          >
+                            <div
+                              className="cell-content"
+                              data-expanded={isExpanded}
+                              data-direction={expandDirection}
+                              style={
+                                isExpanded
+                                  ? {
+                                      width: `${expandWidth}px`,
+                                      minWidth: `${expandWidth}px`,
+                                      ...(expandDirection === 'left'
+                                        ? { right: 0, left: 'auto' }
+                                        : { left: 0, right: 'auto' }),
+                                    }
+                                  : {}
+                              }
+                            >
+                              {displayText}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {migrationDetailRow && (
+          <div className="aspi-unresolved-overlay" onClick={() => setMigrationDetailRow(null)}>
+            <div className="aspi-unresolved-modal migration-detail-modal" onClick={(e) => e.stopPropagation()}>
+              <div className="aspi-unresolved-modal-header">
+                <h3>Куда и откуда мигрировали</h3>
+                <button
+                  type="button"
+                  className="aspi-unresolved-close"
+                  onClick={() => setMigrationDetailRow(null)}
+                  aria-label="Закрыть"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="migration-detail-modal-body">
+                <p className="migration-detail-lead">
+                  Источник — строка в <code>schedule</code> (ниже поля как в отчёте). Цель — новая запись в{' '}
+                  <code>schedule_override</code> с id <strong>{formatMigrationDetailValue(migrationDetailRow.schedule_override_id)}</strong>
+                  ; при необходимости строка в <code>schedule_override_teacher</code> (связь с <code>teacher</code>).
+                  Таблица <code>timetable_teacher</code> в миграции не используется.
+                </p>
+                {MIGRATION_DETAIL_SECTIONS.map((section) => (
+                  <section key={section.title} className="migration-detail-section">
+                    <h4 className="migration-detail-section-title">{section.title}</h4>
+                    <table className="migration-detail-table">
+                      <tbody>
+                        {section.keys.map(({ key, label }) => (
+                          <tr key={key}>
+                            <th scope="row">{label}</th>
+                            <td>{formatMigrationDetailValue(migrationDetailRow[key])}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </section>
+                ))}
+              </div>
+              <div className="aspi-unresolved-modal-footer">
+                <button type="button" className="button button-primary" onClick={() => setMigrationDetailRow(null)}>
+                  Закрыть
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="migration-console-wrap" style={{ marginTop: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.35rem' }}>
+            <strong>Журнал консоли</strong>
+            <button
+              type="button"
+              className="button"
+              style={{ padding: '0.25rem 0.6rem', fontSize: '0.85rem' }}
+              onClick={() => setMigrateLogExpanded((v) => !v)}
+            >
+              {migrateLogExpanded ? 'Свернуть' : 'Развернуть'}
+            </button>
+          </div>
+          <pre
+            className={`migration-console-log${migrateLogExpanded ? '' : ' migration-console-log--collapsed'}`}
+            aria-label="Журнал миграции"
+          >
+            {migrateOldToNewStatus.running && !migrateOldToNewStatus.output_log
+              ? 'Выполняется миграция…\n'
+              : migrateOldToNewStatus.output_log
+                || (migrateOldToNewStatus.error ? '' : 'Запустите миграцию — здесь будет вывод скрипта (без огромного текстового отчёта).')}
+          </pre>
+        </div>
+
+        {migrateOldToNewStatus.full_report_available && (
+          <div className="migration-text-report-wrap" style={{ marginTop: '1rem' }}>
+            <strong>Текстовый отчёт (файл на сервере)</strong>
+            <p className="description" style={{ margin: '0.35rem 0 0.5rem' }}>
+              Полный отчёт в <code>output/migration_report_web.txt</code> — подгружается по фрагментам, чтобы не перегружать браузер.
+              Строки {migrationTextReportStart + 1}–{migrationTextReportStart + migrationTextReportLines.length}
+              {migrationTextReportHasMore ? ' (есть продолжение)' : migrationTextReportLines.length > 0 ? ' (конец файла)' : ''}.
+            </p>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.5rem' }}>
+              <button
+                type="button"
+                className="button"
+                style={{ padding: '0.25rem 0.65rem', fontSize: '0.85rem' }}
+                disabled={migrationTextReportLoading || migrationTextReportStart <= 0}
+                onClick={() =>
+                  void loadMigrationTextReport(Math.max(0, migrationTextReportStart - MIGRATION_TEXT_REPORT_CHUNK))
+                }
+              >
+                ← Ранее
+              </button>
+              <button
+                type="button"
+                className="button"
+                style={{ padding: '0.25rem 0.65rem', fontSize: '0.85rem' }}
+                disabled={migrationTextReportLoading || !migrationTextReportHasMore}
+                onClick={() =>
+                  void loadMigrationTextReport(migrationTextReportStart + migrationTextReportLines.length)
+                }
+              >
+                Далее →
+              </button>
+              <button
+                type="button"
+                className="button button-primary"
+                style={{ padding: '0.25rem 0.65rem', fontSize: '0.85rem' }}
+                disabled={migrationTextReportLoading}
+                onClick={() => void loadMigrationTextReport(0)}
+              >
+                С начала
+              </button>
+            </div>
+            {migrationTextReportError && (
+              <div className="message error" style={{ marginBottom: '0.5rem' }}>
+                {migrationTextReportError}
+              </div>
+            )}
+            {migrationTextReportLoading && <p className="description">Загрузка…</p>}
+            {!migrationTextReportLoading && migrationTextReportLines.length === 0 && !migrationTextReportError && (
+              <p className="description">Нажмите «С начала», чтобы загрузить первый фрагмент.</p>
+            )}
+            {migrationTextReportLines.length > 0 && (
+              <pre
+                className="migration-console-log"
+                style={{ maxHeight: 'min(22rem, 55vh)' }}
+                aria-label="Фрагмент текстового отчёта миграции"
+              >
+                {migrationTextReportLines.join('\n')}
+              </pre>
+            )}
           </div>
         )}
       </div>

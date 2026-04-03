@@ -1,6 +1,14 @@
 """
 Сопоставление названий дисциплин со справочником (info/discipline.json) по эмбеддингам (Ollama nomic-embed-text).
 Используется веб-интерфейсом «Сопоставление дисциплин» и может вызываться из других скриптов.
+
+Запросы к Ollama идут из процесса Python (Flask), не из браузера. Адрес по умолчанию:
+  локальный режим UI → http://127.0.0.1:11434
+  удалённый → http://10.10.10.11:11434
+
+Переопределение (например, Ollama на вашем ПК, а бэкенд на сервере; или Flask в WSL, Ollama в Windows):
+  OLLAMA_EMBEDDINGS_URL=http://192.168.x.x:11434   — один URL для любого режима
+  либо точечно: OLLAMA_LOCAL_URL=..., OLLAMA_REMOTE_URL=...
 """
 import json
 import os
@@ -40,19 +48,38 @@ def load_documents():
     return [str(x).strip() for x in data if x is not None and str(x).strip()]
 
 
+def _embeddings_base_url(use_local: bool) -> str:
+    """Базовый URL Ollama без завершающего слэша (для /api/embeddings)."""
+    override = (
+        os.getenv("OLLAMA_EMBEDDINGS_URL")
+        or os.getenv("OLLAMA_API_BASE_URL")
+        or ""
+    ).strip().rstrip("/")
+    if override:
+        return override
+    if use_local:
+        return (
+            os.getenv("OLLAMA_LOCAL_URL") or "http://127.0.0.1:11434"
+        ).strip().rstrip("/")
+    return (os.getenv("OLLAMA_REMOTE_URL") or "http://10.10.10.11:11434").strip().rstrip("/")
+
+
 def get_embedding(text, *, use_local: bool | None = None):
     """
     Получить эмбеддинг текста через Ollama (nomic-embed-text).
 
-    :param use_local: Если True — использовать локальный Ollama (http://127.0.0.1:11434),
-                      если False — удалённый (как было раньше),
+    :param use_local: Если True — OLLAMA_LOCAL_URL или http://127.0.0.1:11434,
+                      если False — OLLAMA_REMOTE_URL или http://10.10.10.11:11434,
                       если None — брать из окружения USE_LOCAL_OLLAMA (1/true/yes).
+
+    URL целиком можно задать OLLAMA_EMBEDDINGS_URL (или OLLAMA_API_BASE_URL) — тогда
+    режим local/remote не меняет хост (удобно, когда бэкенд и Ollama на разных машинах).
     """
     if use_local is None:
         env_val = os.getenv("USE_LOCAL_OLLAMA", "").strip().lower()
         use_local = env_val in ("1", "true", "yes")
 
-    base_url = "http://127.0.0.1:11434" if use_local else "http://10.10.10.11:11434"
+    base_url = _embeddings_base_url(use_local)
 
     try:
         response = requests.post(

@@ -1624,11 +1624,39 @@ def parse_excel_file(file_path, teacher_name_mapping):
     
     all_results = []
     
+    def _drop_teacher_columns(ws):
+        """
+        Удаляет все столбцы, где в верхней части листа встречается заголовок
+        с надписью «Преподаватель».
+        """
+        cols_to_delete = []
+        max_scan_rows = min(30, ws.max_row)
+        for col_idx in range(1, ws.max_column + 1):
+            has_teacher_label = False
+            for row_idx in range(1, max_scan_rows + 1):
+                val = ws.cell(row=row_idx, column=col_idx).value
+                if val is None:
+                    continue
+                text = str(val).strip().lower()
+                if "преподаватель" in text:
+                    has_teacher_label = True
+                    break
+            if has_teacher_label:
+                cols_to_delete.append(col_idx)
+
+        # Удаляем справа налево, чтобы не смещались индексы
+        for col_idx in reversed(cols_to_delete):
+            ws.delete_cols(col_idx, 1)
+
     # Обрабатываем все листы (каждый лист - это курс); скрытые листы не парсим
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
         if getattr(ws, 'sheet_state', 'visible') != 'visible':
             continue
+
+        # По требованию: перед парсингом удаляем колонки «Преподаватель».
+        _drop_teacher_columns(ws)
+
         # Извлекаем номер курса из названия листа
         course_from_sheet = None
         course_match = re.search(r'(\d+)\s*курс', sheet_name, re.IGNORECASE)

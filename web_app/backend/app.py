@@ -80,7 +80,15 @@ script_status = {
     'parse_spo': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'load_spo_to_db': {'running': False, 'progress': 0, 'message': '', 'error': None},
     'merge_spo_to_intermediate': {'running': False, 'progress': 0, 'message': '', 'error': None},
-    'migrate_old_to_new': {'running': False, 'progress': 0, 'message': '', 'error': None},
+    'migrate_old_to_new': {
+        'running': False,
+        'progress': 0,
+        'message': '',
+        'error': None,
+        'output_log': '',
+        'report_rows': [],
+        'full_report_available': False,
+    },
     'update_group_departments': {'running': False, 'progress': 0, 'message': '', 'error': None}
 }
 
@@ -296,7 +304,6 @@ def run_parse_timetable():
                 line = output.strip()
                 if line:
                     output_lines.append(line)
-                    print(f"Output: {line}")
                     # Обновляем прогресс на основе количества строк
                     progress = min(40 + min(len(output_lines) * 2, 50), 90)
                     script_status['parse_timetable']['progress'] = progress
@@ -308,8 +315,6 @@ def run_parse_timetable():
         # Читаем ошибки, если есть
         stderr_stream = process.stderr
         stderr_output = stderr_stream.read() if stderr_stream is not None else ''
-        if stderr_output:
-            print(f"Stderr: {stderr_output}")
         
         if return_code == 0:
             script_status['parse_timetable']['progress'] = 100
@@ -386,7 +391,6 @@ def run_clean_audiences():
             if output:
                 line = output.strip()
                 if line:
-                    print(f"Output: {line}")
                     m = progress_re.match(line)
                     if m:
                         current, total = int(m.group(1)), int(m.group(2))
@@ -401,8 +405,6 @@ def run_clean_audiences():
         # Читаем ошибки, если есть
         stderr_stream = process.stderr
         stderr_output = stderr_stream.read() if stderr_stream is not None else ''
-        if stderr_output:
-            print(f"Stderr: {stderr_output}")
         
         if return_code == 0:
             script_status['clean_audiences']['progress'] = 100
@@ -459,14 +461,6 @@ def run_load_timetable_to_db():
                 )
                 stdout_output, stderr_output = process.communicate()
                 return_code = process.returncode
-                if stdout_output:
-                    for line in stdout_output.splitlines():
-                        if line.strip():
-                            print(f"[LOAD_DB] {line}", flush=True)
-                if stderr_output and stderr_output.strip():
-                    for line in stderr_output.splitlines():
-                        if line.strip():
-                            print(f"[LOAD_DB stderr] {line}", flush=True)
                 if return_code != 0:
                     error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
                     script_status['load_timetable_to_db']['error'] = error_msg
@@ -503,14 +497,6 @@ def run_load_timetable_to_db():
         )
         stdout_output, stderr_output = process.communicate()
         return_code = process.returncode
-        if stdout_output:
-            for line in stdout_output.splitlines():
-                if line.strip():
-                    print(f"[LOAD_DB] {line}", flush=True)
-        if stderr_output and stderr_output.strip():
-            for line in stderr_output.splitlines():
-                if line.strip():
-                    print(f"[LOAD_DB stderr] {line}", flush=True)
         if return_code != 0:
             error_msg = stderr_output.strip() if stderr_output else f'Код возврата: {return_code}'
             script_status['load_timetable_to_db']['error'] = error_msg
@@ -844,12 +830,27 @@ def run_merge_timetable_route():
     return jsonify({'message': 'Script started'})
 
 
-def run_migrate_old_to_new(semester_id=1, clean=False, dedupe=False, strict=False, clean_override_only=False):
+def run_migrate_old_to_new(
+    semester_id=1,
+    clean=False,
+    dedupe=False,
+    strict=False,
+    clean_override_only=False,
+    include_full_report=True,
+    log_sample=0,
+    log_all_teachers=False,
+):
     """Запускает scripts/db_migration_old_db_to_new.py — миграция schedule -> student_group, schedule_override, teacher.is_external."""
     script_status['migrate_old_to_new']['running'] = True
     script_status['migrate_old_to_new']['progress'] = 0
     script_status['migrate_old_to_new']['message'] = 'Подготовка миграции...'
     script_status['migrate_old_to_new']['error'] = None
+    script_status['migrate_old_to_new']['output_log'] = ''
+    script_status['migrate_old_to_new']['report_rows'] = []
+    script_status['migrate_old_to_new']['full_report_available'] = False
+    _max_web_log = 5_000_000
+    _max_report_rows = 25_000
+    report_path = None
     try:
         project_root = get_project_root()
         script_path = os.path.join(project_root, 'scripts', 'db_migration_old_db_to_new.py')
@@ -864,46 +865,123 @@ def run_migrate_old_to_new(semester_id=1, clean=False, dedupe=False, strict=Fals
             cmd.append('--dedupe')
         if strict:
             cmd.append('--strict')
+        cmd.extend(['--log-sample', str(max(0, int(log_sample)))])
+        if log_all_teachers:
+            cmd.append('--log-all-teachers')
+        if include_full_report:
+            out_dir = os.path.join(project_root, 'output')
+            os.makedirs(out_dir, exist_ok=True)
+            report_path = os.path.join(out_dir, 'migration_report_web.txt')
+            cmd.extend(['--report-file', report_path])
         script_status['migrate_old_to_new']['progress'] = 10
         script_status['migrate_old_to_new']['message'] = 'Запуск миграции...'
-        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
+        env = {**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUNBUFFERED': '1'}
         process = subprocess.Popen(
             cmd,
             cwd=project_root,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding='utf-8',
             errors='replace',
             env=env,
-            bufsize=1
+            bufsize=1,
         )
         output_lines = []
+        _max_capture_lines = 4000
         while True:
             out = process.stdout.readline() if process.stdout else ''
             if out == '' and process.poll() is not None:
                 break
             if out:
-                line = out.strip()
-                if line:
-                    output_lines.append(line)
-                    script_status['migrate_old_to_new']['message'] = line[:120]
+                line = out.rstrip('\n')
+                output_lines.append(line)
+                if len(output_lines) > _max_capture_lines:
+                    output_lines = output_lines[-_max_capture_lines:]
+                script_status['migrate_old_to_new']['message'] = line[:200] if line else '...'
+                script_status['migrate_old_to_new']['progress'] = min(92, 10 + len(output_lines) // 50)
+                tail = '\n'.join(output_lines[-800:])
+                script_status['migrate_old_to_new']['output_log'] = tail[-400_000:]
         return_code = process.wait()
-        stderr_output = process.stderr.read() if process.stderr else ''
+        combined = '\n'.join(output_lines)
         if return_code != 0:
-            error_msg = stderr_output.strip() or f'Код возврата: {return_code}'
+            err_tail = combined[-8000:] if combined else ''
+            error_msg = err_tail.strip() or f'Код возврата: {return_code}'
             script_status['migrate_old_to_new']['error'] = error_msg
             script_status['migrate_old_to_new']['message'] = 'Ошибка при выполнении миграции'
             script_status['migrate_old_to_new']['progress'] = 0
+            script_status['migrate_old_to_new']['output_log'] = combined[-_max_web_log:]
+            script_status['migrate_old_to_new']['report_rows'] = []
+            script_status['migrate_old_to_new']['full_report_available'] = False
         else:
+            script_status['migrate_old_to_new']['progress'] = 95
+            script_status['migrate_old_to_new']['message'] = output_lines[-1][:200] if output_lines else 'Миграция завершена.'
+            final_log = combined
+            if len(final_log) > _max_web_log:
+                final_log = (
+                    final_log[:_max_web_log]
+                    + '\n\n... [консольный вывод обрезан для веб-интерфейса]'
+                )
+            if include_full_report and report_path and os.path.isfile(report_path):
+                script_status['migrate_old_to_new']['full_report_available'] = True
+                final_log += (
+                    '\n\n---\n'
+                    'Полный текстовый отчёт не подмешивается в этот журнал (файл может быть очень большим). '
+                    'Листайте его в блоке «Текстовый отчёт» ниже или откройте файл на сервере:\n'
+                    'output/migration_report_web.txt\n'
+                )
+            else:
+                script_status['migrate_old_to_new']['full_report_available'] = False
+            script_status['migrate_old_to_new']['output_log'] = final_log
             script_status['migrate_old_to_new']['progress'] = 100
-            script_status['migrate_old_to_new']['message'] = output_lines[-1] if output_lines else 'Миграция завершена.'
+            if include_full_report and report_path:
+                json_path = os.path.splitext(report_path)[0] + '.json'
+                if os.path.isfile(json_path):
+                    try:
+                        with open(json_path, 'r', encoding='utf-8') as jf:
+                            report_data = json.load(jf)
+                        if isinstance(report_data, list):
+                            script_status['migrate_old_to_new']['report_rows'] = report_data[:_max_report_rows]
+                    except (OSError, ValueError, TypeError):
+                        pass
     except Exception as e:
         script_status['migrate_old_to_new']['error'] = str(e)
         script_status['migrate_old_to_new']['message'] = f'Ошибка: {str(e)}'
         script_status['migrate_old_to_new']['progress'] = 0
+        script_status['migrate_old_to_new']['report_rows'] = []
+        script_status['migrate_old_to_new']['full_report_available'] = False
     finally:
         script_status['migrate_old_to_new']['running'] = False
+
+
+@app.route('/api/migration_report_lines', methods=['GET'])
+def migration_report_lines():
+    """Постраничное чтение output/migration_report_web.txt без загрузки всего файла в статус миграции."""
+    project_root = get_project_root()
+    report_path = os.path.normpath(os.path.join(project_root, 'output', 'migration_report_web.txt'))
+    if not os.path.isfile(report_path):
+        return jsonify({'error': 'Файл отчёта не найден (сначала выполните миграцию с полным отчётом).'}), 404
+    try:
+        start_line = max(0, int(request.args.get('start_line', 0)))
+        limit = min(500, max(1, int(request.args.get('limit', 120))))
+    except (TypeError, ValueError):
+        return jsonify({'error': 'Некорректные start_line или limit'}), 400
+    lines_out = []
+    has_more = False
+    with open(report_path, 'r', encoding='utf-8', errors='replace') as rf:
+        for i, line in enumerate(rf):
+            if i < start_line:
+                continue
+            if len(lines_out) >= limit:
+                has_more = True
+                break
+            lines_out.append(line.rstrip('\n'))
+    return jsonify({
+        'start_line': start_line,
+        'limit': limit,
+        'lines': lines_out,
+        'has_more': has_more,
+    })
 
 
 @app.route('/api/semesters', methods=['GET'])
@@ -1016,6 +1094,10 @@ def run_migrate_old_to_new_route():
         semester_id = int(semester_id)
     except (TypeError, ValueError):
         return jsonify({'error': 'semester_id должен быть числом'}), 400
+    try:
+        log_sample = int(data.get('log_sample', 0))
+    except (TypeError, ValueError):
+        log_sample = 0
     thread = threading.Thread(
         target=run_migrate_old_to_new,
         kwargs={
@@ -1024,6 +1106,9 @@ def run_migrate_old_to_new_route():
             'dedupe': bool(data.get('dedupe')),
             'strict': bool(data.get('strict')),
             'clean_override_only': bool(data.get('clean_override_only')),
+            'include_full_report': bool(data.get('include_full_report', True)),
+            'log_sample': max(0, log_sample),
+            'log_all_teachers': bool(data.get('log_all_teachers')),
         }
     )
     thread.daemon = True
@@ -1151,7 +1236,6 @@ def run_parse_spo():
                     output_lines.append(line)
                     script_status['parse_spo']['progress'] = min(40 + min(len(output_lines) * 5, 50), 90)
                     script_status['parse_spo']['message'] = line[:200] if len(line) > 200 else line
-                    print(f"[parse_spo] {line}", flush=True)
         return_code = process.wait()
         stderr_output = '\n'.join(output_lines[-5:]) if output_lines else ''
         if return_code != 0:

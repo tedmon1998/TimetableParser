@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Очистка данных и заполнение справочников и timeslot.
-Ничего не дропает — только TRUNCATE (очистка строк) и вставка. Таблицы и БД не трогаем.
+Только schedule_override и (если есть таблица) schedule_override_teacher.
 
-  Очищает (TRUNCATE): semester, institute, direction, teacher, room, subject и связанные.
-  timeslot не очищаем — только вставляем/обновляем пары.
+  Очищает: DELETE FROM schedule_override — каскад по FK (schedule_override_teacher,
+  timeslot_link и т.д.). Справочники, группы, аудитории, семестр и прочее не изменяются.
 
-  Заполняет:
-  timeslot   — расписание пар (как в scripts/asd.ts PAIR_TIMES)
-  semester   — одна запись по умолчанию
-  institute, direction — из output/institute_direction_groups.json
-  teacher    — из info/teacher_all.json
-  room       — из info/aud.json (building = первая буква названия)
-  subject    — из info/discipline.json
+  Заполняет колонки из JSON + id из существующей БД:
+    subject_id, room_id, group_id, semester_id — по имени/ключу из JSON → id в БД;
+    source_pattern_item_id — только если в JSON есть число и такой id есть в schedule_pattern_item;
+    преподаватель — по ФИО из JSON → teacher.id, затем строка в schedule_override_teacher
+    (если колонки teacher_id в schedule_override нет; иначе дополнительно UPDATE teacher_id для старой схемы).
+
+Использование:
+  python fill_db_from_institute_direction_groups.py [--semester-id ID] [--dedupe] [--strict]
 """
 
+import argparse
 import json
 import os
 import re
@@ -35,7 +36,7 @@ if _env_path.exists():
 
 try:
     import psycopg2
-    from psycopg2.extras import RealDictCursor
+    from psycopg2.extras import RealDictCursor, execute_values
 except ImportError:
     print("Ошибка: установите psycopg2-binary: pip install psycopg2-binary")
     sys.exit(1)
@@ -48,230 +49,404 @@ DB_CONFIG = {
     "database": os.environ.get("DB_NAME", "test_sursu_timetable"),
 }
 
-# Как в scripts/asd.ts PAIR_TIMES (корпуса А, Г, К, У)
-TIMESLOT_DEFAULT = [
-    (1, "08:30", "09:50"),
-    (2, "10:00", "11:20"),
-    (3, "11:30", "12:50"),
-    (4, "13:20", "14:40"),
-    (5, "14:50", "16:10"),
-    (6, "16:20", "17:40"),
-    (7, "18:00", "19:20"),
-    (8, "19:30", "20:50"),
-    (9, "21:00", "22:20"),
-]
+WEEKDAY_MAP = {
+    "понедельник": 1,
+    "вторник": 2,
+    "среда": 3,
+    "четверг": 4,
+    "пятница": 5,
+    "суббота": 6,
+    "воскресенье": 7,
+}
+
+WEEK_TYPE_VALUES = ("обе недели", "числитель", "знаменатель")
+CLASS_TYPE_VALUES = (
+    "лекция",
+    "практика",
+    "лабораторная",
+    "консультация",
+    "экзамен",
+    "зачет",
+    "зачет с оценкой",
+    "пересдача",
+)
+
+BATCH_SIZE = 2000
+
+INSERT_SQL = """
+INSERT INTO schedule_override (
+    weekday,
+    subject_id,
+    week_type,
+    class_type,
+    room_id,
+    group_id,
+    subgroup_count,
+    subgroup_no,
+    semester_id,
+    duration_pairs,
+    is_remote,
+    timeslot_no,
+    time_start_custom,
+    time_end_custom,
+    source_pattern_item_id,
+    note
+) VALUES %s RETURNING id
+"""
 
 
 def _n(s):
     return (s or "").strip() or None
 
 
-def _direction_code_name(direction_key: str) -> tuple[str | None, str]:
-    s = (direction_key or "").strip()
-    if not s:
-        return None, "—"
-    m = re.match(r"^(\d+\.\d+\.\d+)\s+(.+)$", s)
-    if m:
-        return m.group(1), (m.group(2) or s).strip() or s
-    return None, s
+def _nl(s):
+    v = _n(s)
+    return v.lower() if v else None
+
+
+def weekday_to_int(day_text):
+    if not day_text:
+        return None
+    key = _nl(day_text)
+    if not key:
+        return None
+    return WEEKDAY_MAP.get(key)
+
+
+def parse_week_type(s):
+    v = _n(s)
+    if not v:
+        return None
+    return v if v in WEEK_TYPE_VALUES else None
+
+
+def parse_class_type(s):
+    v = _n(s)
+    if not v:
+        return None
+    return v if v in CLASS_TYPE_VALUES else None
+
+
+def _positive_int_or_none(v):
+    """Целое > 0 или None. 0 в num_subgroups не пишем в subgroup_count как «ноль п/г»."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, str) and not v.strip():
+        return None
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def building_from_audience(audience):
+    if not audience:
+        return None
+    s = (audience or "").strip()
+    m = re.match(r"^([^\d]*)", s)
+    if m and m.group(1):
+        return m.group(1)
+    return None
+
+
+def iter_schedule_entries(data):
+    for _inst_name, dirs in data.items():
+        if not isinstance(dirs, dict):
+            continue
+        for key, val in dirs.items():
+            if key == "groups":
+                continue
+            if isinstance(val, dict) and "schedule" in val:
+                group_name = key
+                for item in val.get("schedule") or []:
+                    if isinstance(item, dict):
+                        yield group_name, item
+
+
+def table_exists(cur, name: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = %s
+        """,
+        (name,),
+    )
+    return cur.fetchone() is not None
+
+
+def column_exists(cur, table: str, column: str) -> bool:
+    cur.execute(
+        """
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = %s AND column_name = %s
+        """,
+        (table, column),
+    )
+    return cur.fetchone() is not None
 
 
 def main():
-    paths = {
-        "institute_direction": PROJECT_ROOT / "output" / "institute_direction_groups.json",
-        "teacher": PROJECT_ROOT / "info" / "teacher_all.json",
-        "aud": PROJECT_ROOT / "info" / "aud.json",
-        "discipline": PROJECT_ROOT / "info" / "discipline.json",
-    }
-    for name, p in paths.items():
-        if not p.exists():
-            print(f"Файл не найден: {p}")
-            sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Заполнение schedule_override из institute_direction_groups.json (id только из БД)"
+    )
+    parser.add_argument(
+        "--semester-id",
+        type=int,
+        default=None,
+        help="ID семестра (иначе первый из таблицы semester)",
+    )
+    parser.add_argument("--dedupe", action="store_true", help="Убрать точные дубликаты строк перед вставкой")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Пропускать строки, если нет timeslot для корпуса из audience",
+    )
+    args = parser.parse_args()
+
+    path_json = PROJECT_ROOT / "output" / "institute_direction_groups.json"
+    if not path_json.exists():
+        print(f"Файл не найден: {path_json}")
+        sys.exit(1)
+
+    with open(path_json, "r", encoding="utf-8") as f:
+        data = json.load(f)
 
     conn = psycopg2.connect(**DB_CONFIG)
     conn.autocommit = False
 
+    stats = {"skipped": 0, "inserted": 0, "teachers_linked": 0}
+
     try:
-        # Загрузка JSON
-        with open(paths["institute_direction"], "r", encoding="utf-8") as f:
-            data_idg = json.load(f)
-        with open(paths["teacher"], "r", encoding="utf-8") as f:
-            teachers_raw = json.load(f)
-        with open(paths["aud"], "r", encoding="utf-8") as f:
-            rooms_raw = json.load(f)
-        with open(paths["discipline"], "r", encoding="utf-8") as f:
-            subjects_raw = json.load(f)
+        with conn.cursor(cursor_factory=RealDictCursor) as c:
+            has_junction = table_exists(c, "schedule_override_teacher")
+            has_override_teacher_col = column_exists(c, "schedule_override", "teacher_id")
 
-        institute_names = set()
-        direction_keys = set()
-        for inst_name, dirs in data_idg.items():
-            if not isinstance(dirs, dict):
+        with conn.cursor() as c:
+            c.execute("DELETE FROM schedule_override")
+            c.execute(
+                "SELECT setval(pg_get_serial_sequence(%s, %s), 1, false)",
+                ("schedule_override", "id"),
+            )
+        conn.commit()
+        print("Очищена только таблица schedule_override (остальные данные БД не трогались).")
+
+        semester_id = args.semester_id
+        if semester_id is None:
+            with conn.cursor(cursor_factory=RealDictCursor) as c:
+                c.execute("SELECT id FROM semester ORDER BY id LIMIT 1")
+                row = c.fetchone()
+                if not row:
+                    print("Ошибка: в таблице semester нет записей — укажите --semester-id.")
+                    sys.exit(1)
+                semester_id = row["id"]
+        else:
+            with conn.cursor() as c:
+                c.execute("SELECT 1 FROM semester WHERE id = %s", (semester_id,))
+                if not c.fetchone():
+                    print(f"Ошибка: semester id={semester_id} не найден.")
+                    sys.exit(1)
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id, LOWER(TRIM(fio)) AS k FROM teacher")
+            teacher_by_fio = {r["k"]: r["id"] for r in cur.fetchall() if r["k"]}
+
+            cur.execute("SELECT id, LOWER(TRIM(name)) AS k FROM subject")
+            subject_by_name = {r["k"]: r["id"] for r in cur.fetchall() if r["k"]}
+
+            cur.execute("SELECT id, LOWER(TRIM(name)) AS k FROM room")
+            room_by_name = {r["k"]: r["id"] for r in cur.fetchall() if r["k"]}
+
+            cur.execute("SELECT id, pair_number, building FROM timeslot")
+            timeslot_rows = cur.fetchall()
+            timeslot_by_pair_building = {}
+            buildings_in_timeslot = set()
+            for t in timeslot_rows:
+                b = t["building"] or ""
+                buildings_in_timeslot.add(b)
+                timeslot_by_pair_building[(t["pair_number"], b)] = t["id"]
+            for t in timeslot_rows:
+                if t["building"] is None:
+                    timeslot_by_pair_building[(t["pair_number"], None)] = t["id"]
+
+            cur.execute("SELECT id, name FROM student_group")
+            group_by_name = {r["name"]: r["id"] for r in cur.fetchall()}
+
+            pattern_item_ids = set()
+            if table_exists(cur, "schedule_pattern_item"):
+                cur.execute("SELECT id FROM schedule_pattern_item")
+                pattern_item_ids = {r["id"] for r in cur.fetchall()}
+
+        override_rows = []
+        teacher_ids_parallel = []
+
+        for group_name, row in iter_schedule_entries(data):
+            weekday = weekday_to_int(row.get("day_of_week"))
+            if weekday is None:
+                stats["skipped"] += 1
                 continue
-            inst_name = _n(inst_name) or "—"
-            institute_names.add(inst_name)
-            for dir_key in dirs.keys():
-                if dir_key == "groups":
+
+            group_id = group_by_name.get(group_name) if group_name else None
+
+            fio_n = _nl(row.get("fio"))
+            teacher_id = teacher_by_fio.get(fio_n) if fio_n else None
+
+            subject_id = None
+            subj_n = _nl(row.get("subject_name"))
+            if subj_n:
+                subject_id = subject_by_name.get(subj_n)
+
+            week_type = parse_week_type(row.get("week_type")) or "обе недели"
+            class_type = parse_class_type(row.get("lecture_type")) or "лекция"
+
+            room_id = None
+            aud_n = _nl(row.get("audience"))
+            if aud_n:
+                room_id = room_by_name.get(aud_n)
+
+            subgroup_count = _positive_int_or_none(row.get("num_subgroups"))
+            subgroup_no = _positive_int_or_none(row.get("subgroup"))
+            if subgroup_no is not None:
+                base = subgroup_count if subgroup_count is not None else 0
+                subgroup_count = max(base, subgroup_no, 2)
+
+            duration_pairs = None
+            if row.get("duration_pairs") is not None:
+                try:
+                    duration_pairs = float(row["duration_pairs"])
+                    if not (1 <= duration_pairs <= 8):
+                        duration_pairs = None
+                except (ValueError, TypeError):
+                    pass
+
+            is_remote = row.get("is_remote")
+            is_remote = bool(is_remote) if is_remote is not None else False
+
+            pair_number = row.get("pair_number")
+            if pair_number is None:
+                stats["skipped"] += 1
+                continue
+
+            building = building_from_audience(row.get("audience"))
+            building_str = (building or "").strip() or ""
+            building_key = (pair_number, building_str) if building_str else (pair_number, "")
+
+            timeslot_exists = timeslot_by_pair_building.get(building_key) is not None
+            if not timeslot_exists and building_str:
+                timeslot_exists = timeslot_by_pair_building.get((pair_number, "")) is not None
+
+            if not timeslot_exists and building_str in buildings_in_timeslot:
+                if args.strict:
+                    stats["skipped"] += 1
                     continue
-                code, dname = _direction_code_name(dir_key)
-                if code is not None:
-                    dname = dname or "—"
-                    direction_keys.add((code, dname))
+                stats["skipped"] += 1
+                continue
 
-        teacher_fios = set()
-        for t in teachers_raw:
-            if isinstance(t, dict):
-                fio = _n(t.get("fio"))
-                if fio:
-                    teacher_fios.add(fio)
-            elif isinstance(t, str) and _n(t):
-                teacher_fios.add(_n(t))
+            source_pattern_item_id = None
+            if row.get("source_pattern_item_id") is not None:
+                try:
+                    spi = int(row["source_pattern_item_id"])
+                    if spi in pattern_item_ids:
+                        source_pattern_item_id = spi
+                except (ValueError, TypeError):
+                    pass
 
-        room_names = set()
-        for r in rooms_raw:
-            if isinstance(r, str):
-                name = _n(r)
-                if name:
-                    room_names.add(name)
-            elif isinstance(r, dict) and r.get("name"):
-                room_names.add(_n(r["name"]))
+            note = _n(row.get("note"))
 
-        subject_names = set()
-        for s in subjects_raw:
-            if isinstance(s, str):
-                name = _n(s)
-                if name:
-                    subject_names.add(name)
-            elif isinstance(s, dict) and s.get("name"):
-                subject_names.add(_n(s["name"]))
+            time_start_custom = row.get("time_start_custom")
+            time_end_custom = row.get("time_end_custom")
 
-        # Очистить все справочники и связанные таблицы, кроме timeslot (слоты времени не трогаем)
-        with conn.cursor() as c:
-            c.execute("""
-                TRUNCATE
-                    schedule_override,
-                    schedule_pattern_item,
-                    student_group,
-                    department,
-                    institute,
-                    direction,
-                    subject,
-                    teacher,
-                    room,
-                    semester
-                RESTART IDENTITY CASCADE
-            """)
-        conn.commit()
-        print("Очищены строки (TRUNCATE): semester, institute, direction, teacher, room, subject и связанные. Таблицы и БД не трогаем. timeslot не очищаем.")
-
-        # ——— timeslot (только вставка/обновление, не очищаем) ———
-        with conn.cursor() as c:
-            for pn, start, end in TIMESLOT_DEFAULT:
-                c.execute("""
-                    INSERT INTO timeslot (pair_number, time_start, time_end)
-                    VALUES (%s, %s::time, %s::time)
-                    ON CONFLICT (pair_number) DO UPDATE SET
-                        time_start = EXCLUDED.time_start,
-                        time_end = EXCLUDED.time_end
-                """, (pn, start, end))
-        conn.commit()
-        print(f"timeslot: {len(TIMESLOT_DEFAULT)} пар (как asd.ts PAIR_TIMES)")
-
-        # ——— semester (одна запись) ———
-        with conn.cursor(cursor_factory=RealDictCursor) as c:
-            c.execute("SELECT id FROM semester LIMIT 1")
-            if not c.fetchone():
-                c.execute("""
-                    INSERT INTO semester (name, date_start, date_end)
-                    VALUES ('Осенний 2024', '2024-09-01', '2025-01-31')
-                """)
-        conn.commit()
-        print("semester: одна запись по умолчанию")
-
-        # ——— institute ———
-        with conn.cursor(cursor_factory=RealDictCursor) as c:
-            c.execute("SELECT id, name FROM institute")
-            existing = {r["name"]: r["id"] for r in c.fetchall()}
-        with conn.cursor() as c:
-            for name in sorted(institute_names):
-                if name in existing:
-                    continue
-                c.execute("INSERT INTO institute (name) VALUES (%s) RETURNING id", (name,))
-        conn.commit()
-        print(f"institute: из institute_direction_groups.json")
-
-        # ——— direction ———
-        with conn.cursor(cursor_factory=RealDictCursor) as c:
-            c.execute("SELECT id, code, name FROM direction")
-            existing = {(r["code"], r["name"]): r["id"] for r in c.fetchall()}
-        with conn.cursor() as c:
-            for (code, dname) in sorted(direction_keys, key=lambda x: (x[0] or "", x[1])):
-                if (code, dname) in existing:
-                    continue
-                c.execute(
-                    "INSERT INTO direction (code, name) VALUES (%s, %s) RETURNING id",
-                    (code, dname),
+            override_rows.append(
+                (
+                    weekday,
+                    subject_id,
+                    week_type,
+                    class_type,
+                    room_id,
+                    group_id,
+                    subgroup_count,
+                    subgroup_no,
+                    semester_id,
+                    duration_pairs,
+                    is_remote,
+                    pair_number,
+                    time_start_custom,
+                    time_end_custom,
+                    source_pattern_item_id,
+                    note,
                 )
-        conn.commit()
-        print("direction: из institute_direction_groups.json")
+            )
+            teacher_ids_parallel.append(teacher_id)
 
-        # ——— teacher ———
-        with conn.cursor(cursor_factory=RealDictCursor) as c:
-            c.execute("SELECT id, fio FROM teacher")
-            existing = {r["fio"]: r["id"] for r in c.fetchall()}
-        added = 0
-        with conn.cursor() as c:
-            for fio in sorted(teacher_fios):
-                if fio in existing:
+        if args.dedupe:
+            seen = set()
+            deduped_o = []
+            deduped_t = []
+            for r, tid in zip(override_rows, teacher_ids_parallel):
+                if r in seen:
                     continue
-                c.execute("INSERT INTO teacher (fio, is_external) VALUES (%s, FALSE) RETURNING id", (fio,))
-                added += 1
-        conn.commit()
-        print(f"teacher: +{added} из info/teacher_all.json")
+                seen.add(r)
+                deduped_o.append(r)
+                deduped_t.append(tid)
+            override_rows = deduped_o
+            teacher_ids_parallel = deduped_t
 
-        # ——— room (building = первая буква) ———
-        with conn.cursor() as c:
-            c.execute("ALTER TABLE room ADD COLUMN IF NOT EXISTS building VARCHAR(16)")
-        conn.commit()
-        with conn.cursor(cursor_factory=RealDictCursor) as c:
-            c.execute("SELECT id, name FROM room")
-            existing = {r["name"]: r["id"] for r in c.fetchall()}
-        added = 0
-        with conn.cursor() as c:
-            for name in sorted(room_names):
-                if name in existing:
-                    continue
-                remote = "дистант" in (name or "").lower()
-                building = (name[0:1] or None) if name else None
-                c.execute(
-                    "INSERT INTO room (name, building, is_remote_room) VALUES (%s, %s, %s) RETURNING id",
-                    (name, building, remote),
-                )
-                added += 1
-        with conn.cursor() as c:
-            c.execute("""
-                UPDATE room
-                SET building = SUBSTRING(TRIM(COALESCE(name, '')) FROM 1 FOR 1)
-                WHERE LENGTH(TRIM(COALESCE(name, ''))) > 0
-            """)
-            updated = c.rowcount
-        conn.commit()
-        print(f"room: +{added} из info/aud.json, building обновлён у {updated} записей")
+        if not override_rows:
+            print("Нет строк для вставки в schedule_override.")
+            conn.commit()
+            return
 
-        # ——— subject ———
-        with conn.cursor(cursor_factory=RealDictCursor) as c:
-            c.execute("SELECT id, name FROM subject")
-            existing = {r["name"]: r["id"] for r in c.fetchall()}
-        added = 0
-        with conn.cursor() as c:
-            for name in sorted(subject_names):
-                if name in existing:
-                    continue
-                c.execute("INSERT INTO subject (name) VALUES (%s) RETURNING id", (name,))
-                added += 1
-        conn.commit()
-        print(f"subject: +{added} из info/discipline.json")
+        all_ids = []
+        with conn.cursor() as cur:
+            for i in range(0, len(override_rows), BATCH_SIZE):
+                batch = override_rows[i : i + BATCH_SIZE]
+                execute_values(cur, INSERT_SQL, batch, page_size=len(batch))
+                all_ids.extend(r[0] for r in cur.fetchall())
 
-        print("Готово: timeslot, semester, institute, direction, teacher, room, subject.")
+        stats["inserted"] = len(all_ids)
+
+        if has_junction and len(all_ids) == len(teacher_ids_parallel):
+            link_rows = [
+                (oid, tid, 1)
+                for oid, tid in zip(all_ids, teacher_ids_parallel)
+                if tid is not None
+            ]
+            if link_rows:
+                with conn.cursor() as cur:
+                    execute_values(
+                        cur,
+                        """
+                        INSERT INTO schedule_override_teacher
+                            (schedule_override_id, teacher_id, sort_order)
+                        VALUES %s
+                        ON CONFLICT (schedule_override_id, teacher_id) DO NOTHING
+                        """,
+                        link_rows,
+                        page_size=BATCH_SIZE,
+                    )
+                stats["teachers_linked"] = len(link_rows)
+
+        if has_override_teacher_col:
+            updates = [
+                (teacher_ids_parallel[j], all_ids[j])
+                for j in range(len(all_ids))
+                if j < len(teacher_ids_parallel) and teacher_ids_parallel[j] is not None
+            ]
+            if updates:
+                with conn.cursor() as cur:
+                    cur.executemany(
+                        "UPDATE schedule_override SET teacher_id = %s WHERE id = %s",
+                        [(t, i) for t, i in updates],
+                    )
+                stats["teachers_linked"] = len(updates)
+
+        conn.commit()
+
+        print(f"schedule_override: вставлено {stats['inserted']} строк (semester_id={semester_id}).")
+        if has_junction or has_override_teacher_col:
+            print(f"Преподаватели привязаны: {stats['teachers_linked']} связей.")
+        if stats["skipped"]:
+            print(f"Пропущено строк: {stats['skipped']}")
     except Exception as e:
         conn.rollback()
         print(f"Ошибка: {e}")
